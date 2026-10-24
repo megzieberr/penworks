@@ -1,0 +1,238 @@
+/* PenWorks theme: "Desk and Ribbon"
+   ------------------------------------------------------------------
+   What it is: Megan's own notebook. The page is the hero; everything else is a quiet desk around it.
+   Colour (named):
+     paper     #FFFFFF  the page, always white, never any other colour
+     desk      #E8E6E1  warm light grey workspace the page lies on
+     shelf     #F5F4F0  the tree down the left
+     tray      #DCD9D2  the pen tray strip, a step darker than the desk
+     graphite  #262A30  text, like a soft pencil
+     ribbon    #2F4BB8  S Pen ink blue: the one accent, used for the open page only
+     rule      #D3D7DE  grid and lines on the paper, light grey
+   Type:
+     Fraunces (display): the PenWorks wordmark only
+     Atkinson Hyperlegible (body): everything else, at 500/700, because thin fonts tire her eyes
+     Tabular figures of the body face for the page counts
+   Signature: a ribbon bookmark. The open page in the tree carries a small ink-blue ribbon, and the same
+   ribbon hangs from the top edge of the paper, so you always know which page you are on.
+   ------------------------------------------------------------------ */
+
+:root {
+  --paper: #FFFFFF;
+  --desk: #E8E6E1;
+  --shelf: #F5F4F0;
+  --tray: #DCD9D2;
+  --graphite: #262A30;
+  --muted: #6B7079;
+  --faint: #A3A7AE;
+  --line: #E2E0DA;
+  --ribbon: #2F4BB8;
+  --ribbon-soft: #E6EAF8;
+  --rule: #D3D7DE;
+  --tree-w: 260px;
+  --tray-w: 56px;
+  --bar-h: 52px;
+  --body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --display: "Fraunces", Georgia, "Times New Roman", serif;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--desk);
+  color: var(--graphite);
+  font: 500 15px/1.35 var(--body);
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+button { font: inherit; color: inherit; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--ribbon); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+/* ---------- login ---------- */
+#login {
+  position: fixed; inset: 0; display: grid; place-items: center; padding: 16px; background: var(--desk);
+}
+#login form {
+  width: 100%; max-width: 340px; background: var(--paper); border-radius: 6px; padding: 28px 24px 24px;
+  box-shadow: 0 1px 2px rgba(38,42,48,.08), 0 10px 30px rgba(38,42,48,.10); position: relative;
+}
+#login form::before { /* the ribbon */
+  content: ""; position: absolute; top: 0; right: 28px; width: 14px; height: 34px; background: var(--ribbon);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 78%, 0 100%);
+}
+.wordmark { font: 600 26px/1 var(--display); letter-spacing: -.01em; margin: 0 0 20px; }
+#login label { display: block; font-weight: 700; font-size: 14px; margin: 12px 0 6px; }
+#login input {
+  width: 100%; height: 44px; border: 1px solid #CFCCC4; border-radius: 6px; padding: 0 12px;
+  font: 500 16px var(--body); color: var(--graphite); background: #FCFCFB;
+}
+#login button {
+  width: 100%; height: 46px; margin-top: 20px; border: 0; border-radius: 6px; background: var(--graphite);
+  color: #fff; font-weight: 700; font-size: 16px; cursor: pointer;
+}
+#login button:disabled { opacity: .6; }
+#loginMsg { min-height: 20px; margin: 12px 0 0; font-size: 14px; color: #8A3B2E; }
+
+/* ---------- three columns ---------- */
+#app {
+  height: 100%; display: grid;
+  grid-template-columns: var(--tree-w) minmax(0, 1fr) var(--tray-w);
+}
+
+/* ---------- the tree ---------- */
+#tree {
+  background: var(--shelf); border-right: 1px solid var(--line); display: flex; flex-direction: column;
+  min-height: 0; z-index: 20;
+}
+#tree .top { height: var(--bar-h); display: flex; align-items: center; padding: 0 16px; flex: none; }
+#tree .top .wordmark { margin: 0; font-size: 21px; }
+#treeList { flex: 1; overflow-y: auto; padding: 4px 8px 12px; touch-action: pan-y; }
+#tree .foot { flex: none; border-top: 1px solid var(--line); padding: 6px 8px 10px; }
+
+.row {
+  display: flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 4px 0 8px; border-radius: 6px;
+  position: relative; cursor: pointer; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
+.row:hover { background: rgba(38,42,48,.04); }
+.row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .count {
+  font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 700; color: var(--muted);
+  background: rgba(38,42,48,.06); border-radius: 10px; padding: 1px 7px; min-width: 22px; text-align: center;
+}
+.row .more {
+  flex: none; width: 30px; height: 30px; border: 0; background: transparent; border-radius: 6px;
+  color: var(--faint); cursor: pointer; font-size: 18px; line-height: 1; padding: 0;
+}
+.row .more:hover { color: var(--graphite); background: rgba(38,42,48,.06); }
+.row input.rename {
+  flex: 1; min-width: 0; height: 30px; border: 1px solid var(--ribbon); border-radius: 5px; padding: 0 6px;
+  font: inherit; background: #fff; color: var(--graphite);
+}
+.row.nb { font-weight: 700; margin-top: 10px; }
+.row.nb .name { font-size: 15.5px; }
+.row.sec { padding-left: 20px; font-weight: 700; color: #3A3F47; }
+.row.pg { padding-left: 34px; font-weight: 500; color: #3A3F47; }
+.row.loose .name, .row.bin .name { font-weight: 700; }
+.row.pg.open { background: var(--ribbon-soft); color: var(--graphite); }
+.row.pg.open::before { /* ribbon bookmark */
+  content: ""; position: absolute; left: 18px; top: 0; width: 8px; height: 22px; background: var(--ribbon);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 76%, 0 100%);
+}
+.row.sec.openSec .name { color: var(--ribbon); }
+.add {
+  display: block; width: calc(100% - 20px); margin-left: 20px; text-align: left; border: 0; background: transparent;
+  color: var(--muted); font-weight: 700; font-size: 13.5px; padding: 7px 8px; border-radius: 6px; cursor: pointer;
+}
+.add:hover { background: rgba(38,42,48,.05); color: var(--graphite); }
+.add.nbAdd { margin: 14px 0 0; width: 100%; font-size: 14.5px; }
+.empty { color: var(--faint); font-size: 13px; padding: 2px 8px 2px 34px; }
+.binItem { display: flex; align-items: center; gap: 8px; padding: 6px 4px 6px 20px; font-size: 14px; }
+.binItem .what { flex: 1; min-width: 0; }
+.binItem .what b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.binItem .what small { color: var(--muted); font-size: 12px; }
+.binItem button {
+  flex: none; border: 1px solid #CFCCC4; background: #fff; border-radius: 6px; padding: 5px 10px; font-weight: 700;
+  font-size: 13px; cursor: pointer;
+}
+.logout {
+  border: 0; background: transparent; color: var(--muted); font-size: 12.5px; padding: 6px 8px; cursor: pointer;
+  border-radius: 6px;
+}
+.logout:hover { color: var(--graphite); }
+.modeNote { color: var(--faint); font-size: 12px; margin-left: 6px; }
+
+/* ---------- page area ---------- */
+#main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+#pagebar {
+  height: var(--bar-h); flex: none; display: flex; align-items: center; gap: 4px; padding: 0 10px;
+  background: var(--desk); border-bottom: 1px solid rgba(38,42,48,.06);
+}
+.ib {
+  flex: none; width: 40px; height: 40px; border: 0; background: transparent; border-radius: 8px;
+  display: grid; place-items: center; cursor: pointer; color: var(--graphite); padding: 0;
+}
+.ib:hover { background: rgba(38,42,48,.06); }
+.ib:disabled { opacity: .3; cursor: default; background: transparent; }
+.ib svg { width: 22px; height: 22px; }
+#menuBtn { display: none; }
+#pageTitle { flex: 1; min-width: 0; text-align: center; overflow: hidden; }
+#pageTitle b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+#pageTitle small { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.newPage {
+  flex: none; height: 36px; border: 0; border-radius: 8px; background: var(--graphite); color: #fff;
+  font-weight: 700; font-size: 14px; padding: 0 12px; cursor: pointer; margin-left: 4px;
+}
+
+#desk {
+  flex: 1; position: relative; overflow: hidden; touch-action: none; background: var(--desk);
+}
+#sheetWrap { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+#sheet {
+  position: relative; background: var(--paper); border-radius: 2px;
+  box-shadow: 0 1px 2px rgba(38,42,48,.10), 0 8px 26px rgba(38,42,48,.12);
+}
+#sheet::after { /* the ribbon hanging from the open page */
+  content: ""; position: absolute; top: 0; right: 48px; width: 18px; height: 52px; background: var(--ribbon);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 80%, 0 100%); opacity: .92;
+}
+#sheet svg { position: absolute; inset: 0; display: block; }
+#addBelow {
+  display: block; margin: 22px auto 0; height: 44px; padding: 0 18px; border: 1px dashed #B9B5AC;
+  border-radius: 8px; background: transparent; color: #4A4F57; font-weight: 700; font-size: 15px; cursor: pointer;
+}
+#addBelow:hover { background: rgba(255,255,255,.5); }
+#nothing {
+  position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px;
+  color: var(--muted); font-size: 15px;
+}
+
+/* ---------- the tray (U2 fills it) ---------- */
+#tray {
+  background: var(--tray); border-left: 1px solid rgba(38,42,48,.08); display: flex; flex-direction: column;
+  align-items: center; justify-content: flex-end; padding: 8px 0 12px; gap: 6px;
+}
+#tray .ib { color: #8E8A82; }
+
+/* ---------- popover menu, toast, scrim ---------- */
+#menu {
+  position: fixed; z-index: 50; min-width: 200px; max-width: 290px; max-height: 70vh; overflow-y: auto;
+  background: #fff; border-radius: 8px; padding: 6px; box-shadow: 0 6px 30px rgba(38,42,48,.22);
+}
+#menu button {
+  display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 9px 12px;
+  border-radius: 6px; font-weight: 500; font-size: 15px; cursor: pointer;
+}
+#menu button:hover { background: var(--ribbon-soft); }
+#menu button.on { font-weight: 700; color: var(--ribbon); }
+#menu .hd { font-size: 12px; font-weight: 700; color: var(--muted); padding: 8px 12px 4px; }
+#toast {
+  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 60; background: var(--graphite);
+  color: #fff; padding: 10px 16px; border-radius: 8px; font-weight: 700; font-size: 14px; opacity: 0;
+  pointer-events: none; transition: opacity .2s; white-space: nowrap;
+}
+#toast.show { opacity: 1; }
+#scrim { position: fixed; inset: 0; background: rgba(38,42,48,.28); z-index: 15; }
+
+/* ---------- tablet portrait and smaller: the tree becomes a drawer ---------- */
+@media (max-width: 900px) {
+  #app { grid-template-columns: minmax(0, 1fr) var(--tray-w); }
+  #tree {
+    position: fixed; left: 0; top: 0; bottom: 0; width: min(300px, 86vw); transform: translateX(-102%);
+    transition: transform .22s ease;
+  }
+  body.drawer #tree { transform: none; box-shadow: 4px 0 24px rgba(38,42,48,.18); }
+  #menuBtn { display: grid; }
+}
+/* ---------- phone: reading only, no pen tray ---------- */
+@media (max-width: 600px) {
+  #app { grid-template-columns: minmax(0, 1fr); }
+  #tray { display: none; }
+  #pagebar { padding: 0 4px; gap: 0; }
+  .ib { width: 38px; }
+  .newPage { padding: 0 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #tree, #toast { transition: none; }
+}

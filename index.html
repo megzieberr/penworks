@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PenWorks</title>
+<meta name="theme-color" content="#262A30">
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" href="./icons/icon-192.png">
+<link rel="apple-touch-icon" href="./icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<link rel="stylesheet" href="./css/app.css">
+</head>
+<body>
+
+<div id="login" hidden>
+  <form id="loginForm" autocomplete="on">
+    <h1 class="wordmark">PenWorks</h1>
+    <label for="lu">Username</label>
+    <input id="lu" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+    <label for="lp">Password</label>
+    <input id="lp" name="password" type="password" autocomplete="current-password" required>
+    <button id="loginBtn" type="submit">Log in</button>
+    <p id="loginMsg" role="status"></p>
+  </form>
+</div>
+
+<div id="app" hidden>
+  <aside id="tree" aria-label="Notebooks">
+    <div class="top"><span class="wordmark">PenWorks</span><span id="modeNote" class="modeNote"></span></div>
+    <div id="treeList"></div>
+    <div class="foot"><button id="logoutBtn" class="logout" type="button">Log out</button></div>
+  </aside>
+
+  <main id="main">
+    <div id="pagebar">
+      <button id="menuBtn" class="ib" type="button" aria-label="Notebooks">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+      <button id="prevBtn" class="ib" type="button" aria-label="Previous page">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>
+      </button>
+      <div id="pageTitle"><b></b><small></small></div>
+      <button id="nextBtn" class="ib" type="button" aria-label="Next page">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
+      </button>
+      <button id="orientBtn" class="ib" type="button" aria-label="Portrait or landscape"></button>
+      <button id="bgBtn" class="ib" type="button" aria-label="Page background">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="3" width="16" height="18" rx="1.5"/><path d="M4 9h16M4 15h16M10 3v18M15 3v18" opacity=".55"/></svg>
+      </button>
+      <button id="newPageBtn" class="newPage" type="button">+ Page</button>
+    </div>
+    <div id="desk">
+      <div id="sheetWrap">
+        <div id="sheet"></div>
+        <button id="addBelow" type="button">Add a page below</button>
+      </div>
+      <div id="nothing" hidden></div>
+    </div>
+  </main>
+
+  <aside id="tray" aria-label="Pen tray">
+    <button class="ib" type="button" aria-label="Undo" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7L4 12l5 5"/><path d="M4 12h10a6 6 0 0 1 0 12h-2" transform="translate(0 -6)"/></svg>
+    </button>
+    <button class="ib" type="button" aria-label="Redo" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 7l5 5-5 5"/><path d="M20 12H10a6 6 0 0 0 0 12h2" transform="translate(0 -6)"/></svg>
+    </button>
+  </aside>
+</div>
+
+<div id="scrim" hidden></div>
+<div id="menu" hidden role="menu"></div>
+<div id="toast" role="status"></div>
+
+<script type="module" src="./js/app.js"></script>
+<script>
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+}
+</script>
+</body>
+</html>

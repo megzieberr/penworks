@@ -1,0 +1,16 @@
+{
+  "name": "PenWorks",
+  "short_name": "PenWorks",
+  "description": "Notebooks, sections and A4 pages for the S Pen",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#E8E6E1",
+  "theme_color": "#262A30",
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "./icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
