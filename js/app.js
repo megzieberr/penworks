@@ -1,12 +1,15 @@
-// PenWorks U1b: Samsung Notes' flow. Folder view (folders two levels deep, note names showing under
-// each folder, Loose, Bin), the grid of notes, the note view (every page stacked), page list, page
-// undo/redo, full screen, autosave.
+// PenWorks U1b + U2 A: Samsung Notes' flow. Folder view (folders two levels deep, note names showing under
+// each folder, Loose, Bin), the grid of notes, the note view (every page stacked), page list, the one
+// undo/redo stack per note (page operations and ink together), full screen, autosave, dark mode.
+// Ink lives in js/ink.js (strokes), js/store-local.js (kept on the device) and js/tray.js (the pen tray).
 import { api } from './api.js';
 import { initPage, showStack, fit, scrollToPage, relayout, current } from './page.js';
+import * as ink from './ink.js';
+import { initTray, closePanel, trayState } from './tray.js';
 
 const $ = (id) => document.getElementById(id);
 const S = { folders: [], notes: [], pages: [], sel: 'loose', openNote: null, cur: 0, fold: {}, renaming: null,
-            listOpen: false, hist: {}, user: null };
+            listOpen: false, hist: {}, clip: {}, user: null };
 const PREF = 'penworks.' + api.mode + '.';
 const DAY = 864e5;
 // Samsung's small folder palette
@@ -225,15 +228,35 @@ function openNote(id, index = 0) {
 }
 function closeNote(skipHistory) {
   if (document.body.classList.contains('full')) exitFull();
+  closePanel();
+  if (S.openNote) { delete S.hist[S.openNote]; tidyInk(); }    // closing a note ends its undo history
   S.openNote = null; S.listOpen = false; S.renaming = null; remember();
   document.body.classList.remove('noteMode');
   if (!skipHistory && history.state && history.state.note) history.replaceState(null, '');
   render();
 }
 
-// page operations: each one can be undone (a small stack per note; U2 adds ink to it)
+// page and ink operations: each one can be undone (one stack per note, 100 deep, in the order she did them).
+// An op that names `pages` holds those pages' strokes: a page deleted for good keeps its strokes on the
+// device until no op can bring it back (the op drops off the stack, or the note closes).
+const DEPTH = 100;
+const orphans = new Set();
 const hist = () => (S.hist[S.openNote] ||= { u: [], r: [] });
-function doOp(op) { op.redo(); const H = hist(); H.u.push(op); H.r = []; renderTray(); }
+function doOp(op) {
+  op.redo();
+  const H = hist(); H.u.push(op);
+  const dropped = H.r.length + Math.max(0, H.u.length - DEPTH);
+  if (H.u.length > DEPTH) H.u.splice(0, H.u.length - DEPTH);
+  H.r = [];
+  if (dropped) tidyInk();
+  renderTray();
+}
+function tidyInk() {
+  if (!orphans.size) return;
+  const held = new Set();
+  for (const H of Object.values(S.hist)) for (const op of [...H.u, ...H.r]) (op.pages || []).forEach((id) => held.add(id));
+  for (const id of [...orphans]) if (!held.has(id) && !page(id)) { ink.forget(id); orphans.delete(id); }
+}
 function undo() { if (!S.openNote) return; const H = hist(), op = H.u.pop(); if (!op) return; op.undo(); H.r.push(op); renderTray(); }
 function redo() { if (!S.openNote) return; const H = hist(), op = H.r.pop(); if (!op) return; op.redo(); H.u.push(op); renderTray(); }
 
@@ -257,6 +280,7 @@ function insertPage(snap, i) {
 function removePage(id) {
   const p = page(id), list = pagesOf(p.note_id).filter((x) => x !== p);
   S.pages = S.pages.filter((x) => x !== p);
+  orphans.add(id);
   save(() => api.deletePage(id));
   renumber(list);
   touchNote(p.note_id);
@@ -274,14 +298,40 @@ function addPageBelow(i) {
   const at = Math.min(list.length, i + 1);
   const snap = { id: uuid(), note_id: nid, orientation: model ? model.orientation : 'portrait',
                  background: model ? model.background : 'grid', created_at: nowIso() };
-  doOp({ redo: () => { insertPage(snap, at); shown(at); }, undo: () => { removePage(snap.id); shown(Math.max(0, at - 1)); } });
+  doOp({ pages: [snap.id], redo: () => { insertPage(snap, at); shown(at); }, undo: () => { removePage(snap.id); shown(Math.max(0, at - 1)); } });
 }
 function deletePage(i) {
   const list = pagesOf(S.openNote);
   if (list.length <= 1) return;                       // a note keeps at least one page
   const snap = { ...list[i] };
-  doOp({ redo: () => { removePage(snap.id); shown(Math.min(i, list.length - 2)); },
+  doOp({ pages: [snap.id], redo: () => { removePage(snap.id); shown(Math.min(i, list.length - 2)); },
          undo: () => { insertPage(snap, i); shown(i); } });
+}
+// Samsung's page menu: Copy keeps the page (orientation, paper, strokes) on a clipboard for this note,
+// Cut = Copy then Delete, Paste puts it below the pressed page, Erase page clears its strokes
+function copyPage(i, quiet) {
+  const p = pagesOf(S.openNote)[i];
+  if (!p) return;
+  S.clip[S.openNote] = { orientation: p.orientation, background: p.background, strokes: ink.copyStrokes(p.id) };
+  if (!quiet) toast('Page copied.');
+}
+function cutPage(i) {
+  if (pagesOf(S.openNote).length <= 1) return;
+  copyPage(i, true); deletePage(i); toast('Page cut.');
+}
+function pastePage(i) {
+  const nid = S.openNote, c = S.clip[nid];
+  if (!c) return;
+  const at = i + 1;
+  const snap = { id: uuid(), note_id: nid, orientation: c.orientation, background: c.background, created_at: nowIso() };
+  const recs = c.strokes.map((r) => ({ ...JSON.parse(JSON.stringify(r)), id: uuid(), page_id: snap.id }));
+  doOp({ pages: [snap.id], redo: () => { insertPage(snap, at); ink.put(snap.id, recs); shown(at); },
+         undo: () => { removePage(snap.id); shown(i); } });
+}
+function erasePage(i) {
+  const p = pagesOf(S.openNote)[i], op = p && ink.erasePageOp(p.id);
+  if (!op) { toast('Nothing to erase on this page.'); return; }
+  doOp(op);
 }
 function stepPage(i, dir) {
   const list = pagesOf(S.openNote), j = i + dir;
@@ -377,8 +427,11 @@ function targetMenu(anchor, targets, go) {
 }
 function thumbMenu(i, anchor) {
   const n = pagesOf(S.openNote).length;
-  const items = [{ label: 'Add page', fn: () => addPageBelow(i) }];
+  const items = [{ label: 'Add page', fn: () => addPageBelow(i) }, { label: 'Copy', fn: () => copyPage(i) }];
+  if (n > 1) items.push({ label: 'Cut', fn: () => cutPage(i) });
+  if (S.clip[S.openNote]) items.push({ label: 'Paste', fn: () => pastePage(i) });
   if (n > 1) items.push({ label: 'Delete', fn: () => deletePage(i) });
+  items.push({ label: 'Erase page', fn: () => erasePage(i) });
   if (i > 0) items.push({ label: 'Move up', fn: () => stepPage(i, -1) });
   if (i < n - 1) items.push({ label: 'Move down', fn: () => stepPage(i, 1) });
   openMenu(anchor, items);
@@ -570,6 +623,27 @@ function render() {
   renderTray();
 }
 
+// ---------------------------------------------------------------- dark mode: follows the system, the footer toggle overrides it
+// (the paper stays white and the ink keeps its colours either way)
+const THEME = 'penworks.theme';
+const SVG_MOON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19.5 14.6A8 8 0 0 1 9.4 4.5a8 8 0 1 0 10.1 10.1z"/></svg>';
+const SVG_SUN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/></svg>';
+const darkQuery = matchMedia('(prefers-color-scheme: dark)');
+function chosenTheme() { try { const t = localStorage.getItem(THEME); return t === 'dark' || t === 'light' ? t : null; } catch (_) { return null; } }
+const isDark = () => (chosenTheme() || (darkQuery.matches ? 'dark' : 'light')) === 'dark';
+function applyTheme() {
+  const t = chosenTheme(), root = document.documentElement;
+  if (t) root.dataset.theme = t; else delete root.dataset.theme;
+  const dark = isDark(), b = $('themeBtn');
+  b.innerHTML = dark ? SVG_SUN : SVG_MOON;
+  b.setAttribute('aria-label', dark ? 'Light mode' : 'Dark mode'); b.title = dark ? 'Light mode' : 'Dark mode';
+  document.querySelector('meta[name="theme-color"]').setAttribute('content', dark ? '#1C1F23' : '#262A30');
+}
+function toggleTheme() {
+  try { localStorage.setItem(THEME, isDark() ? 'light' : 'dark'); } catch (_) { /* ignore */ }
+  applyTheme();
+}
+
 // ---------------------------------------------------------------- start
 async function load() {
   try { await api.purgeBin(30); } catch (_) { /* the bin empties itself next time */ }
@@ -594,8 +668,21 @@ async function enter(user) {
 }
 
 function wire() {
+  applyTheme();
+  darkQuery.addEventListener('change', applyTheme);
+  $('themeBtn').addEventListener('click', toggleTheme);
+  $('eyeBtn').addEventListener('click', () => {
+    const show = $('lp').type === 'password';
+    $('lp').type = show ? 'text' : 'password';
+    $('eyeBtn').setAttribute('aria-pressed', show ? 'true' : 'false');
+    $('eyeBtn').setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+    $('eyeBtn').classList.toggle('on', show);
+  });
+  ink.initInk({ doOp, desk: $('desk') });
+  initTray();
   initPage({ desk: $('desk'), stack: $('stack'), addBelow: $('addBelow'),
-             onCurrent: (i) => { S.cur = Math.max(0, i); updateCount(); } });
+             onCurrent: (i) => { S.cur = Math.max(0, i); updateCount(); },
+             onSheets: ink.attach, ink: ink.hook });
   $('loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     $('loginBtn').disabled = true; $('loginMsg').textContent = '';
@@ -640,7 +727,7 @@ function wire() {
 }
 
 // test hook: the checks wait for writes and clean up their rows through this
-window.__pw = { S, api, idle: () => chain, failed: () => failed, current };
+window.__pw = { S, api, idle: () => chain, failed: () => failed, current, ink, tray: trayState };
 
 wire();
 (async () => {

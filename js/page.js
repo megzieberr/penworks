@@ -1,5 +1,6 @@
 // PenWorks page area: a note's A4 pages stacked under each other on the desk (Samsung's scroll),
-// their paper, and finger zoom and pan. The S Pen and the mouse draw nothing yet (ink is U2).
+// their paper, and finger zoom and pan. The S Pen and the mouse are handed to the ink hook (js/ink.js)
+// together with the page under them; a finger never draws.
 // One finger scrolls the stack (and pans sideways when zoomed in), two fingers zoom about the pinch
 // point (lifted from the constructions tool, including "ignore fingers while the pen is near").
 // On a laptop the wheel scrolls and Ctrl + wheel (or a trackpad pinch) zooms. Zoom is one value for
@@ -12,9 +13,10 @@ const LINE_TOP = 2.4 * CM;                   // first line sits below a top marg
 const ZMIN = 0.2, ZMAX = 4, MARGIN = 24, GAP = 24, BELOW = 90;   // BELOW: room for "Add a page below"
 const SVGNS = 'http://www.w3.org/2000/svg';
 
-let desk, stack, addBelow, onCurrent = () => {};
+let desk, stack, addBelow, onCurrent = () => {}, onSheets = () => {}, ink = null;
 const V = { x: 0, y: 0, z: 1 };
-const L = { tops: [], sizes: [], w: A4.w, h: 0 };
+const L = { tops: [], sizes: [], ids: [], w: A4.w, h: 0 };
+let R = null;        // the desk's place on screen, refreshed at every pen-down and resize
 let cur = -1;
 let pinned = null;   // a page asked for by number (arrows, page list) stays current while any of it shows
 
@@ -75,7 +77,7 @@ function clampView() {
 // draws every page of the note, in order; keeps the view where it was
 export function showStack(pages) {
   stack.querySelectorAll('.sheet').forEach((e) => e.remove());
-  L.tops = []; L.sizes = []; L.w = 0;
+  L.tops = []; L.sizes = []; L.ids = []; L.w = 0;
   pages.forEach((p) => { const s = pageSize(p.orientation); L.sizes.push(s); L.w = Math.max(L.w, s.w); });
   if (!pages.length) L.w = A4.w;
   let y = 0;
@@ -89,7 +91,7 @@ export function showStack(pages) {
     el.dataset.orientation = p.orientation; el.dataset.bg = p.background;
     el.appendChild(bgSvg(s.w, s.h, p.background));
     stack.insertBefore(el, addBelow);
-    L.tops.push(y);
+    L.tops.push(y); L.ids.push(p.id);
     y += s.h + GAP;
   });
   addBelow.style.top = Math.max(0, y - GAP) + 22 + 'px';
@@ -98,6 +100,7 @@ export function showStack(pages) {
   cur = -1;
   if (pinned !== null && pinned >= L.tops.length) pinned = L.tops.length - 1;
   clampView(); apply();
+  onSheets([...stack.querySelectorAll('.sheet')]);
 }
 
 // fit page `index` across the desk (zoom 1 at most) and show it at the top; a wider (landscape) page
@@ -125,6 +128,25 @@ export function relayout() { const i = Math.max(0, cur); fit(i); }
 export function current() { return cur; }
 export function view() { return { ...V }; }
 
+// screen point to page px at zoom 1. pageAt: the page under the point (or null);
+// pagePoint: the same point measured on page `index`, even when it is off that page
+function deskPoint(cx, cy) {
+  const r = R || (R = desk.getBoundingClientRect());
+  return [(cx - r.left - V.x) / V.z, (cy - r.top - V.y) / V.z];
+}
+export function pagePoint(index, cx, cy) {
+  const [sx, sy] = deskPoint(cx, cy), s = L.sizes[index];
+  return [sx - (L.w - s.w) / 2, sy - L.tops[index]];
+}
+export function pageAt(cx, cy) {
+  const [sx, sy] = deskPoint(cx, cy);
+  for (let i = 0; i < L.tops.length; i++) {
+    const s = L.sizes[i], x = sx - (L.w - s.w) / 2, y = sy - L.tops[i];
+    if (x >= 0 && x <= s.w && y >= 0 && y <= s.h) return { index: i, id: L.ids[i], x, y, w: s.w, h: s.h };
+  }
+  return null;
+}
+
 function zoomAt(p, f) {
   pinned = null;
   const z = Math.min(ZMAX, Math.max(ZMIN, V.z * f));
@@ -136,8 +158,10 @@ function zoomAt(p, f) {
 export function initPage(els) {
   ({ desk, stack, addBelow } = els);
   if (els.onCurrent) onCurrent = els.onCurrent;
+  if (els.onSheets) onSheets = els.onSheets;
+  if (els.ink) ink = els.ink;                       // { down(e), move(events), up(e, cancelled) }
   const touches = new Map();
-  let pinch = null, drag = null, penSeen = -1e9;
+  let pinch = null, drag = null, penSeen = -1e9, inkId = null;
   const rect = () => desk.getBoundingClientRect();
   const pt = (e) => { const r = rect(); return [e.clientX - r.left, e.clientY - r.top]; };
   const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
@@ -156,8 +180,20 @@ export function initPage(els) {
   }
 
   desk.addEventListener('pointerdown', (e) => {
-    if (e.pointerType === 'pen') { penSeen = performance.now(); return; }   // ink arrives in U2
-    if (e.pointerType !== 'touch') return;                                 // the mouse does nothing
+    if (e.pointerType === 'pen' || e.pointerType === 'mouse') {           // the S Pen and the mouse draw
+      if (e.pointerType === 'pen') penSeen = performance.now();
+      if (e.button > 0 || inkId !== null || !ink) return;
+      if (e.target.closest('button, #pageList')) return;
+      R = desk.getBoundingClientRect();
+      if (!ink.down(e)) return;
+      inkId = e.pointerId;
+      touches.clear(); pinch = null; drag = null;                          // a palm already down stops panning
+      try { desk.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+      e.preventDefault();
+      return;
+    }
+    if (e.pointerType !== 'touch') return;
+    if (inkId !== null) return;                                            // a finger is ignored while the pen writes
     if (e.target.closest('button, #pageList')) return;                     // buttons and the page list stay tappable
     if (performance.now() - penSeen < 600) return;                         // palm while the pen is near
     touches.set(e.pointerId, pt(e));
@@ -168,7 +204,13 @@ export function initPage(els) {
     e.preventDefault();
   });
   desk.addEventListener('pointermove', (e) => {
-    if (e.pointerType === 'pen') { penSeen = performance.now(); return; }
+    if (e.pointerType === 'pen') penSeen = performance.now();
+    if (e.pointerId === inkId) {
+      const all = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+      ink.move(all.length ? all : [e]);
+      return;
+    }
+    if (e.pointerType === 'pen' || inkId !== null) return;
     if (!touches.has(e.pointerId)) return;
     touches.set(e.pointerId, pt(e));
     if (pinch && touches.size >= 2) { movePinch(); return; }
@@ -179,6 +221,7 @@ export function initPage(els) {
     }
   });
   const up = (e) => {
+    if (e.pointerId === inkId) { inkId = null; ink.up(e, e.type === 'pointercancel'); return; }
     if (!touches.has(e.pointerId)) return;
     touches.delete(e.pointerId);
     if (touches.size >= 2) startPinch();
@@ -193,5 +236,5 @@ export function initPage(els) {
     else { pinned = null; V.x -= e.shiftKey ? e.deltaY : e.deltaX; V.y -= e.shiftKey ? 0 : e.deltaY; clampView(); apply(); }
   }, { passive: false });
   desk.addEventListener('contextmenu', (e) => e.preventDefault());
-  window.addEventListener('resize', () => { if (L.tops.length) relayout(); });
+  window.addEventListener('resize', () => { R = null; if (L.tops.length) relayout(); });
 }

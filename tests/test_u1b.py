@@ -195,7 +195,8 @@ try:
         open_list(pg); thumb(pg, 2).click(); pg.wait_for_timeout(80)
         check("tap thumbnail 2: page 2 is current, list closed", count_text(pg) == "2 / 4" and pg.locator("#pageList").is_hidden(), count_text(pg))
         open_list(pg); thumb(pg, 4).click(button="right"); items = menu_items(pg)
-        check("thumbnail menu: Add page, Delete, Move up (last one)", items == ["Add page", "Delete", "Move up"], items)
+        check("thumbnail menu: Add page, Copy, Cut, Delete, Erase page, Move up (last one; U2 A added Copy, Cut, Erase page)",
+              items == ["Add page", "Copy", "Cut", "Delete", "Erase page", "Move up"], items)
         menu(pg, "Move up"); idle(pg)
         moved = [ids[0], ids[1], ids[3], ids[2]]
         check("move page 4 up", pg.evaluate(ORDER_JS, "Algebra") == moved and pg.evaluate(STORED_JS, "Algebra") == moved)
@@ -347,7 +348,7 @@ try:
             st = pg.evaluate("(u)=>fetch(u).then(r=>r.status+' '+r.headers.get('content-type'))", ic["src"])
             check("icon " + ic["src"], st.startswith("200 image/png"), st)
         check("service worker registers and is active", pg.evaluate("navigator.serviceWorker.ready.then(r=>!!r.active)"))
-        check("cache is pw-v2", pg.evaluate("caches.keys()") == ["pw-v2"] or "pw-v2" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v3 (U2 A)", pg.evaluate("caches.keys()") == ["pw-v3"] or "pw-v3" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
         inst = ctx.new_cdp_session(pg).send("Page.getInstallabilityErrors")
         check("Chrome sees it as installable", not inst.get("installabilityErrors"), inst)
         pg.reload(); ready(pg); pg.wait_for_timeout(500)
