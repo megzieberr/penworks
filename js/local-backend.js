@@ -1,29 +1,46 @@
 // PenWorks local twin of the database layer. Switched on with ?local=1.
 // Same calls and the same row shapes as js/api.js, kept in this browser's localStorage, so the whole
-// app can be built and tested without touching Supabase.
+// app can be built and tested without touching Supabase. It copies the database's rules too:
+// folders two levels deep (a hard stop), "on delete cascade / set null", and what counts as
+// "last edited" for a note (renamed, or a page added, deleted, moved or re-papered).
 
-const KEY = 'penworks.local.v1';
-const TABLES = ['notebooks', 'sections', 'pages'];
+const KEY = 'penworks.local.v2';
+const TABLES = ['folders', 'notes', 'pages'];
 const DEFAULTS = {
-  notebooks: { name: '', position: 0, deleted_at: null },
-  sections: { notebook_id: null, name: '', position: 0, background: 'blank', deleted_at: null },
-  pages: { section_id: null, title: '', position: 0, orientation: 'portrait', background: 'blank',
+  folders: { parent_id: null, name: '', colour: null, position: 0, deleted_at: null },
+  notes: { folder_id: null, name: 'Untitled', pinned: false, cover_path: null, deleted_at: null },
+  pages: { note_id: null, position: 0, orientation: 'portrait', background: 'grid',
            snapshot_path: null, flagged: false, deleted_at: null },
 };
+const PAGE_EDIT = ['position', 'orientation', 'background'];
 
 function read() {
   try {
     const d = JSON.parse(localStorage.getItem(KEY) || 'null');
     if (d && TABLES.every((t) => Array.isArray(d[t]))) return d;
   } catch (_) { /* fall through to an empty store */ }
-  return { notebooks: [], sections: [], pages: [] };
+  return { folders: [], notes: [], pages: [] };
 }
 function write(d) { localStorage.setItem(KEY, JSON.stringify(d)); }
 function check(table) { if (!TABLES.includes(table)) throw new Error('Unknown table ' + table); }
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
+function refuse(msg) { const e = new Error(msg); e.code = '23514'; throw e; }
+
+// the database's folders_two_levels trigger, word for word
+function twoLevels(d, id, parentId) {
+  if (parentId === null || parentId === undefined) return;
+  if (parentId === id) refuse('A folder cannot sit inside itself.');
+  const p = d.folders.find((f) => f.id === parentId);
+  if (!p) refuse('That folder does not exist.');
+  if (p.parent_id) refuse('Folders go two levels deep, no further.');
+  if (id && d.folders.some((f) => f.parent_id === id)) refuse('A folder with folders inside it cannot go inside another folder.');
+}
+function touchNotes(d, noteIds, now) {
+  const set = new Set(noteIds);
+  d.notes.forEach((n) => { if (set.has(n.id)) n.updated_at = now; });
+}
 
 let failNext = 0;   // test hook: make the next n writes fail, to prove the retry toast
-
 function maybeFail() {
   if (failNext > 0) { failNext--; throw new Error('Simulated failed write'); }
 }
@@ -38,30 +55,36 @@ export const localApi = {
   async purgeBin(days = 30) {
     const d = read(), cut = Date.now() - days * 864e5;
     const old = (r) => r.deleted_at && Date.parse(r.deleted_at) < cut;
-    let n = 0;
-    const goneNb = new Set(d.notebooks.filter(old).map((r) => r.id));
-    d.notebooks = d.notebooks.filter((r) => !goneNb.has(r.id));
-    const goneSec = new Set(d.sections.filter((r) => old(r) || goneNb.has(r.notebook_id)).map((r) => r.id));
-    d.sections = d.sections.filter((r) => !goneSec.has(r.id));
-    const before = d.pages.length;
+    const before = d.folders.length + d.notes.length + d.pages.length;
     d.pages = d.pages.filter((r) => !old(r));
-    d.pages.forEach((r) => { if (goneSec.has(r.section_id)) r.section_id = null; });   // matches "on delete set null"
-    n = goneNb.size + goneSec.size + (before - d.pages.length);
+    const goneNotes = new Set(d.notes.filter(old).map((r) => r.id));
+    d.notes = d.notes.filter((r) => !goneNotes.has(r.id));
+    d.pages = d.pages.filter((r) => !goneNotes.has(r.note_id));
+    const goneF = new Set(d.folders.filter(old).map((r) => r.id));
+    d.folders.forEach((f) => { if (goneF.has(f.parent_id)) goneF.add(f.id); });
+    d.folders = d.folders.filter((r) => !goneF.has(r.id));
+    d.notes.forEach((n) => { if (goneF.has(n.folder_id)) n.folder_id = null; });
     write(d);
-    return n;
+    return before - (d.folders.length + d.notes.length + d.pages.length);
   },
 
   async loadAll() {
     const d = read();
-    return { notebooks: clone(d.notebooks), sections: clone(d.sections), pages: clone(d.pages) };
+    return { folders: clone(d.folders), notes: clone(d.notes), pages: clone(d.pages) };
   },
 
   async insert(table, row) {
     check(table); maybeFail();
     const d = read(), now = new Date().toISOString();
-    const r = { ...DEFAULTS[table], ...row, id: row.id || crypto.randomUUID(), owner_id: 'local',
-                created_at: row.created_at || now, updated_at: now };
-    d[table].push(r); write(d);
+    const id = row.id || crypto.randomUUID();
+    if (d[table].some((r) => r.id === id)) refuse('That row is there already.');
+    if (table === 'folders') twoLevels(d, id, row.parent_id);
+    if (table === 'notes' && row.folder_id && !d.folders.some((f) => f.id === row.folder_id)) refuse('That folder does not exist.');
+    if (table === 'pages' && !d.notes.some((n) => n.id === row.note_id)) refuse('That note does not exist.');
+    const r = { ...DEFAULTS[table], ...row, id, owner_id: 'local', created_at: row.created_at || now, updated_at: now };
+    d[table].push(r);
+    if (table === 'pages') touchNotes(d, [r.note_id], now);
+    write(d);
     return clone(r);
   },
 
@@ -70,20 +93,26 @@ export const localApi = {
     const d = read(), now = new Date().toISOString(), set = new Set(ids);
     const hit = d[table].filter((r) => set.has(r.id));
     if (hit.length !== set.size) throw new Error('Some rows were not found');
-    hit.forEach((r) => Object.assign(r, patch, { updated_at: now }));
+    if (table === 'folders' && 'parent_id' in patch) hit.forEach((r) => twoLevels(d, r.id, patch.parent_id));
+    hit.forEach((r) => {
+      Object.assign(r, patch);
+      if (table !== 'notes' || 'name' in patch) r.updated_at = now;   // notes: only a rename counts
+    });
+    if (table === 'pages' && PAGE_EDIT.some((k) => k in patch)) touchNotes(d, hit.map((r) => r.note_id), now);
     write(d);
   },
 
+  // hard delete with the database's cascades
   async remove(table, ids) {
-    check(table);
-    const d = read(), set = new Set(ids);
-    d[table] = d[table].filter((r) => !set.has(r.id));
-    if (table === 'sections') d.pages.forEach((p) => { if (set.has(p.section_id)) p.section_id = null; });
-    if (table === 'notebooks') {
-      const secs = new Set(d.sections.filter((s) => set.has(s.notebook_id)).map((s) => s.id));
-      d.sections = d.sections.filter((s) => !secs.has(s.id));
-      d.pages.forEach((p) => { if (secs.has(p.section_id)) p.section_id = null; });
+    check(table); maybeFail();
+    const d = read(), set = new Set(ids), now = new Date().toISOString();
+    if (table === 'folders') {
+      d.folders.forEach((f) => { if (set.has(f.parent_id)) set.add(f.id); });
+      d.notes.forEach((n) => { if (set.has(n.folder_id)) n.folder_id = null; });
     }
+    if (table === 'notes') d.pages = d.pages.filter((p) => !set.has(p.note_id));
+    if (table === 'pages') touchNotes(d, d.pages.filter((p) => set.has(p.id)).map((p) => p.note_id), now);
+    d[table] = d[table].filter((r) => !set.has(r.id));
     write(d);
   },
 

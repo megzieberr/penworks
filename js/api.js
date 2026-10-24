@@ -1,5 +1,6 @@
 // PenWorks database layer: every Supabase call lives in this file.
 // js/local-backend.js is its twin (same calls, same row shapes), used when the address has ?local=1.
+// The bottom half names every thing the app does (folders, notes, pages); both backends go through it.
 
 import { localApi } from './local-backend.js';
 
@@ -7,11 +8,11 @@ const SB_URL = 'https://duibtdcxmnvsuczuceld.supabase.co';
 const SB_KEY = 'sb_publishable_bj2rpL9bwuYSrWCnZxkAuA_uIHYRVJR';   // publishable key, safe in the app
 const SB_JS = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
 const EMAIL_DOMAIN = '@penworks.app';
-const TABLES = ['notebooks', 'sections', 'pages'];
+const TABLES = ['folders', 'notes', 'pages'];
 const COLS = {
-  notebooks: 'id,owner_id,name,position,deleted_at,created_at,updated_at',
-  sections: 'id,owner_id,notebook_id,name,position,background,deleted_at,created_at,updated_at',
-  pages: 'id,owner_id,section_id,title,position,orientation,background,snapshot_path,flagged,deleted_at,created_at,updated_at',
+  folders: 'id,owner_id,parent_id,name,colour,position,deleted_at,created_at,updated_at',
+  notes: 'id,owner_id,folder_id,name,pinned,cover_path,deleted_at,created_at,updated_at',
+  pages: 'id,owner_id,note_id,position,orientation,background,snapshot_path,flagged,deleted_at,created_at,updated_at',
 };
 
 let sb = null;
@@ -64,11 +65,12 @@ const liveApi = {
 
   async loadAll() {
     const c = await client();
-    const [nb, sec, pg] = await Promise.all(TABLES.map((t) => c.from(t).select(COLS[t])));
-    for (const r of [nb, sec, pg]) if (r.error) throw r.error;
-    return { notebooks: nb.data, sections: sec.data, pages: pg.data };
+    const [f, n, p] = await Promise.all(TABLES.map((t) => c.from(t).select(COLS[t])));
+    for (const r of [f, n, p]) if (r.error) throw r.error;
+    return { folders: f.data, notes: n.data, pages: p.data };
   },
 
+  // the database refuses a third folder level itself (trigger folders_two_levels, migration 0003)
   async insert(table, row) {
     check(table);
     const c = await client();
@@ -86,13 +88,49 @@ const liveApi = {
     if (!data || data.length !== new Set(ids).size) throw new Error('Not every row was saved');
   },
 
-  // hard delete: not used by the app (the bin does that after 30 days); the U1 test uses it to clean up
+  // hard delete: a page deleted for good, and the tests cleaning up (the bin itself purges after 30 days)
   async remove(table, ids) {
     check(table);
     const c = await client();
     const { error } = await c.from(table).delete().in('id', ids);
     if (error) throw error;
   },
+
+  failNext() { /* local twin only */ },
 };
 
-export const api = new URLSearchParams(location.search).has('local') ? localApi : liveApi;
+const base = new URLSearchParams(location.search).has('local') ? localApi : liveApi;
+const pick = (r, keys) => Object.fromEntries(keys.filter((k) => k in r).map((k) => [k, r[k]]));
+const eachPos = async (table, pairs) => { for (const [id, position] of pairs) await base.update(table, [id], { position }); };
+
+// bin and restore: one timestamp for everything binned together, so restore brings back exactly that
+async function setBin(ids, value) {
+  for (const t of ['folders', 'notes', 'pages']) if (ids[t] && ids[t].length) await base.update(t, ids[t], { deleted_at: value });
+}
+
+export const api = {
+  ...base,
+
+  // folders: a top folder (parent_id null) or a sub-folder of a top folder, never deeper
+  createFolder: (r) => base.insert('folders', pick(r, ['id', 'parent_id', 'name', 'colour', 'position'])),
+  renameFolder: (id, name) => base.update('folders', [id], { name }),
+  recolourFolder: (id, colour) => base.update('folders', [id], { colour }),
+  moveFolder: (id, parent_id, position) => base.update('folders', [id], { parent_id, position }),
+  reorderFolders: (pairs) => eachPos('folders', pairs),
+
+  // notes: folder_id null = Loose; no position, the app orders them (pinned, then last edited)
+  createNote: (r) => base.insert('notes', pick(r, ['id', 'folder_id', 'name', 'pinned'])),
+  renameNote: (id, name) => base.update('notes', [id], { name }),
+  moveNote: (id, folder_id) => base.update('notes', [id], { folder_id }),
+  pinNote: (id, pinned) => base.update('notes', [id], { pinned }),
+
+  // pages: numbered by position inside their note
+  createPage: (r) => base.insert('pages', pick(r, ['id', 'note_id', 'position', 'orientation', 'background'])),
+  reorderPages: (pairs) => eachPos('pages', pairs),
+  setPages: (ids, patch) => base.update('pages', ids, pick(patch, ['orientation', 'background'])),
+  deletePage: (id) => base.remove('pages', [id]),             // gone for good; the app's undo puts it back
+
+  // ids = { folders: [...], notes: [...], pages: [...] }
+  bin: (ids, at) => setBin(ids, at),
+  restore: (ids) => setBin(ids, null),
+};

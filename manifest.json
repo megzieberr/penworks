@@ -1,7 +1,7 @@
 {
   "name": "PenWorks",
   "short_name": "PenWorks",
-  "description": "Notebooks, sections and A4 pages for the S Pen",
+  "description": "Folders, notes and A4 pages for the S Pen",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

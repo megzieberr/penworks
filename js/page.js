@@ -1,18 +1,22 @@
-// PenWorks page area: one fixed A4 page on the desk, its background, and finger zoom and pan.
-// The S Pen and the mouse do nothing on the page yet (ink is U2). One finger moves the page, two fingers
-// zoom and move it (lifted from the constructions tool, including "ignore fingers while the pen is near").
-// On a laptop the wheel scrolls the page and Ctrl + wheel (or a trackpad pinch) zooms.
+// PenWorks page area: a note's A4 pages stacked under each other on the desk (Samsung's scroll),
+// their paper, and finger zoom and pan. The S Pen and the mouse draw nothing yet (ink is U2).
+// One finger scrolls the stack (and pans sideways when zoomed in), two fingers zoom about the pinch
+// point (lifted from the constructions tool, including "ignore fingers while the pen is near").
+// On a laptop the wheel scrolls and Ctrl + wheel (or a trackpad pinch) zooms. Zoom is one value for
+// the whole stack. The current page is the one with most of itself on screen.
 
 export const CM = 96 / 2.54;                 // 1 cm at 96 px per inch
 export const A4 = { w: 794, h: 1123 };       // 21 x 29.7 cm at zoom 1
 const LINE_GAP = 0.8 * CM;                   // lined paper: 8 mm
 const LINE_TOP = 2.4 * CM;                   // first line sits below a top margin
-const ZMIN = 0.3, ZMAX = 4, MARGIN = 24;
+const ZMIN = 0.2, ZMAX = 4, MARGIN = 24, GAP = 24, BELOW = 90;   // BELOW: room for "Add a page below"
 const SVGNS = 'http://www.w3.org/2000/svg';
 
-let desk, wrap, sheet;
+let desk, stack, addBelow, onCurrent = () => {};
 const V = { x: 0, y: 0, z: 1 };
-let size = { ...A4 };
+const L = { tops: [], sizes: [], w: A4.w, h: 0 };
+let cur = -1;
+let pinned = null;   // a page asked for by number (arrows, page list) stays current while any of it shows
 
 export function pageSize(orientation) {
   return orientation === 'landscape' ? { w: A4.h, h: A4.w } : { ...A4 };
@@ -40,50 +44,98 @@ function bgSvg(w, h, kind) {
   return svg;
 }
 
+function findCurrent() {
+  const dh = desk.clientHeight;
+  let best = -1, most = -1;
+  L.tops.forEach((t, i) => {
+    const a = V.y + t * V.z, b = a + L.sizes[i].h * V.z;
+    const seen = Math.min(b, dh) - Math.max(a, 0);
+    if (seen > most + 0.5) { most = seen; best = i; }
+    if (i === pinned && seen > 0) { most = Infinity; best = i; }
+  });
+  return best;
+}
+
 function apply() {
-  wrap.style.transform = `translate(${V.x}px, ${V.y}px) scale(${V.z})`;
-  wrap.dataset.zoom = V.z.toFixed(3);
+  stack.style.transform = `translate(${V.x}px, ${V.y}px) scale(${V.z})`;
+  stack.dataset.zoom = V.z.toFixed(3);
+  const c = findCurrent();
+  if (c !== cur) { cur = c; onCurrent(cur); }
 }
 
 function clampView() {
   const dw = desk.clientWidth, dh = desk.clientHeight;
-  const w = size.w * V.z, h = (size.h + 90) * V.z;          // 90: room for "Add a page below"
-  const lo = (a, b) => Math.min(a, b), hi = (a, b) => Math.max(a, b);
-  V.x = Math.min(hi(MARGIN, dw - w - MARGIN), Math.max(lo(MARGIN, dw - w - MARGIN), V.x));
-  V.y = Math.min(hi(MARGIN, dh - h - MARGIN), Math.max(lo(MARGIN, dh - h - MARGIN), V.y));
+  const w = L.w * V.z, h = L.h * V.z;
+  if (w <= dw - 2 * MARGIN) V.x = (dw - w) / 2;
+  else V.x = Math.min(MARGIN, Math.max(dw - w - MARGIN, V.x));
+  if (h <= dh - 2 * MARGIN) V.y = MARGIN;
+  else V.y = Math.min(MARGIN, Math.max(dh - h - MARGIN, V.y));
 }
 
-// zoom 1 when the page fits across the desk with margins, otherwise shrink until it does
-export function fit() {
-  const dw = desk.clientWidth;
-  V.z = Math.min(1, Math.max(ZMIN, (dw - 2 * MARGIN) / size.w));
-  V.x = (dw - size.w * V.z) / 2;
-  V.y = MARGIN;
-  apply();
+// draws every page of the note, in order; keeps the view where it was
+export function showStack(pages) {
+  stack.querySelectorAll('.sheet').forEach((e) => e.remove());
+  L.tops = []; L.sizes = []; L.w = 0;
+  pages.forEach((p) => { const s = pageSize(p.orientation); L.sizes.push(s); L.w = Math.max(L.w, s.w); });
+  if (!pages.length) L.w = A4.w;
+  let y = 0;
+  pages.forEach((p, i) => {
+    const s = L.sizes[i];
+    const el = document.createElement('div');
+    el.className = 'sheet';
+    el.style.left = (L.w - s.w) / 2 + 'px'; el.style.top = y + 'px';
+    el.style.width = s.w + 'px'; el.style.height = s.h + 'px';
+    el.dataset.id = p.id; el.dataset.index = String(i + 1);
+    el.dataset.orientation = p.orientation; el.dataset.bg = p.background;
+    el.appendChild(bgSvg(s.w, s.h, p.background));
+    stack.insertBefore(el, addBelow);
+    L.tops.push(y);
+    y += s.h + GAP;
+  });
+  addBelow.style.top = Math.max(0, y - GAP) + 22 + 'px';
+  L.h = Math.max(0, y - GAP) + BELOW;
+  stack.style.width = L.w + 'px'; stack.style.height = L.h + 'px';
+  cur = -1;
+  if (pinned !== null && pinned >= L.tops.length) pinned = L.tops.length - 1;
+  clampView(); apply();
 }
+
+// fit page `index` across the desk (zoom 1 at most) and show it at the top; a wider (landscape) page
+// in the same note then pans sideways with one finger
+export function fit(index = Math.max(0, cur)) {
+  const dw = desk.clientWidth, w = (L.sizes[index] || L.sizes[0] || A4).w;
+  V.z = Math.min(1, Math.max(ZMIN, (dw - 2 * MARGIN) / w));
+  V.x = (dw - L.w * V.z) / 2;                            // pages sit centred in the stack
+  pinned = L.tops.length ? Math.min(index, L.tops.length - 1) : null;
+  V.y = MARGIN - (L.tops[index] || 0) * V.z;
+  clampView(); apply();
+}
+
+export function scrollToPage(index) {
+  if (!L.tops.length) return;
+  const i = Math.max(0, Math.min(L.tops.length - 1, index));
+  pinned = i;
+  V.y = MARGIN - L.tops[i] * V.z;
+  clampView(); apply();
+}
+
+// after the desk changes size (full screen, header hidden): keep the current page in place
+export function relayout() { const i = Math.max(0, cur); fit(i); }
+
+export function current() { return cur; }
+export function view() { return { ...V }; }
 
 function zoomAt(p, f) {
+  pinned = null;
   const z = Math.min(ZMAX, Math.max(ZMIN, V.z * f));
   const wx = (p[0] - V.x) / V.z, wy = (p[1] - V.y) / V.z;
   V.z = z; V.x = p[0] - wx * z; V.y = p[1] - wy * z;
   clampView(); apply();
 }
 
-export function showPage(page) {
-  sheet.textContent = '';
-  if (!page) { wrap.hidden = true; return; }
-  wrap.hidden = false;
-  size = pageSize(page.orientation);
-  sheet.style.width = size.w + 'px'; sheet.style.height = size.h + 'px';
-  sheet.dataset.orientation = page.orientation; sheet.dataset.bg = page.background;
-  sheet.appendChild(bgSvg(size.w, size.h, page.background));
-  wrap.style.width = size.w + 'px';
-}
-
-export function view() { return { ...V }; }
-
 export function initPage(els) {
-  ({ desk, wrap, sheet } = els);
+  ({ desk, stack, addBelow } = els);
+  if (els.onCurrent) onCurrent = els.onCurrent;
   const touches = new Map();
   let pinch = null, drag = null, penSeen = -1e9;
   const rect = () => desk.getBoundingClientRect();
@@ -106,10 +158,11 @@ export function initPage(els) {
   desk.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'pen') { penSeen = performance.now(); return; }   // ink arrives in U2
     if (e.pointerType !== 'touch') return;                                 // the mouse does nothing
-    if (e.target.closest('button')) return;                                // let "Add a page below" be tapped
+    if (e.target.closest('button, #pageList')) return;                     // buttons and the page list stay tappable
     if (performance.now() - penSeen < 600) return;                         // palm while the pen is near
     touches.set(e.pointerId, pt(e));
     try { desk.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+    pinned = null;
     if (touches.size >= 2) startPinch();
     else drag = { id: e.pointerId, s0: pt(e), x0: V.x, y0: V.y };
     e.preventDefault();
@@ -134,10 +187,11 @@ export function initPage(els) {
   desk.addEventListener('pointerup', up);
   desk.addEventListener('pointercancel', up);
   desk.addEventListener('wheel', (e) => {
+    if (e.target.closest('#pageList')) return;                             // the page list scrolls itself
     e.preventDefault();
     if (e.ctrlKey) zoomAt(pt(e), Math.exp(-e.deltaY * 0.0025));
-    else { V.x -= e.shiftKey ? e.deltaY : e.deltaX; V.y -= e.shiftKey ? 0 : e.deltaY; clampView(); apply(); }
+    else { pinned = null; V.x -= e.shiftKey ? e.deltaY : e.deltaX; V.y -= e.shiftKey ? 0 : e.deltaY; clampView(); apply(); }
   }, { passive: false });
   desk.addEventListener('contextmenu', (e) => e.preventDefault());
-  window.addEventListener('resize', () => fit());
+  window.addEventListener('resize', () => { if (L.tops.length) relayout(); });
 }

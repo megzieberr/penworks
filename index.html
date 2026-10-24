@@ -28,50 +28,84 @@
 </div>
 
 <div id="app" hidden>
-  <aside id="tree" aria-label="Notebooks">
+  <!-- the folder view (Samsung's folder list, with the note names showing under each folder) -->
+  <aside id="side" aria-label="Folders">
     <div class="top"><span class="wordmark">PenWorks</span><span id="modeNote" class="modeNote"></span></div>
-    <div id="treeList"></div>
+    <div id="folderList"></div>
     <div class="foot"><button id="logoutBtn" class="logout" type="button">Log out</button></div>
   </aside>
 
   <main id="main">
-    <div id="pagebar">
-      <button id="menuBtn" class="ib" type="button" aria-label="Notebooks">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
-      </button>
-      <button id="prevBtn" class="ib" type="button" aria-label="Previous page">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>
-      </button>
-      <div id="pageTitle"><b></b><small></small></div>
-      <button id="nextBtn" class="ib" type="button" aria-label="Next page">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
-      </button>
-      <button id="orientBtn" class="ib" type="button" aria-label="Portrait or landscape"></button>
-      <button id="bgBtn" class="ib" type="button" aria-label="Page background">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="3" width="16" height="18" rx="1.5"/><path d="M4 9h16M4 15h16M10 3v18M15 3v18" opacity=".55"/></svg>
-      </button>
-      <button id="newPageBtn" class="newPage" type="button">+ Page</button>
-    </div>
-    <div id="desk">
-      <div id="sheetWrap">
-        <div id="sheet"></div>
-        <button id="addBelow" type="button">Add a page below</button>
+    <!-- the grid of notes (or the Bin) for the selected folder -->
+    <section id="listView">
+      <div id="gridBar" class="bar">
+        <button id="gridBack" class="ib phoneOnly" type="button" aria-label="Folders">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <h2 id="gridTitle"></h2>
       </div>
-      <div id="nothing" hidden></div>
-    </div>
+      <div id="grid"></div>
+    </section>
+
+    <!-- the open note: header, then every page stacked on the desk -->
+    <section id="noteView" hidden>
+      <div id="noteBar" class="bar">
+        <button id="backBtn" class="ib" type="button" aria-label="Back to the notes">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
+        </button>
+        <div id="noteName"></div>
+        <button id="prevBtn" class="ib phoneOnly" type="button" aria-label="Previous page">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <span id="barCount" class="phoneOnly"></span>
+        <button id="nextBtn" class="ib phoneOnly" type="button" aria-label="Next page">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
+        </button>
+        <button id="listBtn" class="ib" type="button" aria-label="Page list">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="9" rx="1"/><rect x="13.5" y="3.5" width="7" height="9" rx="1"/><rect x="3.5" y="15" width="7" height="5.5" rx="1"/><rect x="13.5" y="15" width="7" height="5.5" rx="1"/></svg>
+        </button>
+        <button id="addPageBtn" class="ib" type="button" aria-label="Add a page below this one">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="5" y="3" width="14" height="18" rx="1.5"/><path d="M12 8.5v7M8.5 12h7"/></svg>
+        </button>
+        <button id="fsBtn" class="ib" type="button" aria-label="Full screen">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+        </button>
+        <button id="noteMore" class="ib" type="button" aria-label="More">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+        </button>
+      </div>
+      <div id="noteBody">
+        <div id="desk">
+          <div id="stack">
+            <button id="addBelow" type="button">Add a page below</button>
+          </div>
+        </div>
+        <div id="counter" aria-live="polite"></div>
+        <button id="exitFs" type="button" aria-label="Leave full screen" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
+        </button>
+        <aside id="pageList" aria-label="Pages" hidden>
+          <div class="plHead"><b id="plCount"></b>
+            <button id="plClose" class="ib" type="button" aria-label="Close the page list">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+            </button>
+          </div>
+          <div id="plThumbs"></div>
+        </aside>
+      </div>
+    </section>
   </main>
 
   <aside id="tray" aria-label="Pen tray">
-    <button class="ib" type="button" aria-label="Undo" disabled>
+    <button id="undoBtn" class="ib" type="button" aria-label="Undo" disabled>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7L4 12l5 5"/><path d="M4 12h10a6 6 0 0 1 0 12h-2" transform="translate(0 -6)"/></svg>
     </button>
-    <button class="ib" type="button" aria-label="Redo" disabled>
+    <button id="redoBtn" class="ib" type="button" aria-label="Redo" disabled>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 7l5 5-5 5"/><path d="M20 12H10a6 6 0 0 0 0 12h2" transform="translate(0 -6)"/></svg>
     </button>
   </aside>
 </div>
 
-<div id="scrim" hidden></div>
 <div id="menu" hidden role="menu"></div>
 <div id="toast" role="status"></div>
 
