@@ -14,8 +14,10 @@
      Atkinson Hyperlegible (body): everything else, at 500/700, because thin fonts tire her eyes
      Tabular figures of the body face for the counts
    "Current" is shown by a soft tint or a thin outline only. Nothing is bookmark-shaped (her ruling 24 Oct).
-   Dark mode (U2): the desk, folder view, grid, tray, header, menus, page list and panels go dark through
-   the same tokens; the paper stays #FFFFFF and the ink keeps its colours. It follows the system unless
+   Dark mode (U2): the folder view, grid, tray, header, menus, page list and panels go dark through
+   the same tokens; the paper stays #FFFFFF and the ink keeps its colours. Inside a note the desk around
+   the pages stays light (--note-desk and its --desk-* tokens are never overridden), Samsung style, so the
+   white pages sit on a light surface (her ruling 24 Oct 21:55). It follows the system unless
    the footer toggle sets data-theme on <html>.
    ------------------------------------------------------------------ */
 
@@ -42,6 +44,10 @@
   --veil: rgba(255,255,255,.55);
   --off: #8E8A82;
   --sw-edge: rgba(38,42,48,.18);
+  --note-desk: #E8E6E1;     /* the desk inside a note: light in both modes */
+  --desk-text: #4A4F57;     /* text, dashed line and hover on that light desk */
+  --desk-dash: #B9B5AC;
+  --desk-veil: rgba(255,255,255,.55);
   --side-w: 280px;
   --tray-w: 56px;
   --bar-h: 52px;
@@ -257,7 +263,7 @@ input.rename {
 #noteName input.rename { height: 34px; font-weight: 700; font-size: 16px; max-width: 420px; }
 #barCount { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 13px; color: var(--muted); min-width: 40px; text-align: center; }
 #noteBody { flex: 1; position: relative; min-height: 0; }
-#desk { position: absolute; inset: 0; overflow: hidden; touch-action: none; background: var(--desk); }
+#desk { position: absolute; inset: 0; overflow: hidden; touch-action: none; background: var(--note-desk); }
 #stack { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
 .sheet {
   position: absolute; background: var(--paper); border-radius: 2px;
@@ -270,10 +276,10 @@ input.rename {
   border: 1.5px solid rgba(38,42,48,.45); background: rgba(255,255,255,.35); box-shadow: 0 0 0 1px rgba(255,255,255,.6);
 }
 #addBelow {
-  position: absolute; left: 50%; transform: translateX(-50%); height: 44px; padding: 0 18px; border: 1px dashed var(--dash-line);
-  border-radius: 8px; background: transparent; color: var(--soft-text); font-weight: 700; font-size: 15px; cursor: pointer; white-space: nowrap;
+  position: absolute; left: 50%; transform: translateX(-50%); height: 44px; padding: 0 18px; border: 1px dashed var(--desk-dash);
+  border-radius: 8px; background: transparent; color: var(--desk-text); font-weight: 700; font-size: 15px; cursor: pointer; white-space: nowrap;
 }
-#addBelow:hover { background: var(--veil); }
+#addBelow:hover { background: var(--desk-veil); }
 #counter {
   position: absolute; right: 14px; bottom: 14px; z-index: 5; background: rgba(38,42,48,.72); color: #fff;
   font-weight: 700; font-size: 13px; padding: 4px 10px; border-radius: 12px; font-variant-numeric: tabular-nums;

@@ -96,7 +96,7 @@ function styleEl(el, rec) {
   el.setAttribute('stroke-linejoin', 'round');
   el.setAttribute('class', rec.kind);
   if (rec.kind === 'highlighter') {
-    el.setAttribute('stroke-linecap', 'square');
+    el.setAttribute('stroke-linecap', 'round');
     el.setAttribute('stroke-opacity', String(s.opacity ?? 0.4));
     el.style.mixBlendMode = 'multiply';
   } else {

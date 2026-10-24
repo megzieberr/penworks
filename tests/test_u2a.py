@@ -40,7 +40,7 @@ SEED_JS = """(big) => {
 }"""
 PATHS_JS = """(i) => [...document.querySelectorAll(`#stack .sheet[data-index="${i}"] svg.ink path`)].map(p => ({
   id: p.dataset.id, stroke: p.getAttribute('stroke'), width: p.getAttribute('stroke-width'), dash: p.getAttribute('stroke-dasharray'),
-  opacity: p.getAttribute('stroke-opacity'), blend: p.style.mixBlendMode, cap: p.getAttribute('stroke-linecap'), d: p.getAttribute('d'), cls: p.getAttribute('class') }))"""
+  opacity: p.getAttribute('stroke-opacity'), blend: p.style.mixBlendMode, cap: p.getAttribute('stroke-linecap'), join: p.getAttribute('stroke-linejoin'), d: p.getAttribute('d'), cls: p.getAttribute('class') }))"""
 STROKES_JS = "(id) => window.__pw.ink.strokesOf(id)"
 STORED_JS = "(id) => JSON.parse(localStorage.getItem('pw.strokes.' + id) || 'null')"
 PAGES_JS = "() => [...document.querySelectorAll('#stack .sheet')].map(s => s.dataset.id)"
@@ -232,8 +232,8 @@ try:
         pg.click("#toolPanel [aria-label='Width smaller']")
         draw(pg, 1, line(400))
         p = paths(pg, 1)[-1]; r = strokes(pg, "p6")[-1]
-        check("highlighter path: multiply blend, opacity 0.6, square caps, yellow, width 16",
-              p["cls"] == "highlighter" and p["blend"] == "multiply" and p["opacity"] == "0.6" and p["cap"] == "square" and p["stroke"] == "#F9A825" and p["width"] == "16", p)
+        check("highlighter path: multiply blend, opacity 0.6, round caps and joins, yellow, width 16",
+              p["cls"] == "highlighter" and p["blend"] == "multiply" and p["opacity"] == "0.6" and p["cap"] == "round" and p["join"] == "round" and p["stroke"] == "#F9A825" and p["width"] == "16", p)
         check("its record: kind highlighter, opacity kept", r["kind"] == "highlighter" and r["style"] == {"colour": "#F9A825", "width": 16, "dash": "solid", "opacity": 0.6}, r["style"])
         pg.click("#tool-pen")
         check("the pen's red is back on the swatches", pg.get_attribute("#tray .sw[data-colour='#C62828']", "class").split().count("on") == 1)
@@ -346,9 +346,14 @@ try:
         pg.evaluate(SEED_JS, False); pg.reload(); ready(pg)
         open_note(pg, "Ink test")
         d_desk, d_sheet, d_tray = bg(pg, "#desk"), bg(pg, "#stack .sheet"), bg(pg, "#tray")
-        check("system dark: the desk goes dark", d_desk == "rgb(28, 31, 35)", d_desk)
+        check("system dark: the desk inside a note stays light (Samsung style)", d_desk == "rgb(232, 230, 225)", d_desk)
         check("the paper stays #FFFFFF", d_sheet == "rgb(255, 255, 255)", d_sheet)
         check("the tray goes dark", d_tray == "rgb(42, 46, 52)", d_tray)
+        d_bar, d_add = bg(pg, "#noteBar"), pg.evaluate("getComputedStyle(document.getElementById('addBelow')).color")
+        check("the header bar stays dark", d_bar == "rgb(28, 31, 35)", d_bar)
+        check("Add a page below is dark text on the light desk", d_add == "rgb(74, 79, 87)", d_add)
+        icons = pg.evaluate("['undoBtn','redoBtn'].map(i => { const s = document.querySelector('#' + i + ' svg'); return [document.getElementById(i).getAttribute('aria-label'), s.getAttribute('stroke-width'), s.getAttribute('stroke-linecap'), s.getAttribute('stroke-linejoin'), s.getAttribute('fill'), s.querySelectorAll('path').length]; })")
+        check("undo and redo are curved arrows in the tray icon style", icons == [["Undo", "1.8", "round", "round", "none", 2], ["Redo", "1.8", "round", "round", "none", 2]], icons)
         go_page(pg, 2); draw(pg, 2, line(200))
         p = paths(pg, 2)
         check("ink keeps its colour in dark mode", len(p) == 1 and p[0]["stroke"] == "#1F2328" and p[0]["width"] == "2.5", p)
@@ -357,7 +362,7 @@ try:
         open_list(pg); pl_bg = bg(pg, "#pageList"); pl_paper = bg(pg, "#plThumbs .thumbP .paper"); pg.click("#plClose")
         check("panel and page list go dark, their paper stays white", panel_bg == "rgb(42, 46, 52)" and pl_bg == "rgb(34, 38, 43)" and pl_paper == "rgb(255, 255, 255)", [panel_bg, pl_bg, pl_paper])
         back(pg)
-        check("the folder view goes dark", bg(pg, "#side") == "rgb(34, 38, 43)", bg(pg, "#side"))
+        check("the folder view goes dark", bg(pg, "#side") == "rgb(34, 38, 43)" and bg(pg, "#listView .bar") == "rgb(28, 31, 35)", [bg(pg, "#side"), bg(pg, "#listView .bar")])
         check("toggle sits next to Log out in the footer", pg.locator("#side .foot #themeBtn").count() == 1 and pg.get_attribute("#themeBtn", "aria-label") == "Light mode")
         pg.click("#themeBtn")
         l_desk = bg(pg, "#desk") if pg.locator("#desk").is_visible() else None
@@ -386,7 +391,7 @@ try:
         check("the eye toggles password to text and back", a == "password" and c == ["text", "Hide password"] and d == "password", [a, c, d])
         check("the eye sits inside the field", eb["x"] >= lb["x"] and eb["x"] + eb["width"] <= lb["x"] + lb["width"] and eb["y"] >= lb["y"] - 1 and eb["y"] + eb["height"] <= lb["y"] + lb["height"] + 1, [eb, lb])
         group[0] = "pwa and house rules"
-        check("cache is pw-v3", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v3"] or "pw-v3" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v3b", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v3b"] or "pw-v3b" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the new files are in the offline shell", all(f in swt for f in ("./js/ink.js", "./js/store-local.js", "./js/tray.js")))
         pg.evaluate(SEED_JS, False); pg.reload(); ready(pg)
