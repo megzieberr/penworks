@@ -3,3 +3,5 @@ backup/
 node_modules/
 .env
 PROJECT-HISTORY.md
+PROJECT-STATUS.md
+_build/
