@@ -235,7 +235,7 @@ input.rename {
 .paper { background-color: var(--paper); }
 .paper.grid {
   background-image: linear-gradient(var(--rule) 1px, transparent 1px), linear-gradient(90deg, var(--rule) 1px, transparent 1px);
-  background-size: var(--sq) var(--sq);
+  background-size: calc(var(--sq) * 21 / 22) calc(var(--sq) * 21 / 22); background-position: 0 calc(var(--sq) * .6);   /* 22 blocks across, 6 mm top strip */
 }
 .paper.lined {
   background-image: linear-gradient(transparent calc(var(--sq) * .8 - 1px), var(--rule) calc(var(--sq) * .8 - 1px));

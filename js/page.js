@@ -8,6 +8,8 @@
 
 export const CM = 96 / 2.54;                 // 1 cm at 96 px per inch
 export const A4 = { w: 794, h: 1123 };       // 21 x 29.7 cm at zoom 1
+const GRID = A4.w / 22;                      // grid paper: 22 blocks across A4 (210 mm / 22 = 9.545 mm), matches her sample page
+const GRID_TOP = 0.6 * CM;                   // grid paper: 6 mm blank strip at the top, matches her sample page
 const LINE_GAP = 0.8 * CM;                   // lined paper: 8 mm
 const LINE_TOP = 2.4 * CM;                   // first line sits below a top margin
 const ZMIN = 0.2, ZMAX = 4, MARGIN = 24, GAP = 24, BELOW = 90;   // BELOW: room for "Add a page below"
@@ -38,8 +40,8 @@ function bgSvg(w, h, kind) {
     svg.appendChild(l);
   };
   if (kind === 'grid') {
-    for (let i = 0; i * CM <= w + 0.01; i++) line(i * CM, 0, i * CM, h, 'gv');
-    for (let j = 0; j * CM <= h + 0.01; j++) line(0, j * CM, w, j * CM, 'gh');
+    for (let i = 0; i * GRID <= w + 0.01; i++) line(i * GRID, 0, i * GRID, h, 'gv');
+    for (let j = 0; GRID_TOP + j * GRID <= h + 0.01; j++) line(0, GRID_TOP + j * GRID, w, GRID_TOP + j * GRID, 'gh');
   } else if (kind === 'lined') {
     for (let y = LINE_TOP; y <= h - CM; y += LINE_GAP) line(0, y, w, y, 'ln');
   }

@@ -231,6 +231,18 @@ try:
         check("lined = 8 mm apart", len(ys) > 25 and all(abs(ys[i + 1] - ys[i] - 0.8 * 96 / 2.54) < 0.02 for i in range(len(ys) - 1)), len(ys))
         pg.click("#undoBtn"); idle(pg)
         check("undo puts the old paper back", [bg for _, _, bg in stack(pg)] == ["grid"] * 4, stack(pg))
+        gx = pg.evaluate("[...document.querySelectorAll('#stack .sheet')[0].querySelectorAll('line.gv')].map(l => +l.getAttribute('x1'))")
+        gy = pg.evaluate("[...document.querySelectorAll('#stack .sheet')[0].querySelectorAll('line.gh')].map(l => +l.getAttribute('y1'))")
+        lx = pg.evaluate("[...document.querySelectorAll('#stack .sheet')[1].querySelectorAll('line.gv')].map(l => +l.getAttribute('x1'))")
+        ly = pg.evaluate("[...document.querySelectorAll('#stack .sheet')[1].querySelectorAll('line.gh')].map(l => +l.getAttribute('y1'))")
+        P = 794 / 22
+        check("grid portrait: 22 blocks across, pitch 794/22 px", len(gx) == 23 and gx[0] == 0 and abs(gx[-1] - 794) < 0.02
+              and all(abs(gx[i + 1] - gx[i] - P) < 0.02 for i in range(len(gx) - 1)), gx[:3] + gx[-2:])
+        check("grid: first line 6 mm (22.68 px) from the top, rows 794/22 px", abs(gy[0] - 0.6 * 96 / 2.54) < 0.02
+              and all(abs(gy[i + 1] - gy[i] - P) < 0.02 for i in range(len(gy) - 1)), gy[:3])
+        check("grid landscape: same pitch and top strip", len(lx) == 32 and lx[0] == 0 and abs(ly[0] - 0.6 * 96 / 2.54) < 0.02
+              and all(abs(lx[i + 1] - lx[i] - P) < 0.02 for i in range(len(lx) - 1))
+              and all(abs(ly[i + 1] - ly[i] - P) < 0.02 for i in range(len(ly) - 1)), (len(lx), lx[:2], ly[:2]))
         pg.click("#redoBtn"); idle(pg)
         xs = pg.evaluate("[...document.querySelectorAll('#stack .sheet')[0].querySelectorAll('line.gv')].map(l => +l.getAttribute('x1'))")
         pg.reload(); ready(pg)
@@ -348,7 +360,7 @@ try:
             st = pg.evaluate("(u)=>fetch(u).then(r=>r.status+' '+r.headers.get('content-type'))", ic["src"])
             check("icon " + ic["src"], st.startswith("200 image/png"), st)
         check("service worker registers and is active", pg.evaluate("navigator.serviceWorker.ready.then(r=>!!r.active)"))
-        check("cache is pw-v3b (U2 A fixes)", pg.evaluate("caches.keys()") == ["pw-v3b"] or "pw-v3b" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v3c (U2 A fixes)", pg.evaluate("caches.keys()") == ["pw-v3c"] or "pw-v3c" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
         inst = ctx.new_cdp_session(pg).send("Page.getInstallabilityErrors")
         check("Chrome sees it as installable", not inst.get("installabilityErrors"), inst)
         pg.reload(); ready(pg); pg.wait_for_timeout(500)
