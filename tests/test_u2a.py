@@ -42,6 +42,34 @@ PATHS_JS = """(i) => [...document.querySelectorAll(`#stack .sheet[data-index="${
   id: p.dataset.id, stroke: p.getAttribute('stroke'), width: p.getAttribute('stroke-width'), dash: p.getAttribute('stroke-dasharray'),
   opacity: p.getAttribute('stroke-opacity'), blend: p.style.mixBlendMode, cap: p.getAttribute('stroke-linecap'), join: p.getAttribute('stroke-linejoin'), d: p.getAttribute('d'), cls: p.getAttribute('class') }))"""
 STROKES_JS = "(id) => window.__pw.ink.strokesOf(id)"
+# the ink layer's groups, checked against the records: .hl first, .pen second; every highlighter path in
+# .hl > .hlo[data-opacity] matching its record, no stroke-opacity on it; pen paths in .pen; seq order inside
+# each group; no empty .hlo; .hlo groups in ascending opacity
+LAYER_JS = """([i, pid]) => {
+  const svg = document.querySelector(`#stack .sheet[data-index="${i}"] svg.ink`), bad = [];
+  const recs = window.__pw.ink.strokesOf(pid), byId = new Map(recs.map(r => [r.id, r]));
+  const kids = [...svg.children].map(c => c.getAttribute('class'));
+  if (kids.join() !== 'hl,pen') bad.push('children ' + kids.join());
+  const hl = svg.querySelector(':scope > g.hl'), pen = svg.querySelector(':scope > g.pen');
+  const groups = [...hl.children].map(g => [g.getAttribute('class'), g.dataset.opacity, g.getAttribute('opacity'), g.children.length]);
+  for (const [c, o, a, n] of groups) { if (c !== 'hlo' || o !== a || !n) bad.push('group ' + [c, o, a, n].join('/')); }
+  const ops = groups.map(g => +g[1]); if (ops.some((v, k) => k && v <= ops[k - 1])) bad.push('order ' + ops.join());
+  const all = [...svg.querySelectorAll('path')];
+  if (all.length !== recs.length) bad.push('count ' + all.length + ' vs ' + recs.length);
+  for (const el of all) {
+    const r = byId.get(el.dataset.id); if (!r) { bad.push('no record ' + el.dataset.id); continue; }
+    if (r.kind === 'highlighter') {
+      const g = el.parentNode;
+      if (!(g.matches('g.hlo') && g.parentNode === hl && g.dataset.opacity === String(r.style.opacity))) bad.push('hl parent ' + r.id);
+      if (el.hasAttribute('stroke-opacity') || el.style.mixBlendMode) bad.push('hl own opacity ' + r.id);
+    } else if (el.parentNode !== pen) bad.push('pen parent ' + r.id);
+  }
+  for (const g of [pen, ...hl.children]) {
+    const seqs = [...g.children].map(e => byId.get(e.dataset.id)).filter(Boolean).map(r => r.seq);
+    if (seqs.some((s, k) => k && s < seqs[k - 1])) bad.push('seq order');
+  }
+  return { bad, groups, hl: recs.filter(r => r.kind === 'highlighter').length, pen: recs.filter(r => r.kind !== 'highlighter').length };
+}"""
 STORED_JS = "(id) => JSON.parse(localStorage.getItem('pw.strokes.' + id) || 'null')"
 PAGES_JS = "() => [...document.querySelectorAll('#stack .sheet')].map(s => s.dataset.id)"
 NO_RIBBON_JS = """() => [...document.querySelectorAll('*')].filter(e =>
@@ -51,6 +79,7 @@ NO_RIBBON_JS = """() => [...document.querySelectorAll('*')].filter(e =>
 def ready(pg): pg.wait_for_selector("body[data-ready='1']", timeout=20000)
 def idle(pg): pg.evaluate("window.__pw.idle()"); pg.wait_for_timeout(40)
 def paths(pg, i): return pg.evaluate(PATHS_JS, i)
+def layer(pg, i, pid): return pg.evaluate(LAYER_JS, [i, pid])
 def strokes(pg, pid): return pg.evaluate(STROKES_JS, pid)
 def stored(pg, pid): return pg.evaluate(STORED_JS, pid)
 def menu_items(pg): return [t.strip() for t in pg.locator("#menu button[role='menuitem']").all_inner_texts()]
@@ -100,16 +129,23 @@ try:
         # ------------------------------------------------------------ the tray
         group[0] = "tray"
         open_note(pg, "Ink test")
-        sw = pg.evaluate("[...document.querySelectorAll('#tray .colours .sw')].map(s => s.dataset.colour)")
-        check("12 colours in Fable's order", sw == ["#1F2328", "#5B6470", "#C62828", "#E65100", "#F9A825", "#2E7D32", "#00838F",
-                                                   "#1565C0", "#283593", "#6A1B9A", "#AD1457", "#5D4037"], sw)
+        sw = pg.evaluate("[...document.querySelectorAll('#tray .colours .sw')].map(s => [s.dataset.colour, s.getAttribute('aria-label')])")
+        check("her 12 colours in her order, with her names", sw == [["#2CB05F", "Green"], ["#0D0DFF", "Blue"], ["#FF0C84", "Pink"], ["#FF7043", "Orange"],
+              ["#A83AFF", "Purple"], ["#FFC107", "Amber"], ["#00BCD5", "Cyan"], ["#FF00FF", "Magenta"],
+              ["#3396FF", "Sky blue"], ["#FF3636", "Red"], ["#000000", "Black"], ["#808080", "Grey"]], sw)
+        st0 = pg.evaluate("window.__pw.tray()")
+        check("defaults: pen Black #000000, highlighter Amber #FFC107", st0["pen"]["colour"] == "#000000" and st0["highlighter"]["colour"] == "#FFC107", [st0["pen"], st0["highlighter"]])
         order = pg.evaluate("""[...document.getElementById('tray').querySelectorAll(':scope > *, :scope > .tools > *')]
           .map(e => e.dataset.tool || e.dataset.slot || e.id || e.className)""")
         check("order: colours, pen, highlighter, stroke eraser, area eraser, 2 empty slots, gap, undo, redo, Tools slot",
               order == ["colours", "tools", "pen", "highlighter", "eraser", "area", "restyle", "select", "gap", "undoBtn", "redoBtn", "tools"], order)
         check("the slots are empty (no visible button)", pg.evaluate("[...document.querySelectorAll('#tray .slot')].every(s => !s.children.length)"))
         check("pen selected by default, soft tint", "on" in pg.get_attribute("#tool-pen", "class") and pg.locator("#tray .tool.on").count() == 1)
-        check("near-black swatch marked current", pg.get_attribute("#tray .sw[data-colour='#1F2328']", "class").split().count("on") == 1)
+        check("Black swatch marked current", pg.get_attribute("#tray .sw[data-colour='#000000']", "class").split().count("on") == 1)
+        ring = pg.evaluate("getComputedStyle(document.querySelector(\"#tray .sw[data-colour='#808080']\")).boxShadow")
+        check("light mode: the Grey swatch has a dark ring on the light tray", "rgba(38, 42, 48, 0.45)" in ring and "inset" in ring, ring)
+        cs = pg.evaluate("(() => { const s = getComputedStyle(document.getElementById('counter')); return [s.backgroundColor, s.color, s.fontWeight, s.fontSize, s.borderRadius, s.paddingTop]; })()")
+        check("page number: plain grey text, no pill (transparent, #808080, 600, 13 px)", cs == ["rgba(0, 0, 0, 0)", "rgb(128, 128, 128)", "600", "13px", "0px", "0px"], cs)
         tb = pg.locator("#tray").bounding_box()
         check("tray 56 px wide, nothing overflows at 1280x800", tb["width"] == 56 and pg.evaluate("(() => { const t = document.getElementById('tray'); return t.scrollHeight <= t.clientHeight; })()"), tb)
         check("no tool labels in the tray (icons only)", pg.evaluate("[...document.querySelectorAll('#tray button')].every(b => !b.innerText.trim())"))
@@ -120,12 +156,12 @@ try:
         for k in range(3): draw(pg, 2, line(120 + 70 * k))
         p2 = paths(pg, 2)
         check("page 2 has three paths", len(p2) == 3, len(p2))
-        check("near-black, width 2.5, round caps, solid", all(p["stroke"] == "#1F2328" and p["width"] == "2.5" and p["cap"] == "round" and not p["dash"] for p in p2), p2[:1])
+        check("black, width 2.5, round caps, solid", all(p["stroke"] == "#000000" and p["width"] == "2.5" and p["cap"] == "round" and not p["dash"] for p in p2), p2[:1])
         check("pages 1 and 3 have none", len(paths(pg, 1)) == 0 and len(paths(pg, 3)) == 0)
         rec = strokes(pg, "p2")
         first = rec[0]["data"]["points"][0] if rec else None
         check("record shape: page_id, seq, kind pen, style, points in page px", rec and rec[0]["page_id"] == "p2" and rec[0]["kind"] == "pen"
-              and rec[0]["style"] == {"colour": "#1F2328", "width": 2.5, "dash": "solid", "opacity": 1} and rec[0]["seq"] > 1.7e12, rec[:1])
+              and rec[0]["style"] == {"colour": "#000000", "width": 2.5, "dash": "solid", "opacity": 1} and rec[0]["seq"] > 1.7e12, rec[:1])
         check("first point lands where the mouse went down (100, 120)", first and abs(first[0] - 100) < 1 and abs(first[1] - 120) < 1, first)
         check("smoothed: quadratic curves", "Q" in p2[0]["d"], p2[0]["d"][:60])
         check("kept on the device on every change", len(stored(pg, "p2") or []) == 3)
@@ -196,7 +232,7 @@ try:
         check("width 1 to 12 in 0.5 steps, number showing 2.5", sl == ["1", "12", "0.5", "2.5"], sl)
         check("Solid / Dashed pair, Solid on", pg.locator("#toolPanel .dash").all_inner_texts() == ["Solid", "Dashed"] and "on" in pg.get_attribute("#toolPanel .dash[data-dash='solid']", "class"))
         check("big finger-sized buttons", pg.locator("#toolPanel .step").first.bounding_box()["height"] >= 44)
-        pg.click("#tray .sw[data-colour='#C62828']")
+        pg.click("#tray .sw[data-colour='#FF3636']")
         pg.click("#toolPanel [aria-label='Width bigger']"); pg.click("#toolPanel [aria-label='Width bigger']")
         n1 = pg.inner_text("#toolPanel .num")
         pg.evaluate("(() => { const s = document.querySelector('#toolPanel input[type=range]'); s.value = '6'; s.dispatchEvent(new Event('input', { bubbles: true })); })()")
@@ -208,19 +244,19 @@ try:
         check("a stroke start closes the panel", pg.locator("#toolPanel").is_hidden())
         r = strokes(pg, "p6")[-1]
         p = paths(pg, 1)[-1]
-        check("the next stroke carries red, 5.5, dashed", r["style"] == {"colour": "#C62828", "width": 5.5, "dash": "dashed", "opacity": 1}
-              and p["stroke"] == "#C62828" and p["width"] == "5.5" and p["dash"] == "16.5 16.5", [r["style"], p["dash"]])
+        check("the next stroke carries red, 5.5, dashed", r["style"] == {"colour": "#FF3636", "width": 5.5, "dash": "dashed", "opacity": 1}
+              and p["stroke"] == "#FF3636" and p["width"] == "5.5" and p["dash"] == "16.5 16.5", [r["style"], p["dash"]])
         pg.click("#tool-highlighter"); pg.click("#tool-pen")
         draw(pg, 1, line(250))
         r = strokes(pg, "p6")[-1]
-        check("highlighter and back: the pen's settings come back", r["kind"] == "pen" and r["style"] == {"colour": "#C62828", "width": 5.5, "dash": "dashed", "opacity": 1}, r["style"])
+        check("highlighter and back: the pen's settings come back", r["kind"] == "pen" and r["style"] == {"colour": "#FF3636", "width": 5.5, "dash": "dashed", "opacity": 1}, r["style"])
         pg.click("#tool-pen"); n4 = pg.inner_text("#toolPanel .num"); dash_on = "on" in pg.get_attribute("#toolPanel .dash[data-dash='dashed']", "class")
         pg.click("#noteName"); pg.wait_for_timeout(30)
         check("the panel shows them too; a tap outside closes it", n4 == "5.5" and dash_on and pg.locator("#toolPanel").is_hidden(), [n4, dash_on])
         pg.keyboard.press("Escape")
         pg.reload(); ready(pg)
         st = pg.evaluate("window.__pw.tray()")
-        check("remembered after a reload", st["pen"] == {"colour": "#C62828", "width": 5.5, "dash": "dashed"}, st["pen"])
+        check("remembered after a reload", st["pen"] == {"colour": "#FF3636", "width": 5.5, "dash": "dashed"}, st["pen"])
 
         # ------------------------------------------------------------ highlighter
         group[0] = "highlighter"
@@ -231,18 +267,20 @@ try:
         pg.click("#toolPanel [aria-label='Opacity bigger']"); pg.click("#toolPanel [aria-label='Opacity bigger']")
         pg.click("#toolPanel [aria-label='Width smaller']")
         draw(pg, 1, line(400))
-        p = paths(pg, 1)[-1]; r = strokes(pg, "p6")[-1]
-        check("highlighter path: multiply blend, opacity 0.6, round caps and joins, yellow, width 16",
-              p["cls"] == "highlighter" and p["blend"] == "multiply" and p["opacity"] == "0.6" and p["cap"] == "round" and p["join"] == "round" and p["stroke"] == "#F9A825" and p["width"] == "16", p)
-        check("its record: kind highlighter, opacity kept", r["kind"] == "highlighter" and r["style"] == {"colour": "#F9A825", "width": 16, "dash": "solid", "opacity": 0.6}, r["style"])
+        p = [q for q in paths(pg, 1) if q["cls"] == "highlighter"][-1]; r = strokes(pg, "p6")[-1]
+        grp = pg.evaluate("(id) => { const g = document.querySelector(`svg.ink path[data-id='${id}']`).parentNode; return [g.getAttribute('class'), g.dataset.opacity, g.getAttribute('opacity'), g.parentNode.getAttribute('class')]; }", r["id"])
+        check("highlighter path: no stroke-opacity, no blend, round caps and joins, amber, width 16",
+              p["opacity"] is None and not p["blend"] and p["cap"] == "round" and p["join"] == "round" and p["stroke"] == "#FFC107" and p["width"] == "16", p)
+        check("it sits in .hl > .hlo[data-opacity=0.6] with group opacity 0.6", grp == ["hlo", "0.6", "0.6", "hl"], grp)
+        check("its record: kind highlighter, opacity kept", r["kind"] == "highlighter" and r["style"] == {"colour": "#FFC107", "width": 16, "dash": "solid", "opacity": 0.6}, r["style"])
         pg.click("#tool-pen")
-        check("the pen's red is back on the swatches", pg.get_attribute("#tray .sw[data-colour='#C62828']", "class").split().count("on") == 1)
+        check("the pen's red is back on the swatches", pg.get_attribute("#tray .sw[data-colour='#FF3636']", "class").split().count("on") == 1)
         back(pg)
 
         # ------------------------------------------------------------ the two erasers
         group[0] = "erasers"
         open_note(pg, "Erasers")
-        pg.click("#tool-pen"); pg.click("#tray .sw[data-colour='#1F2328']")
+        pg.click("#tool-pen"); pg.click("#tray .sw[data-colour='#000000']")
         pg.click("#toolPanel .dash[data-dash='solid']"); pg.click("#noteName"); pg.keyboard.press("Escape")
         for y in (150, 250, 350): draw(pg, 1, line(y, 100, 500, 8))
         three = [r["id"] for r in strokes(pg, "p4")]
@@ -283,6 +321,61 @@ try:
         pg.click("#tool-pen")
         check("no page errors (panel, highlighter, erasers)", not errs, errs)
         if SHOTS: pg.screenshot(path=str(SHOTS / "u2a-ink.png"))
+        ctx.close()
+
+        # ------------------------------------------------------------ flat highlighter (fix 2)
+        group[0] = "flat highlighter"
+        ctx, pg, errs = fresh(b)
+        pg.evaluate(SEED_JS, False)
+        pg.evaluate("""() => localStorage.setItem('pw.tools', JSON.stringify({ tool: 'pen',
+          pen: { colour: '#1F2328', width: 4, dash: 'dashed' }, highlighter: { colour: '#F9A825', width: 20, opacity: 0.5 } }))""")
+        pg.reload(); ready(pg)
+        st1 = pg.evaluate("window.__pw.tray()")
+        check("an old saved colour falls back to the tool's default; width, dash, opacity stay",
+              st1["pen"] == {"colour": "#000000", "width": 4, "dash": "dashed"} and st1["highlighter"] == {"colour": "#FFC107", "width": 20, "opacity": 0.5}, [st1["pen"], st1["highlighter"]])
+        pg.evaluate("localStorage.removeItem('pw.tools')"); pg.reload(); ready(pg)
+        open_note(pg, "Erasers")
+        pg.click("#tool-highlighter")
+        draw(pg, 1, line(300, 100, 500, 8)); draw(pg, 1, line(305, 120, 480, 8))
+        L = layer(pg, 1, "p4")
+        check("two overlapping highlighter strokes: ONE .hlo group at 0.4, both inside", L["groups"] == [["hlo", "0.4", "0.4", 2]] and not L["bad"], L)
+        own = pg.evaluate("[...document.querySelectorAll('#stack .sheet[data-index=\"1\"] svg.ink [opacity], #stack .sheet[data-index=\"1\"] svg.ink [stroke-opacity]')].map(e => e.tagName + '.' + e.getAttribute('class'))")
+        check("no extra opacity anywhere: only the group carries it", own == ["g.hlo"], own)
+        kids = pg.evaluate("[...document.querySelector('#stack .sheet[data-index=\"1\"] svg.ink').children].map(c => c.tagName + '.' + c.getAttribute('class'))")
+        check(".hl comes before .pen", kids == ["g.hl", "g.pen"], kids)
+        pg.click("#tool-pen"); draw(pg, 1, [(300, 260), (300, 340)])
+        last = strokes(pg, "p4")[-1]
+        par = pg.evaluate("(id) => document.querySelector(`svg.ink path[data-id='${id}']`).parentNode.getAttribute('class')", last["id"])
+        check("a pen stroke after the highlighter lands in .pen (on top)", last["kind"] == "pen" and par == "pen" and not layer(pg, 1, "p4")["bad"], par)
+        pg.click("#tool-highlighter"); pg.click("#tool-highlighter"); pg.click("#toolPanel [aria-label='Opacity bigger']"); pg.keyboard.press("Escape")
+        draw(pg, 1, line(500, 100, 500, 8))
+        L = layer(pg, 1, "p4")
+        check("a new opacity (50%) gets its own group, after 0.4", [g[1] for g in L["groups"]] == ["0.4", "0.5"] and not L["bad"], L)
+        pg.click("#undoBtn"); idle(pg); L = layer(pg, 1, "p4")
+        check("undo a highlighter stroke: its empty group goes, the rest stays", [g[1] for g in L["groups"]] == ["0.4"] and L["hl"] == 2 and not L["bad"], L)
+        pg.click("#redoBtn"); idle(pg); L = layer(pg, 1, "p4")
+        check("redo: it comes back into its own group", [g[1] for g in L["groups"]] == ["0.4", "0.5"] and L["hl"] == 3 and not L["bad"], L)
+        pg.click("#tool-area"); draw(pg, 1, [(300, 280), (300, 325)])
+        L = layer(pg, 1, "p4")
+        check("area eraser across the highlighter: the pieces stay in the 0.4 group", L["hl"] == 5 and L["groups"][0][:3] == ["hlo", "0.4", "0.4"] and L["groups"][0][3] == 4 and not L["bad"], L)
+        pg.click("#undoBtn"); idle(pg); L = layer(pg, 1, "p4")
+        check("undo the area erase: structure intact", L["hl"] == 3 and L["groups"][0][3] == 2 and not L["bad"], L)
+        pg.click("#redoBtn"); idle(pg); L = layer(pg, 1, "p4")
+        check("redo the area erase: structure intact", L["hl"] == 5 and not L["bad"], L)
+        pg.click("#tool-eraser"); tap_page(pg, 1, 300, 500); L = layer(pg, 1, "p4")
+        check("stroke eraser on the 50% stroke: its group goes", [g[1] for g in L["groups"]] == ["0.4"] and not L["bad"], L)
+        pg.click("#undoBtn"); idle(pg)
+        thumb_menu(pg, 1); menu(pg, "Erase page"); idle(pg)
+        e0 = pg.evaluate("document.querySelector('#stack .sheet[data-index=\"1\"] svg.ink').innerHTML")
+        pg.click("#undoBtn"); idle(pg); L = layer(pg, 1, "p4")
+        check("Erase page, then undo: back in the right groups", e0 == '<g class="hl"></g><g class="pen"></g>' and L["hl"] == 5 and L["pen"] == 2 and not L["bad"], [e0, L])
+        pg.evaluate("""() => window.__pw.ink.put('p4', [{ id: 'hlput', page_id: 'p4', seq: 1, kind: 'highlighter',
+          style: { colour: '#2CB05F', width: 18, dash: 'solid', opacity: 0.3 }, data: { points: [[100, 700], [400, 700]] } }])""")
+        L = layer(pg, 1, "p4")
+        check("put a highlighter record: it lands in a 0.3 group, first in order", [g[1] for g in L["groups"]] == ["0.3", "0.4", "0.5"] and not L["bad"], L)
+        idle(pg); pg.reload(); ready(pg); pg.wait_for_timeout(80); L = layer(pg, 1, "p4")
+        check("reload: the stored strokes open in the same groups", [g[1] for g in L["groups"]] == ["0.3", "0.4", "0.5"] and L["hl"] == 6 and not L["bad"], L)
+        check("no page errors (flat highlighter)", not errs, errs)
         ctx.close()
 
         # ------------------------------------------------------------ one finger pans, never draws
@@ -356,7 +449,11 @@ try:
         check("undo and redo are curved arrows in the tray icon style", icons == [["Undo", "1.8", "round", "round", "none", 2], ["Redo", "1.8", "round", "round", "none", 2]], icons)
         go_page(pg, 2); draw(pg, 2, line(200))
         p = paths(pg, 2)
-        check("ink keeps its colour in dark mode", len(p) == 1 and p[0]["stroke"] == "#1F2328" and p[0]["width"] == "2.5", p)
+        check("ink keeps its colour in dark mode", len(p) == 1 and p[0]["stroke"] == "#000000" and p[0]["width"] == "2.5", p)
+        ring = pg.evaluate("getComputedStyle(document.querySelector(\"#tray .sw[data-colour='#000000']\")).boxShadow")
+        check("dark mode: the Black swatch has a light ring on the dark tray", "rgba(255, 255, 255, 0.6)" in ring and "inset" in ring, ring)
+        cs = pg.evaluate("(() => { const s = getComputedStyle(document.getElementById('counter')); return [s.backgroundColor, s.color]; })()")
+        check("dark mode: page number still plain grey on the light desk", cs == ["rgba(0, 0, 0, 0)", "rgb(128, 128, 128)"] and bg(pg, "#desk") == "rgb(232, 230, 225)", cs)
         pg.click("#tool-pen"); pg.click("#tool-pen"); pg.wait_for_timeout(30)
         panel_bg = bg(pg, "#toolPanel"); pg.keyboard.press("Escape")
         open_list(pg); pl_bg = bg(pg, "#pageList"); pl_paper = bg(pg, "#plThumbs .thumbP .paper"); pg.click("#plClose")
@@ -369,7 +466,7 @@ try:
         open_note(pg, "Ink test")
         l_desk, l_sheet = bg(pg, "#desk"), bg(pg, "#stack .sheet")
         check("toggle to light: desk light, paper white", l_desk == "rgb(232, 230, 225)" and l_sheet == "rgb(255, 255, 255)", [l_desk, l_sheet])
-        check("ink the same in light mode", paths(pg, 2)[0]["stroke"] == "#1F2328")
+        check("ink the same in light mode", paths(pg, 2)[0]["stroke"] == "#000000")
         back(pg); pg.reload(); ready(pg)
         check("the choice is remembered over the system setting", pg.evaluate("localStorage.getItem('penworks.theme')") == "light" and bg(pg, "#side") == "rgb(245, 244, 240)")
         pg.click("#themeBtn")
@@ -391,7 +488,7 @@ try:
         check("the eye toggles password to text and back", a == "password" and c == ["text", "Hide password"] and d == "password", [a, c, d])
         check("the eye sits inside the field", eb["x"] >= lb["x"] and eb["x"] + eb["width"] <= lb["x"] + lb["width"] and eb["y"] >= lb["y"] - 1 and eb["y"] + eb["height"] <= lb["y"] + lb["height"] + 1, [eb, lb])
         group[0] = "pwa and house rules"
-        check("cache is pw-v3c", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v3c"] or "pw-v3c" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v3d", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v3d"] or "pw-v3d" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the new files are in the offline shell", all(f in swt for f in ("./js/ink.js", "./js/store-local.js", "./js/tray.js")))
         pg.evaluate(SEED_JS, False); pg.reload(); ready(pg)

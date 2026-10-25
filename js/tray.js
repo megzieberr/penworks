@@ -4,16 +4,17 @@
 // panel when tapped while already selected. Each remembers its own colour, width and dash or opacity.
 import { setTool } from './ink.js';
 
-// Fable's placeholder set until Megan sends her own 12: [hex, name]
+// Megan's own 12 (sent 25 Oct), in her order: [hex, name]
 export const COLOURS = [
-  ['#1F2328', 'Near-black'], ['#5B6470', 'Grey'], ['#C62828', 'Red'], ['#E65100', 'Orange'],
-  ['#F9A825', 'Yellow'], ['#2E7D32', 'Green'], ['#00838F', 'Teal'], ['#1565C0', 'Blue'],
-  ['#283593', 'Navy'], ['#6A1B9A', 'Purple'], ['#AD1457', 'Pink'], ['#5D4037', 'Brown'],
+  ['#2CB05F', 'Green'], ['#0D0DFF', 'Blue'], ['#FF0C84', 'Pink'], ['#FF7043', 'Orange'],
+  ['#A83AFF', 'Purple'], ['#FFC107', 'Amber'], ['#00BCD5', 'Cyan'], ['#FF00FF', 'Magenta'],
+  ['#3396FF', 'Sky blue'], ['#FF3636', 'Red'], ['#000000', 'Black'], ['#808080', 'Grey'],
 ];
 const DEFAULTS = {
-  pen: { colour: '#1F2328', width: 2.5, dash: 'solid' },
-  highlighter: { colour: '#F9A825', width: 18, opacity: 0.4 },
+  pen: { colour: '#000000', width: 2.5, dash: 'solid' },
+  highlighter: { colour: '#FFC107', width: 18, opacity: 0.4 },
 };
+const KNOWN = new Set(COLOURS.map(([c]) => c.toLowerCase()));
 const RANGE = {
   pen: { min: 1, max: 12, step: 0.5 },
   highlighter: { min: 6, max: 40, step: 2 },
@@ -49,6 +50,8 @@ function load() {
   try { saved = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (_) { /* defaults */ }
   const s = { tool: INK.includes(saved.tool) ? saved.tool : 'pen',
               pen: { ...DEFAULTS.pen, ...(saved.pen || {}) }, highlighter: { ...DEFAULTS.highlighter, ...(saved.highlighter || {}) } };
+  // a colour saved from an older set (not one of the 12) falls back to that tool's default; width, dash, opacity stay
+  for (const t of INK) if (!KNOWN.has(String(s[t].colour).toLowerCase())) s[t].colour = DEFAULTS[t].colour;
   s.lastInk = s.tool;
   return s;
 }

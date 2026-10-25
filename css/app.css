@@ -44,6 +44,7 @@
   --veil: rgba(255,255,255,.55);
   --off: #8E8A82;
   --sw-edge: rgba(38,42,48,.18);
+  --sw-ring: rgba(38,42,48,.45);  /* the thin ring on every tray colour, so Grey shows on the light tray */
   --note-desk: #E8E6E1;     /* the desk inside a note: light in both modes */
   --desk-text: #4A4F57;     /* text, dashed line and hover on that light desk */
   --desk-dash: #B9B5AC;
@@ -60,7 +61,7 @@
     --desk: #1C1F23; --shelf: #22262B; --tray: #2A2E34; --graphite: #E7E5E0; --muted: #A2A7AF; --faint: #757A82;
     --line: #353A41; --ink: #93A6F2; --ink-soft: #2E3858; --card: #2A2E34; --hover: rgba(255,255,255,.07);
     --field: #1C1F23; --field-line: #474C54; --note-text: #CFCDC8; --soft-text: #C2C0BB; --dash-line: #5A5F67;
-    --veil: rgba(255,255,255,.05); --off: #6E737B; --sw-edge: rgba(255,255,255,.28);
+    --veil: rgba(255,255,255,.05); --off: #6E737B; --sw-edge: rgba(255,255,255,.28); --sw-ring: rgba(255,255,255,.6);
   }
 }
 :root[data-theme="dark"] {
@@ -68,7 +69,7 @@
   --desk: #1C1F23; --shelf: #22262B; --tray: #2A2E34; --graphite: #E7E5E0; --muted: #A2A7AF; --faint: #757A82;
   --line: #353A41; --ink: #93A6F2; --ink-soft: #2E3858; --card: #2A2E34; --hover: rgba(255,255,255,.07);
   --field: #1C1F23; --field-line: #474C54; --note-text: #CFCDC8; --soft-text: #C2C0BB; --dash-line: #5A5F67;
-  --veil: rgba(255,255,255,.05); --off: #6E737B; --sw-edge: rgba(255,255,255,.28);
+  --veil: rgba(255,255,255,.05); --off: #6E737B; --sw-edge: rgba(255,255,255,.28); --sw-ring: rgba(255,255,255,.6);
 }
 
 * { box-sizing: border-box; }
@@ -280,9 +281,9 @@ input.rename {
   border-radius: 8px; background: transparent; color: var(--desk-text); font-weight: 700; font-size: 15px; cursor: pointer; white-space: nowrap;
 }
 #addBelow:hover { background: var(--desk-veil); }
-#counter {
-  position: absolute; right: 14px; bottom: 14px; z-index: 5; background: rgba(38,42,48,.72); color: #fff;
-  font-weight: 700; font-size: 13px; padding: 4px 10px; border-radius: 12px; font-variant-numeric: tabular-nums;
+#counter {   /* plain grey text on the desk (light in both modes): no pill */
+  position: absolute; right: 14px; bottom: 14px; z-index: 5; background: transparent; color: #808080;
+  font-weight: 600; font-size: 13px; padding: 0; border: 0; border-radius: 0; font-variant-numeric: tabular-nums;
   pointer-events: none;
 }
 #exitFs {
@@ -325,7 +326,7 @@ body.full #noteBar, body.full #counter { display: none; }
 #tray .colours { display: flex; flex-direction: column; align-items: center; gap: 4px; padding-bottom: 8px; }
 #tray .sw {
   width: 26px; height: 26px; border-radius: 50%; border: 0; padding: 0; cursor: pointer; flex: none;
-  box-shadow: inset 0 0 0 1px var(--sw-edge);
+  box-shadow: inset 0 0 0 1.5px var(--sw-ring);
 }
 #tray .sw.on { outline: 2px solid var(--graphite); outline-offset: 2px; }
 #tray .tools { display: flex; flex-direction: column; align-items: center; gap: 2px; padding-top: 6px; border-top: 1px solid var(--line); }

@@ -5,6 +5,9 @@
 //   pen / highlighter: data = { points: [[x, y], ...] } in page px at zoom 1 (A4 = 794 x 1123)
 //   shape (Part B):    data = { type, ...params }; the erasers already remove a shape whole
 // Rendering: one <path> per stroke, so every stroke stays crisp at every zoom and can be hit on its own.
+// Each page's SVG holds two groups: <g class="hl"> (bottom) and <g class="pen"> (top, pen and shapes).
+// Inside .hl there is one <g class="hlo" data-opacity> per opacity used on the page; its paths are fully
+// opaque and the group's opacity makes them see-through, so going over a spot again stays one flat colour.
 // Storage goes through js/store-local.js only.
 
 import * as store from './store-local.js';
@@ -15,9 +18,9 @@ export const ERASE_REACH = 6;    // stroke eraser: px on screen around the pen (
 export const AREA_SIZE = 24;     // area eraser: circle diameter, px on screen (24 px at zoom 1)
 const MIN_STEP = 0.4;            // page px; closer points than this are dropped while drawing
 
-const P = new Map();             // page id -> { strokes (by seq), byId, svg, els (id -> path), w, h }
+const P = new Map();             // page id -> { strokes (by seq), byId, svg, hl, pen, hlo (opacity -> group), els (id -> path), w, h }
 const boxes = new WeakMap();     // record -> [x0, y0, x1, y1], its points' bounding box
-const T = { tool: 'pen', style: { colour: '#1F2328', width: 2.5, dash: 'solid', opacity: 1 } };
+const T = { tool: 'pen', style: { colour: '#000000', width: 2.5, dash: 'solid', opacity: 1 } };
 let doOp = (op) => op.redo();
 let G = null;                    // the gesture in progress
 let ring = null, deskEl = null, deskBox = null;
@@ -35,7 +38,7 @@ function data(id) {
   let d = P.get(id);
   if (!d) {
     const strokes = store.load(id).sort(bySeq);
-    d = { strokes, byId: new Map(strokes.map((r) => [r.id, r])), svg: null, els: new Map(), w: 0, h: 0 };
+    d = { strokes, byId: new Map(strokes.map((r) => [r.id, r])), svg: null, hl: null, pen: null, hlo: new Map(), els: new Map(), w: 0, h: 0 };
     P.set(id, d);
   }
   return d;
@@ -91,14 +94,13 @@ export const dashOf = (w) => { const a = f1(Math.max(4, w * 3)); return a + ' ' 
 function styleEl(el, rec) {
   const s = rec.style || {}, w = s.width || 2.5;
   el.setAttribute('fill', 'none');
-  el.setAttribute('stroke', s.colour || '#1F2328');
+  el.setAttribute('stroke', s.colour || '#000000');
   el.setAttribute('stroke-width', String(w));
   el.setAttribute('stroke-linejoin', 'round');
   el.setAttribute('class', rec.kind);
   if (rec.kind === 'highlighter') {
-    el.setAttribute('stroke-linecap', 'round');
-    el.setAttribute('stroke-opacity', String(s.opacity ?? 0.4));
-    el.style.mixBlendMode = 'multiply';
+    el.setAttribute('stroke-linecap', 'round');             // fully opaque: its .hlo group does the see-through
+    el.removeAttribute('stroke-opacity');
   } else {
     el.setAttribute('stroke-linecap', 'round');
     if (s.opacity !== undefined && s.opacity !== 1) el.setAttribute('stroke-opacity', String(s.opacity));
@@ -113,12 +115,45 @@ function makeEl(rec) {
   el.setAttribute('d', dOf(rec));
   return el;
 }
+// the layer groups: which group a record's path lives in, made on demand
+const opKey = (rec) => String(+((rec.style && rec.style.opacity) ?? 0.4));
+const keyOf = (rec) => (rec.kind === 'highlighter' ? 'hl' + opKey(rec) : 'pen');
+function hloGroup(d, key) {
+  let g = d.hlo.get(key);
+  if (!g) {
+    g = document.createElementNS(SVGNS, 'g');
+    g.setAttribute('class', 'hlo'); g.dataset.opacity = key; g.setAttribute('opacity', key);
+    d.hlo.set(key, g);
+    const after = [...d.hl.children].find((x) => +x.dataset.opacity > +key);   // ascending opacity
+    d.hl.insertBefore(g, after || null);
+  }
+  return g;
+}
+function groupFor(d, rec) { return rec.kind === 'highlighter' ? hloGroup(d, opKey(rec)) : d.pen; }
+// put a record's path in its group, before the next record (by seq) that shares that group
+function place(d, rec, el, idx) {
+  const parent = groupFor(d, rec), k = keyOf(rec);
+  let next = null;
+  for (let j = idx + 1; j < d.strokes.length; j++) {
+    const r = d.strokes[j];
+    if (keyOf(r) === k) { const e = d.els.get(r.id); if (e && e.parentNode === parent) { next = e; break; } }
+  }
+  parent.insertBefore(el, next);
+}
+// take a path out; an opacity group left empty goes too
+function unplace(d, el) {
+  const g = el.parentNode;
+  el.remove();
+  if (g && g.classList && g.classList.contains('hlo') && !g.firstChild) { d.hlo.delete(g.dataset.opacity); g.remove(); }
+}
 function buildLayer(d, w, h) {
   const svg = document.createElementNS(SVGNS, 'svg');
   svg.setAttribute('class', 'ink');
-  const frag = document.createDocumentFragment();
-  for (const rec of d.strokes) { const el = makeEl(rec); d.els.set(rec.id, el); frag.appendChild(el); }
-  svg.appendChild(frag);
+  d.hl = document.createElementNS(SVGNS, 'g'); d.hl.setAttribute('class', 'hl');
+  d.pen = document.createElementNS(SVGNS, 'g'); d.pen.setAttribute('class', 'pen');
+  d.hlo = new Map();
+  for (const rec of d.strokes) { const el = makeEl(rec); d.els.set(rec.id, el); groupFor(d, rec).appendChild(el); }
+  svg.append(d.hl, d.pen);
   d.svg = svg;
   sizeLayer(d, w, h);
 }
@@ -156,7 +191,7 @@ function apply(pageId, removeIds, adds) {
     const rm = new Set(removeIds.filter((id) => d.byId.has(id)));
     if (rm.size) {
       d.strokes = d.strokes.filter((r) => !rm.has(r.id));
-      for (const id of rm) { d.byId.delete(id); const el = d.els.get(id); if (el) { el.remove(); d.els.delete(id); } }
+      for (const id of rm) { d.byId.delete(id); const el = d.els.get(id); if (el) { unplace(d, el); d.els.delete(id); } }
     }
   }
   for (const rec of adds) {
@@ -167,8 +202,7 @@ function apply(pageId, removeIds, adds) {
     if (d.svg) {
       const el = d.els.get(rec.id) || makeEl(rec);
       d.els.set(rec.id, el);
-      const next = d.strokes[lo + 1];
-      d.svg.insertBefore(el, next ? d.els.get(next.id) || null : null);
+      place(d, rec, el, lo);
     }
   }
   schedule(pageId);
@@ -307,7 +341,7 @@ function down(e) {
       : { colour: s.colour, width: s.width, dash: 'solid', opacity: s.opacity };
     const rec = { id: uuid(), page_id: at.id, seq: 0, kind: T.tool, style, data: { points: [[r1(at.x), r1(at.y)]] } };
     const el = makeEl(rec);
-    d.svg.appendChild(el);
+    groupFor(d, rec).appendChild(el);                              // newest, so last in its group
     G = { kind: 'draw', index: at.index, page: at.id, rec, el };
     return true;
   }
