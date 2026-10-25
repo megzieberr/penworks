@@ -388,27 +388,18 @@ body.full #noteBar, body.full #counter { display: none; }
 .panel .dash .dl svg { width: 40px; height: 8px; display: block; }
 .panel .dash.on { background: var(--ink-soft); color: var(--ink); border-color: var(--ink); }
 
-/* the spectrum picker for the spare slot: a square (saturation across, lightness down), a hue strip, preview, hex, Done */
-.panel.picker { width: auto; padding: 14px; }
-.picker .sq {
-  position: relative; border-radius: 6px; touch-action: none; cursor: crosshair;
-  background-image: linear-gradient(to top, #000000, rgba(0,0,0,0)), linear-gradient(to right, #FFFFFF, rgba(255,255,255,0));
-}
-.picker .hue {
-  position: relative; height: 24px; margin-top: 12px; border-radius: 12px; touch-action: none; cursor: pointer;
-  background: linear-gradient(to right, #FF0000 0%, #FFFF00 16.67%, #00FF00 33.33%, #00FFFF 50%, #0000FF 66.67%, #FF00FF 83.33%, #FF0000 100%);
-}
-.picker .dot {
-  position: absolute; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; border: 2px solid #FFFFFF;
-  box-shadow: 0 0 0 1px rgba(0,0,0,.35), 0 1px 4px rgba(0,0,0,.3); pointer-events: none;
-}
-.picker .hue .dot { top: 50%; width: 24px; height: 24px; margin: -12px 0 0 -12px; }
-.picker .pkrow { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+/* the honeycomb picker for the spare slot: 127 hexagon cells, a row of greys, the preview and Done.
+   The cells are the colours themselves in both themes; only the card follows the theme (as the other panels). */
+.panel.picker { width: auto; padding: 12px 12px 14px; }
+.picker .comb { touch-action: none; }
+.picker .comb svg { display: block; overflow: visible; }
+.picker .comb [data-cell] { cursor: pointer; stroke-width: .6; }  /* a stroke in its own colour closes hairline seams */
+.picker .comb .grey { stroke: var(--sw-ring); stroke-width: .7; }  /* so white shows on the light card, black on the dark */
+.picker .comb .hsel { pointer-events: none; fill: none; }
+.picker .comb .hsel .o { stroke: #1A1C20; stroke-width: 2.6; }
+.picker .comb .hsel .i { stroke: #FFFFFF; stroke-width: 1.2; }
+.picker .pkrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; }
 .picker .prev { flex: none; width: 30px; height: 30px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--sw-ring); }
-.picker .hex {
-  flex: 1; min-width: 0; width: 0; height: 40px; border: 1px solid var(--field-line); border-radius: 8px; padding: 0 7px;
-  font: 700 14px var(--body); color: var(--graphite); background: var(--field); text-transform: uppercase; font-variant-numeric: tabular-nums;
-}
 .picker .done {
   flex: none; height: 40px; padding: 0 12px; border: 0; border-radius: 8px; background: var(--graphite); color: var(--card);
   font-weight: 700; font-size: 14.5px; cursor: pointer;

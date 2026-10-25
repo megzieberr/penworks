@@ -3,7 +3,7 @@
 // Tools button (U5). One icon per tool, no labels. The pen and the highlighter each open a small
 // panel when tapped while already selected. Each remembers its own colour, width and dash or opacity.
 // Colours: hold a swatch (350 ms, still) and drag it up or down to put her 13 in her order; the order is
-// kept on the device. Under them a 14th spare slot (rainbow ring) holds any colour picked from the spectrum.
+// kept on the device. Under them a 14th spare slot (rainbow ring) holds any colour picked from the honeycomb.
 import { setTool } from './ink.js';
 
 // Megan's own 13 (25 Oct 17:43: Sky blue out, Light green and Teal in), in her order: [hex, name].
@@ -238,71 +238,104 @@ function swatchClick(e) {
   pickColour(e.currentTarget.dataset.colour);
 }
 
-// ---------------------------------------------------------------- the spectrum picker (the spare slot)
-const SQ = 180;
-let pk = { h: 0, s: 0, v: 1 }, pkEls = null;
-function hsvToHex({ h, s, v }) {
-  const f = (n) => { const k = (n + h / 60) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); };
-  return '#' + [f(5), f(3), f(1)].map((x) => Math.round(x * 255).toString(16).padStart(2, '0')).join('').toUpperCase();
+// ---------------------------------------------------------------- the honeycomb picker (the spare slot)
+// Office's "Colors" honeycomb: a white centre and six rings of pointy-top hexagons (1 + 6 + 12 + ... + 36 = 127
+// cells, no gaps). Each ring runs the hue once round (red straight up in every ring, so the colours line up in
+// spokes): pastel in ring 1, the pure colours in ring 4, deep colours at the rim. Under it 15 greys from white to
+// black and one bigger black cell. A tap (finger, pen or mouse) on a cell picks it.
+const HC = { R: 10, pad: 4, gap: 10, Rs: 7.55, Rb: 14 };       // cell radius, edge room, gap above the greys, grey radii
+const RING_S = [0, 70, 85, 95, 100, 100, 100];                  // HSL saturation % per ring (ring 0 = the white centre)
+const RING_L = [100, 88, 76, 63, 50, 37, 25];                   // HSL lightness % per ring
+const SQ3 = Math.sqrt(3);
+let pkEls = null, pkCell = null;
+function hslToHex(h, s, l) {
+  s /= 100; l /= 100;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => { const k = (n + h / 30) % 12; return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); };
+  return '#' + [f(0), f(8), f(4)].map((x) => Math.round(x * 255).toString(16).padStart(2, '0')).join('').toUpperCase();
 }
-function hexToHsv(hex, keepH) {
-  const n = parseInt(hex.slice(1), 16), r = (n >> 16 & 255) / 255, g = (n >> 8 & 255) / 255, b = (n & 255) / 255;
-  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), c = mx - mn;
-  let h = keepH;                                                  // a grey keeps the hue strip where it was
-  if (c) h = 60 * (mx === r ? ((g - b) / c + 6) % 6 : mx === g ? (b - r) / c + 2 : (r - g) / c + 4);
-  return { h, s: mx ? c / mx : 0, v: mx };
-}
-function showPicker() {
-  const { sq, sqDot, hue, hueDot, prev, hex } = pkEls, c = hsvToHex(pk);
-  sq.style.backgroundColor = `hsl(${pk.h}, 100%, 50%)`;
-  sqDot.style.left = pk.s * 100 + '%'; sqDot.style.top = (1 - pk.v) * 100 + '%'; sqDot.style.backgroundColor = c;
-  hueDot.style.left = pk.h / 360 * 100 + '%'; hueDot.style.backgroundColor = `hsl(${pk.h}, 100%, 50%)`;
-  prev.style.backgroundColor = c;
-  if (document.activeElement !== hex) hex.value = c;
-  hue.setAttribute('aria-valuenow', String(Math.round(pk.h)));
+const hexPts = (cx, cy, R) => Array.from({ length: 6 }, (_, k) => {    // pointy top: corners at -30, 30, 90, ... degrees
+  const a = Math.PI / 180 * (60 * k - 30);
+  return (cx + R * Math.cos(a)).toFixed(2) + ',' + (cy + R * Math.sin(a)).toFixed(2);
+}).join(' ');
+function combCells() {                                           // [{ id, x, y, k, colour, grey }]
+  const { R, pad, gap, Rs, Rb } = HC, N = RING_S.length - 1;
+  const W = 2 * pad + (2 * N + 1) * SQ3 * R, cx0 = W / 2, cy0 = pad + (1.5 * N + 1) * R;
+  const rings = Array.from({ length: N + 1 }, () => []);
+  for (let q = -N; q <= N; q++) for (let r = -N; r <= N; r++) {
+    const ring = Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r));
+    if (ring > N) continue;
+    const x = SQ3 * R * (q + r / 2), y = 1.5 * R * r;
+    let ang = Math.round(Math.atan2(x, -y) * 180 / Math.PI * 1e4) / 1e4;   // 0 = straight up, clockwise
+    ang = ((ang % 360) + 360) % 360;
+    rings[ring].push({ x: cx0 + x, y: cy0 + y, ang });
+  }
+  const cells = [];
+  rings.forEach((list, ring) => {
+    list.sort((a, b) => a.ang - b.ang).forEach((c, i) => cells.push({ id: ring + '-' + i, x: c.x, y: c.y, k: 1,
+      colour: ring ? hslToHex(c.ang, RING_S[ring], RING_L[ring]) : '#FFFFFF' }));
+  });
+  const wS = SQ3 * Rs, wB = SQ3 * Rb, rowW = 15 * wS + 4 + wB, x0 = (W - rowW) / 2, gy = cy0 + (1.5 * N + 1) * R + gap + Rb;
+  for (let i = 0; i < 15; i++) {
+    const v = Math.round(255 * (1 - i / 14)).toString(16).padStart(2, '0').toUpperCase();
+    cells.push({ id: 'g' + i, x: x0 + wS * (i + 0.5), y: gy, k: Rs / R, colour: '#' + v + v + v, grey: true });
+  }
+  cells.push({ id: 'g15', x: x0 + 15 * wS + 4 + wB / 2, y: gy, k: Rb / R, colour: '#000000', grey: true });
+  return { cells, W, H: gy + Rb + pad };
 }
 function setSpec(c) {                                             // picking a colour also selects the slot
   st.spec = c;
   useColour(c);
 }
-function track(area, onPoint) {                                   // pen, finger or mouse on the square or the strip
-  const at = (e) => { const r = area.getBoundingClientRect();
-    onPoint(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), Math.max(0, Math.min(1, (e.clientY - r.top) / r.height))); };
-  area.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    try { area.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
-    at(e);
-  });
-  area.addEventListener('pointermove', (e) => { if (area.hasPointerCapture(e.pointerId)) at(e); });
+function showPicker() {
+  const { comb, sel, prev } = pkEls;
+  let cell = pkCell && comb.querySelector(`[data-cell="${pkCell}"]`);
+  if (!cell || !same(cell.dataset.colour, st.spec)) cell = st.spec ? comb.querySelector(`[data-colour="${st.spec}"]`) : null;
+  pkCell = cell ? cell.dataset.cell : null;
+  comb.querySelectorAll('[data-cell].on').forEach((c) => c.classList.remove('on'));
+  if (cell) {
+    cell.classList.add('on');
+    sel.setAttribute('transform', `translate(${cell.dataset.x} ${cell.dataset.y}) scale(${cell.dataset.k})`);
+    sel.removeAttribute('display');
+  } else sel.setAttribute('display', 'none');
+  prev.style.backgroundColor = st.spec || '#FFFFFF';
 }
 function buildPicker() {
-  const sqDot = el('span', { class: 'dot' }), hueDot = el('span', { class: 'dot' });
-  const sq = el('div', { class: 'sq', 'aria-label': 'Saturation and lightness' }, sqDot);
-  const hue = el('div', { class: 'hue', role: 'slider', 'aria-label': 'Hue', 'aria-valuemin': '0', 'aria-valuemax': '360' }, hueDot);
+  const { cells, W, H } = combCells();
+  const polys = cells.map((c) => {
+    const R = HC.R * c.k;
+    return `<polygon class="${c.grey ? 'grey' : 'hx'}" data-cell="${c.id}" data-colour="${c.colour}" data-x="${c.x.toFixed(2)}" data-y="${c.y.toFixed(2)}"`
+      + ` data-k="${c.k.toFixed(4)}" fill="${c.colour}" stroke="${c.colour}" points="${hexPts(c.x, c.y, R)}"/>`;
+  }).join('');
+  const ring = (R) => hexPts(0, 0, R);
+  const comb = el('div', { class: 'comb', html:
+    `<svg viewBox="0 0 ${W.toFixed(2)} ${H.toFixed(2)}" width="${W.toFixed(2)}" height="${H.toFixed(2)}" role="group" aria-label="Colours">`
+    + polys + `<g class="hsel" display="none"><polygon class="o" points="${ring(HC.R + 1)}" vector-effect="non-scaling-stroke"/>`
+    + `<polygon class="i" points="${ring(HC.R - 0.9)}" vector-effect="non-scaling-stroke"/></g></svg>` });
   const prev = el('span', { class: 'prev', 'aria-hidden': 'true' });
-  const hex = el('input', { class: 'hex', type: 'text', maxlength: '7', spellcheck: 'false', autocomplete: 'off', autocapitalize: 'characters', 'aria-label': 'Hex colour' });
   const done = el('button', { type: 'button', class: 'done' }, 'Done');
-  sq.style.width = sq.style.height = SQ + 'px'; hue.style.width = SQ + 'px';
-  track(sq, (x, y) => { pk = { h: pk.h, s: x, v: 1 - y }; setSpec(hsvToHex(pk)); showPicker(); });
-  track(hue, (x) => { pk = { ...pk, h: x * 360 }; setSpec(hsvToHex(pk)); showPicker(); });
-  hex.addEventListener('input', () => { const c = normHex(hex.value); if (c) { pk = hexToHsv(c, pk.h); setSpec(c); showPicker(); } });
-  hex.addEventListener('blur', () => { hex.value = hsvToHex(pk); });
-  hex.addEventListener('keydown', (e) => { if (e.key === 'Enter') hex.blur(); });
+  comb.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    const c = e.target.closest && e.target.closest('[data-cell]');
+    if (!c) return;
+    e.preventDefault();
+    pkCell = c.dataset.cell;
+    setSpec(c.dataset.colour);
+    showPicker();
+  });
   done.addEventListener('click', closePicker);
-  pkEls = { sq, sqDot, hue, hueDot, prev, hex };
-  picker.append(sq, hue, el('div', { class: 'pkrow' }, prev, hex, done));
+  pkEls = { comb, sel: comb.querySelector('.hsel'), prev };
+  picker.append(comb, el('div', { class: 'pkrow' }, prev, done));
 }
 function openPicker() {
   closePanel();
   if (!pkEls) buildPicker();
-  pk = st.spec ? hexToHsv(st.spec, pk.h) : { h: pk.h, s: 0, v: 1 };
   picker.hidden = false;
   showPicker();
   place(picker, specBtn);
 }
 export function closePicker() {
-  if (picker && !picker.hidden) { if (pkEls && document.activeElement === pkEls.hex) pkEls.hex.blur(); picker.hidden = true; }
+  if (picker && !picker.hidden) picker.hidden = true;
 }
 
 // ---------------------------------------------------------------- build
@@ -337,11 +370,7 @@ export function initTray() {
     closePanel();
   }, true);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closePanel(); closePicker(); } });
-  window.addEventListener('resize', () => {
-    closePanel();
-    // the tablet keyboard for the hex field resizes the window: keep the picker then, just move it
-    if (pkEls && !picker.hidden && document.activeElement === pkEls.hex) place(picker, specBtn); else closePicker();
-  });
+  window.addEventListener('resize', () => { closePanel(); closePicker(); });
   push();
 }
 export function trayState() { return JSON.parse(JSON.stringify(st)); }
