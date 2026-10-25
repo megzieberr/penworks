@@ -17,6 +17,10 @@
 # nothing and the pick-up code is gone. The pw-v4b and pw-v4c groups are rewritten to this rule.
 # Arc snap (pw-v4f): an open curve held still snaps to { type: 'arc', x1, y1, xm, ym, x2, y2 }, an SVG path with an A;
 # three handles (start, middle, end); the "arc snap" group. The old "a half circle stays freehand" check now expects arc.
+# Select turns (pw-v4g): a turn ring above the selection box (28 px on screen, on a stem) turns the selection about the
+# box's centre, snapping to multiples of 15 degrees within 2.5; an ellipse keeps data.angle and rotate(angle cx cy);
+# a moved, resized or turned selection comes to the front (fresh seq, last in its own layer group); a resize keeps
+# the ink's width (the old "the ink width scales" check now asserts it stays). The "rotate, front, width" group.
 import sys, subprocess, time, pathlib, re, json, math
 from playwright.sync_api import sync_playwright
 
@@ -516,7 +520,7 @@ try:
         check("a corner drag scales the stroke up", sx > 1.2, [sx, b0, b1])
         check("the aspect is kept", abs(sx - sy) < 0.03, [sx, sy])
         check("the opposite (top-left) corner holds", abs(b1[0] - b0[0]) < 3 and abs(b1[1] - b0[1]) < 3, [b0, b1])
-        check("the ink width scales with it", abs(rc["style"]["width"] - 2.5 * sx) < 0.1, rc["style"])
+        check("the ink width stays as it was (pw-v4g: a resize never thickens the line)", rc["style"]["width"] == 2.5 and elinfo(pg, 1, C)["width"] == "2.5", rc["style"])
         undo(pg)
         check("undo puts its size back", {s["id"]: s for s in strokes(pg, "p4")}[C]["data"]["points"] == P0[C])
         # touch any part (fix round point 2: the old "half inside" checks now follow the new rule)
@@ -1206,10 +1210,169 @@ try:
         check("no page errors in the arc groups", not (e14 or e15 or e16 or e17), [e14, e15, e16, e17])
         ctx.close()
 
+        # ------------------------------------------------------------ pw-v4g: the select tool turns, brings to the front, keeps the width
+        group[0] = "rotate, front, width"
+        ctx, pg, e18 = fresh(b); errs += e18
+        open_note(pg, "Select")
+        PUT_JS = "([pid, recs]) => import('./js/ink.js').then(m => m.put(pid, recs))"
+        HND_JS = "(id) => import('./js/ink.js').then(m => m.handles(m.strokesOf('p4').find(r => r.id === id)))"
+        RING_JS = """() => { const c = document.querySelector('svg.ink g.sel circle.selrot'); return c ? [+c.getAttribute('cx'), +c.getAttribute('cy'), +c.getAttribute('r')] : null; }"""
+        CORN_JS = "() => [...document.querySelectorAll('svg.ink g.sel circle.selh')].map(e => [+e.getAttribute('cx'), +e.getAttribute('cy'), +e.getAttribute('r')])"
+        ORDER_JS = """(id) => { const e = document.querySelector(`svg.ink [data-id="${id}"]`);
+          return e ? { group: e.parentNode.getAttribute('class'), ids: [...e.parentNode.children].map(c => c.dataset.id) } : null; }"""
+        BBW_JS = """(id) => document.querySelector(`svg.ink [data-id="${id}"]`).getBBox().width"""
+        now0 = int(time.time() * 1000)
+        def rec(rid, kind, d, width=2.5, k=0):
+            return {"id": rid, "page_id": "p4", "seq": now0 + k, "kind": kind, "style": {"colour": "#000000", "width": width, "dash": "solid", "opacity": 1}, "data": d}
+        def rot_about(q, c, deg):
+            t = math.radians(deg); x, y = q[0] - c[0], q[1] - c[1]
+            return (c[0] + x * math.cos(t) - y * math.sin(t), c[1] + x * math.sin(t) + y * math.cos(t))
+        def by_id(): return {s["id"]: s for s in strokes(pg, "p4")}
+        def box_centre(): bx = sel(pg)["box"]; return ((bx[0] + bx[2]) / 2, (bx[1] + bx[3]) / 2)
+        def ring_target(deg):              # where the pen ends for a turn of deg degrees (the ring's own angle plus deg)
+            c = box_centre(); r = pg.evaluate(RING_JS)
+            a = math.atan2(r[1] - c[1], r[0] - c[0]) + math.radians(deg); R = math.hypot(r[0] - c[0], r[1] - c[1]) * 1.4
+            return c, (r[0], r[1]), (c[0] + R * math.cos(a), c[1] + R * math.sin(a))
+        def turn_sel(deg):
+            c, r, t = ring_target(deg); drag_page(pg, 1, r, t, steps=12); return c
+        def select_box(a, b_):
+            tap_page(pg, 1, 760, 1100)                               # a tap on empty paper clears any selection first
+            drag_page(pg, 1, a, b_)
+
+        R0 = [[200, 300], [400, 300], [400, 420], [200, 420]]
+        pg.evaluate(PUT_JS, ["p4", [rec("r1", "shape", {"type": "rect", "points": R0}, k=0)]])
+        tool(pg, "select")
+        select_box((180, 280), (420, 440))
+        rg = pg.evaluate(RING_JS); bx = sel(pg)["box"] if sel(pg) else None; z = zoom(pg); cr = pg.evaluate(CORN_JS)
+        check("the rect is selected; one turn ring and its stem, the four corners still four",
+              sel(pg) and sel(pg)["ids"] == ["r1"] and rg is not None and pg.locator("svg.ink g.sel line.selstem").count() == 1 and len(cr) == 4, [sel(pg), rg])
+        if rg and bx:
+            check("the ring: centred above the top edge, 28 px above it on screen, a corner handle's size",
+                  abs(rg[0] - (bx[0] + bx[2]) / 2) < 0.2 and abs(((bx[1] - 4 / z) - rg[1]) * z - 28) < 0.3 and abs(rg[2] - cr[0][2]) < 1e-6, [rg, bx, z, cr[0]])
+            rx_, ry_ = screen(pg, 1, rg[0], rg[1])
+            hit = pg.evaluate("([x, y]) => { const e = document.elementFromPoint(x, y); return e ? !!e.closest('button') : true; }", [rx_, ry_])
+            check("the Copy and Delete chips never cover the ring (they move right of it on a narrow box)", not hit)
+        u0 = U(pg)
+        c = turn_sel(40)
+        P1 = by_id()["r1"]["data"]["points"]; exp = [rot_about(q, c, 40) for q in R0]
+        check("a drag of the ring through 40 degrees turns the rect: its four points turned about the box centre (1 px)",
+              all(near(p, e, 1) for p, e in zip(P1, exp)), [P1, exp])
+        check("one undo step, the rect stays selected, no transform left on it", U(pg) == u0 + 1 and sel(pg) and sel(pg)["ids"] == ["r1"] and elinfo(pg, 1, "r1")["transform"] is None, [U(pg), u0])
+        sb = sel(pg)["box"]
+        check("the box afterwards is the upright box around the turned rect", abs(sb[0] - (min(p[0] for p in P1) - 1.25)) < 0.2 and abs(sb[3] - (max(p[1] for p in P1) + 1.25)) < 0.2, [sb, P1])
+        undo(pg)
+        check("undo puts it back", by_id()["r1"]["data"]["points"] == R0, by_id()["r1"]["data"]["points"])
+        c = turn_sel(88.5)
+        P2 = by_id()["r1"]["data"]["points"]; exp = [rot_about(q, c, 90) for q in R0]
+        check("a drag ending 1.5 degrees short of 90 snaps to exactly 90", all(near(p, e, 0.11) for p, e in zip(P2, exp)), [P2, exp])
+        undo(pg)
+        u1 = U(pg)
+        turn_sel(1)
+        check("a drag ending at 1 degree: no change, no undo step", by_id()["r1"]["data"]["points"] == R0 and U(pg) == u1, [U(pg), u1])
+
+        # an ellipse: data.angle, rotate(angle cx cy), turned handles, the E handle still sets rx only
+        pg.evaluate(PUT_JS, ["p4", [rec("e1", "shape", {"type": "ellipse", "cx": 560, "cy": 700, "rx": 110, "ry": 50}, k=1)]])
+        select_box((430, 630), (690, 770))
+        check("the ellipse alone is selected", sel(pg) and sel(pg)["ids"] == ["e1"], sel(pg))
+        turn_sel(30)
+        e = by_id()["e1"]["data"]
+        check("an ellipse turned 30 degrees has angle 30, its centre and radii kept", e.get("angle") == 30 and e["cx"] == 560 and e["cy"] == 700 and e["rx"] == 110 and e["ry"] == 50, e)
+        tr = elinfo(pg, 1, "e1")["transform"]
+        check("its element carries rotate(30 560 700)", tr == "rotate(30 560 700)", tr)
+        H = pg.evaluate(HND_JS, "e1")
+        expH = [rot_about(q, (560, 700), 30) for q in [(560, 650), (670, 700), (560, 750), (450, 700)]]
+        check("its handles are turned with it (N, E, S, W)", all(near(h, x, 0.01) for h, x in zip(H, expH)), [H, expH])
+        tool(pg, "pen")
+        t30 = math.radians(30)
+        drag_page(pg, 1, (H[1][0], H[1][1]), (H[1][0] + 30 * math.cos(t30), H[1][1] + 30 * math.sin(t30)), steps=8)
+        e2 = by_id()["e1"]["data"]
+        check("dragging its E handle afterwards changes only rx (+30, in its own frame)",
+              abs(e2["rx"] - 140) <= 0.2 and e2["ry"] == 50 and e2["cx"] == 560 and e2["cy"] == 700 and e2.get("angle") == 30, e2)
+        tr = elinfo(pg, 1, "e1")["transform"]
+        check("... and it is still drawn turned", tr == "rotate(30 560 700)", tr)
+
+        # two freehand strokes turn together (real pen events this time)
+        F1 = [[150, 900], [200, 920], [250, 900]]; F2 = [[150, 960], [200, 980], [250, 960]]
+        pg.evaluate(PUT_JS, ["p4", [rec("f1", "pen", {"points": F1}, k=2), rec("f2", "pen", {"points": F2}, k=3)]])
+        tool(pg, "select")
+        select_box((130, 880), (270, 1000))
+        check("both freehand strokes selected", sel(pg) and sorted(sel(pg)["ids"]) == ["f1", "f2"], sel(pg))
+        c, r, t = ring_target(60)
+        pen = Pen(ctx, pg)
+        pen.stroke([screen(pg, 1, *r), screen(pg, 1, *t)], steps=10)
+        G2 = by_id()
+        ok = all(near(p, rot_about(q, c, 60), 1) for sid, Q in (("f1", F1), ("f2", F2)) for p, q in zip(G2[sid]["data"]["points"], Q))
+        check("a selection of two freehand strokes turns both (60 degrees, about the box centre)", ok, [G2["f1"]["data"]["points"], G2["f2"]["data"]["points"], c])
+        ctx.close()
+
+        # FRONT: a moved selection comes to the front of its own layer group
+        ctx, pg, e19 = fresh(b); errs += e19
+        open_note(pg, "Select")
+        draw(pg, 1, [(150, 200), (250, 220), (350, 200)])
+        draw(pg, 1, [(150, 280), (250, 300), (350, 280)])
+        draw(pg, 1, [(150, 360), (250, 380), (350, 360)])
+        A, B, C = [s["id"] for s in strokes(pg, "p4")]
+        tool(pg, "select")
+        select_box((130, 185), (370, 235))
+        check("A alone selected", sel(pg) and sel(pg)["ids"] == [A], sel(pg))
+        u0 = U(pg)
+        drag_page(pg, 1, (250, 212), (290, 212))
+        so, dom = [s["id"] for s in strokes(pg, "p4")], pg.evaluate(ORDER_JS, A)
+        check("A moved 40 px is now last: in seq order and in the DOM (g.pen), which agree", so == [B, C, A] and dom["ids"] == [B, C, A] and dom["group"] == "pen", [so, dom, [A, B, C]])
+        check("the move is one undo step, A still selected", U(pg) == u0 + 1 and sel(pg)["ids"] == [A])
+        undo(pg)
+        so, dom = [s["id"] for s in strokes(pg, "p4")], pg.evaluate(ORDER_JS, A)
+        check("undo puts A back first, in both orders", so == [A, B, C] and dom["ids"] == [A, B, C], [so, dom])
+        u1 = U(pg)
+        drag_page(pg, 1, (250, 212), (250, 212), steps=2)
+        so, dom = [s["id"] for s in strokes(pg, "p4")], pg.evaluate(ORDER_JS, A)
+        check("a selection tapped and not moved keeps its order (and is no undo step)", so == [A, B, C] and dom["ids"] == [A, B, C] and U(pg) == u1, [so, dom])
+        tool(pg, "highlighter")
+        draw(pg, 1, [(450, 600), (650, 600)])
+        draw(pg, 1, [(450, 680), (650, 680)])
+        draw(pg, 1, [(450, 760), (650, 760)])
+        H1, H2, H3 = [s["id"] for s in strokes(pg, "p4")][3:]
+        check("three highlighter strokes", all(by_id()[h]["kind"] == "highlighter" for h in (H1, H2, H3)))
+        tool(pg, "select")
+        select_box((430, 585), (670, 615))
+        check("H1 alone selected", sel(pg) and sel(pg)["ids"] == [H1], sel(pg))
+        drag_page(pg, 1, (550, 600), (550, 640))
+        dom = pg.evaluate(ORDER_JS, H1); so = [s["id"] for s in strokes(pg, "p4")]
+        check("a moved highlighter stroke stays in its highlighter group, last there", dom["group"] == "hlo" and dom["ids"] == [H2, H3, H1] and so[-1] == H1, [dom, so])
+        check("the pen strokes are not touched by it", pg.evaluate(ORDER_JS, A)["ids"] == [A, B, C])
+        ctx.close()
+
+        # WIDTH: a resize keeps the line width (the record, the drawn stroke-width, and mid-drag)
+        ctx, pg, e20 = fresh(b); errs += e20
+        open_note(pg, "Select")
+        pg.evaluate(PUT_JS, ["p4", [rec("w1", "shape", {"type": "rect", "points": [[200, 300], [300, 300], [300, 380], [200, 380]]}, width=4, k=0),
+                                    rec("w2", "pen", {"points": [[200, 600], [260, 640], [320, 600]]}, width=4, k=1)]])
+        tool(pg, "select")
+        def resize_twice():                    # the bottom-right corner along the diagonal to twice the size; returns the mid-drag look
+            q = pg.evaluate(CORN_JS); o, c2 = q[0], q[2]
+            at = lambda s: (o[0] + s * (c2[0] - o[0]), o[1] + s * (c2[1] - o[1]))
+            sx, sy = screen(pg, 1, c2[0], c2[1]); pg.mouse.move(sx, sy); pg.mouse.down()
+            mx, my = screen(pg, 1, *at(1.5)); pg.mouse.move(mx, my, steps=8); pg.wait_for_timeout(40)
+            sid = sel(pg)["ids"][0]; mid = (elinfo(pg, 1, sid), pg.evaluate(BBW_JS, sid))
+            tx, ty = screen(pg, 1, *at(2)); pg.mouse.move(tx, ty, steps=8); pg.mouse.up(); pg.wait_for_timeout(40)
+            return mid
+        for sid, a_, b_, w0, what in (("w1", (180, 280), (320, 400), 100, "a rect"), ("w2", (180, 580), (340, 660), 120, "a freehand stroke")):
+            select_box(a_, b_)
+            if not (sel(pg) and sel(pg)["ids"] == [sid]): check(f"{what} alone selected", False, sel(pg)); continue
+            bw0 = pg.evaluate(BBW_JS, sid)
+            mid, bwm = resize_twice()
+            check(f"{what}: mid-drag it already shows bigger, its stroke-width still 4, no transform on it",
+                  mid["width"] == "4" and mid["transform"] is None and bwm > bw0 * 1.3, [mid, bw0, bwm])
+            r_ = by_id()[sid]; pts = r_["data"]["points"]; w = max(p[0] for p in pts) - min(p[0] for p in pts)
+            check(f"{what} resized to twice its size still has width 4 (the record and the drawn stroke-width)",
+                  abs(w - 2 * w0) < 1.5 and r_["style"]["width"] == 4 and elinfo(pg, 1, sid)["width"] == "4", [w, r_["style"], elinfo(pg, 1, sid)])
+        check("no page errors in the rotate, front, width group", not (e18 or e19 or e20), [e18, e19, e20])
+        ctx.close()
+
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v4f", "pw-v4f" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v4g", "pw-v4g" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)

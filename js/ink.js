@@ -20,6 +20,10 @@
 // grabs it and drags it, button or no button; anywhere else the pen draws. The pen button changes nothing.
 // Arc snap (pw-v4f): an open curve held still snaps into a circular arc, data { type: 'arc', x1, y1, xm, ym, x2, y2 }
 // (start, the point half way round, end); its three handles move one point each, the arc is the circle through them.
+// Select turns (pw-v4g): a ring above the selection box turns the selection about the box's centre (snapping to
+// multiples of 15 degrees within 2.5); an ellipse keeps its turn in data.angle (degrees, absent = 0). A selection
+// that is moved, resized or turned comes to the front (fresh seq values, its own order kept); a resize keeps the
+// ink's width, only the shape grows or shrinks.
 
 import * as store from './store-local.js';
 import { pageAt, pagePoint, view } from './page.js';
@@ -87,7 +91,8 @@ export function outline(rec) {
   if ((d.type === 'rect' || d.type === 'triangle') && d.points && d.points.length) return [...d.points, d.points[0]];
   if (d.type === 'circle' || d.type === 'ellipse') {
     const rx = d.type === 'circle' ? d.r : d.rx, ry = d.type === 'circle' ? d.r : d.ry, out = [];
-    for (let k = 0; k <= 48; k++) { const a = (k / 48) * 2 * Math.PI; out.push([d.cx + rx * Math.cos(a), d.cy + ry * Math.sin(a)]); }
+    const tu = d.type === 'ellipse' ? d.angle || 0 : 0, c = [d.cx, d.cy];
+    for (let k = 0; k <= 48; k++) { const a = (k / 48) * 2 * Math.PI; out.push(turn([d.cx + rx * Math.cos(a), d.cy + ry * Math.sin(a)], c, tu)); }
     return out;
   }
   if (d.type === 'arc') {                                          // 48 points from the start to the end
@@ -114,6 +119,13 @@ function arcGeom(d) {
   return { ox, oy, r: Math.hypot(ax - ox, ay - oy), t1, sweep: nrmA(tm - t1) <= toEnd ? toEnd : toEnd - 2 * Math.PI };
 }
 const nrmA = (t) => ((t % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);   // an angle in [0, 2 pi)
+// the point q turned deg degrees about c (plus = clockwise on the page, the way SVG's rotate() turns)
+function turn(q, c, deg) {
+  if (!deg) return q;
+  const t = deg * Math.PI / 180, cs = Math.cos(t), sn = Math.sin(t), x = q[0] - c[0], y = q[1] - c[1];
+  return [c[0] + x * cs - y * sn, c[1] + x * sn + y * cs];
+}
+const nrmDeg = (a) => { const v = ((a % 360) + 540) % 360 - 180; return v === -180 ? 180 : v; };   // degrees in (-180, 180]
 const pointsOf = (rec) => (rec.kind === 'shape' ? outline(rec) : ((rec.data && rec.data.points) || []));
 function boxOf(rec) {
   let b = boxes.get(rec);
@@ -183,7 +195,10 @@ function setGeom(el, rec) {
     hd.setAttribute('d', arrowHead(d, (rec.style && rec.style.width) || 2.5));
   } else if (d.type === 'rect' || d.type === 'triangle') el.setAttribute('points', d.points.map((q) => f1(q[0]) + ',' + f1(q[1])).join(' '));
   else if (d.type === 'circle') { at('cx', d.cx); at('cy', d.cy); at('r', d.r); }
-  else if (d.type === 'ellipse') { at('cx', d.cx); at('cy', d.cy); at('rx', d.rx); at('ry', d.ry); }
+  else if (d.type === 'ellipse') {                                 // a turned ellipse: rotate(angle cx cy), none at 0
+    at('cx', d.cx); at('cy', d.cy); at('rx', d.rx); at('ry', d.ry);
+    if (d.angle) el.setAttribute('transform', `rotate(${f1(d.angle)} ${f1(d.cx)} ${f1(d.cy)})`); else el.removeAttribute('transform');
+  }
   else if (d.type === 'arc') {                                     // M start A r r 0 large sweep end; in a line: straight
     const g = arcGeom(d), p = (x, y) => f1(x) + ' ' + f1(y);
     el.setAttribute('d', g
@@ -536,8 +551,9 @@ export function handles(rec) {
   if (d.type === 'line' || d.type === 'arrow') return [[d.x1, d.y1], [d.x2, d.y2]];
   if (d.type === 'rect' || d.type === 'triangle') return d.points.map((q) => [q[0], q[1]]);
   if (d.type === 'circle' || d.type === 'ellipse') {
-    const rx = d.type === 'circle' ? d.r : d.rx, ry = d.type === 'circle' ? d.r : d.ry;
-    return [[d.cx, d.cy - ry], [d.cx + rx, d.cy], [d.cx, d.cy + ry], [d.cx - rx, d.cy]];   // N, E, S, W
+    const rx = d.type === 'circle' ? d.r : d.rx, ry = d.type === 'circle' ? d.r : d.ry, c = [d.cx, d.cy];
+    const tu = d.type === 'ellipse' ? d.angle || 0 : 0;                                     // a turned ellipse: turned too
+    return [[d.cx, d.cy - ry], [d.cx + rx, d.cy], [d.cx, d.cy + ry], [d.cx - rx, d.cy]].map((q) => turn(q, c, tu));   // N, E, S, W
   }
   if (d.type === 'arc') return [[d.x1, d.y1], [d.xm, d.ym], [d.x2, d.y2]];                  // start, middle, end
   return [];
@@ -565,7 +581,8 @@ function dragHandle(rec, h, x, y) {
     } else d.points = p.map((q, k) => (k === h ? [r1(x), r1(y)] : q));
   } else if (d.type === 'circle') d.r = r1(Math.max(2, Math.hypot(x - d.cx, y - d.cy)));
   else if (d.type === 'ellipse') {                                 // the centre holds; N and S set the height, E and W the width
-    if (h % 2) d.rx = r1(Math.max(2, Math.abs(x - d.cx))); else d.ry = r1(Math.max(2, Math.abs(y - d.cy)));
+    const [lx, ly] = turn([x, y], [d.cx, d.cy], -(d.angle || 0));   // a turned ellipse: in its own frame
+    if (h % 2) d.rx = r1(Math.max(2, Math.abs(lx - d.cx))); else d.ry = r1(Math.max(2, Math.abs(ly - d.cy)));
   } else if (d.type === 'arc') {                                   // only that point moves: the arc is the circle through the three
     const k = ['1', 'm', '2'][h];
     d['x' + k] = r1(x); d['y' + k] = r1(y);
@@ -591,8 +608,10 @@ function hover(e) {
   showHandle(e.clientX + (h.at[0] - at.x) * z, e.clientY + (h.at[1] - at.y) * z);
 }
 
-// ---------------------------------------------------------------- moving and scaling records (selection)
-function xform(rec, f, s) {
+// ---------------------------------------------------------------- moving, scaling and turning records (selection)
+// f maps a point; s is the scale (circle and ellipse radii follow it, the ink's width never does); rot is the
+// turn in degrees, added to an ellipse's own angle (every other shape turns through its points)
+function xform(rec, f, s, rot) {
   const d = rec.data, P = (q) => rp(f(q));
   let nd;
   if (rec.kind !== 'shape') nd = { ...d, points: d.points.map(P) };
@@ -602,11 +621,19 @@ function xform(rec, f, s) {
     const a = P([d.x1, d.y1]), m = P([d.xm, d.ym]), z = P([d.x2, d.y2]);
     nd = { ...d, x1: a[0], y1: a[1], xm: m[0], ym: m[1], x2: z[0], y2: z[1] };
   } else if (d.type === 'circle') { const c = P([d.cx, d.cy]); nd = { ...d, cx: c[0], cy: c[1], r: r1(d.r * s) }; }
-  else if (d.type === 'ellipse') { const c = P([d.cx, d.cy]); nd = { ...d, cx: c[0], cy: c[1], rx: r1(d.rx * s), ry: r1(d.ry * s) }; }
-  else nd = { ...d };
-  const style = { ...rec.style };
-  if (s !== 1) style.width = Math.round(Math.min(60, Math.max(0.5, (style.width || 2.5) * s)) * 100) / 100;   // the ink scales with it
-  return { ...rec, style, data: nd };
+  else if (d.type === 'ellipse') {
+    const c = P([d.cx, d.cy]);
+    nd = { ...d, cx: c[0], cy: c[1], rx: r1(d.rx * s), ry: r1(d.ry * s) };
+    if (rot) { const a = r1(nrmDeg((d.angle || 0) + rot)); if (a) nd.angle = a; else delete nd.angle; }
+  } else nd = { ...d };
+  return { ...rec, style: { ...rec.style }, data: nd };
+}
+// what a selection gesture does to a point: [f, s, rot] for a move, a resize or a turn
+function selXf(g) {
+  if (g.kind === 'smove') { const { dx, dy } = g; return [(q) => [q[0] + dx, q[1] + dy], 1, 0]; }
+  if (g.kind === 'sresize') { const { o, s } = g; return [(q) => [o[0] + (q[0] - o[0]) * s, o[1] + (q[1] - o[1]) * s], s, 0]; }
+  const { c, a } = g;
+  return [(q) => turn(q, c, a), 1, a];
 }
 
 // ---------------------------------------------------------------- the selection: dashed box, corners, Copy and Delete
@@ -643,14 +670,23 @@ function renderSel(t) {                          // t: a live transform while dr
     setAttrs(c, { class: 'selh', 'data-corner': String(k), cx: q[0], cy: q[1], r: 6 / z, fill: '#FFFFFF', stroke: SEL_BLUE, 'stroke-width': 1.5 / z });
     SEL.g.appendChild(c);
   });
+  // the turn handle: a ring 28 px (on screen) above the top edge's middle, on a thin stem
+  const cx = (x0 + x1) / 2, ry = y0 - 28 / z;
+  const stem = document.createElementNS(SVGNS, 'line');
+  setAttrs(stem, { class: 'selstem', x1: cx, y1: y0, x2: cx, y2: ry + 6 / z, stroke: SEL_BLUE, 'stroke-width': 1.2 / z });
+  const knob = document.createElementNS(SVGNS, 'circle');
+  setAttrs(knob, { class: 'selrot', cx, cy: ry, r: 6 / z, fill: '#FFFFFF', stroke: SEL_BLUE, 'stroke-width': 1.5 / z });
+  SEL.g.append(stem, knob);
+  SEL.rot = [cx, ry];
   if (t) SEL.g.setAttribute('transform', t); else SEL.g.removeAttribute('transform');
   SEL.box = [x0, y0, x1, y1];
   placeChips(t ? SEL.live : null);
 }
 function placeChips(m) {                         // m: [s, ox, oy, dx, dy] while dragging, so the chips ride along
-  let [x0, y0] = SEL.box;
-  if (m) { const [s, ox, oy, dx, dy] = m; x0 = ox + (x0 - ox) * s + dx; y0 = oy + (y0 - oy) * s + dy; }
-  const c = SEL.chips;
+  let [x0, y0] = SEL.box, rx = SEL.rot ? SEL.rot[0] : -Infinity;
+  if (m) { const [s, ox, oy, dx, dy] = m; x0 = ox + (x0 - ox) * s + dx; y0 = oy + (y0 - oy) * s + dy; rx = ox + (rx - ox) * s + dx; }
+  const c = SEL.chips, gap = 14 / SEL.z;
+  if (x0 + c.offsetWidth / SEL.z > rx - gap) x0 = rx + gap;      // they would cover the turn ring: they start just right of it
   c.style.left = f1(x0) + 'px'; c.style.top = f1(y0) + 'px';
   c.style.transform = `scale(${1 / SEL.z}) translateY(calc(-100% - 8px))`;
 }
@@ -671,7 +707,7 @@ function makeSel(page, ids) {
     chips.appendChild(btn);
   };
   chip('copy', 'Copy', copySel); chip('delete', 'Delete', deleteSel);
-  SEL = { page, ids: new Set(ids), g, chips, z: 0, box: null, live: null };
+  SEL = { page, ids: new Set(ids), g, chips, z: 0, box: null, rot: null, live: null };
   renderSel();
 }
 function copySel() {
@@ -873,6 +909,11 @@ function down(e) {
   if (T.tool === 'select') {
     if (SEL && SEL.page === at.id) {
       const b = SEL.box, reach = GRAB / z;
+      if (SEL.rot && Math.hypot(SEL.rot[0] - at.x, SEL.rot[1] - at.y) <= reach) {   // the ring: turn about the box's centre
+        const c = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
+        G = { kind: 'srotate', index: at.index, page: at.id, c, a0: Math.atan2(at.y - c[1], at.x - c[0]), a: 0, recs: selRecs() };
+        return true;
+      }
       const k = selCorners(b).findIndex((q) => Math.hypot(q[0] - at.x, q[1] - at.y) <= reach);
       if (k >= 0) {                                                // a corner: scale about the opposite one
         const o = selCorners(b)[(k + 2) % 4], c = selCorners(b)[k];
@@ -894,19 +935,28 @@ function down(e) {
   }
   return false;
 }
-// a live transform on the selected strokes' paths while the selection is dragged (the records change on lift)
-function liveSel(g, s, ox, oy, dx, dy) {
-  const t = `matrix(${s} 0 0 ${s} ${ox * (1 - s) + dx} ${oy * (1 - s) + dy})`;
-  const d = data(g.page);
-  for (const r of g.recs) { const el = d.els.get(r.id); if (el) el.setAttribute('transform', t); }
+// the live preview while the selection is dragged: each selected path is redrawn from its record put through the
+// gesture (no transform on the ink, so its width never changes); the records change on lift. The box and its
+// handles ride a transform; the chips ride a move or a resize and hide during a turn
+function redraw(el, rec) { if (rec.kind === 'shape') setGeom(el, rec); else el.setAttribute('d', dOf(rec)); }
+function liveSel(g) {
+  const d = data(g.page), [f, s, rot] = selXf(g);
+  for (const r of g.recs) { const el = d.els.get(r.id); if (el) redraw(el, xform(r, f, s, rot)); }
+  if (g.kind === 'srotate') {
+    SEL.live = null;
+    SEL.g.setAttribute('transform', `rotate(${f1(g.a)} ${f1(g.c[0])} ${f1(g.c[1])})`);
+    SEL.chips.style.visibility = 'hidden';
+    return;
+  }
+  const ox = g.kind === 'sresize' ? g.o[0] : 0, oy = g.kind === 'sresize' ? g.o[1] : 0, dx = g.dx || 0, dy = g.dy || 0;
   SEL.live = [s, ox, oy, dx, dy];
-  SEL.g.setAttribute('transform', t);
+  SEL.g.setAttribute('transform', `matrix(${s} 0 0 ${s} ${ox * (1 - s) + dx} ${oy * (1 - s) + dy})`);
   placeChips(SEL.live);
 }
 function unliveSel(g) {
   const d = data(g.page);
-  for (const r of g.recs) { const el = d.els.get(r.id); if (el) el.removeAttribute('transform'); }
-  if (SEL) { SEL.live = null; SEL.g.removeAttribute('transform'); placeChips(null); }
+  for (const r of g.recs) { const el = d.els.get(r.id); if (el) redraw(el, r); }
+  if (SEL) { SEL.live = null; SEL.g.removeAttribute('transform'); SEL.chips.style.visibility = ''; placeChips(null); }
 }
 function move(events) {
   if (!G) return;
@@ -938,14 +988,23 @@ function move(events) {
   if (G.kind === 'smove') {
     const [x, y] = pagePoint(G.index, ev.clientX, ev.clientY);
     G.dx = x - G.p0[0]; G.dy = y - G.p0[1];
-    liveSel(G, 1, 0, 0, G.dx, G.dy);
+    liveSel(G);
+    return;
+  }
+  if (G.kind === 'srotate') {                                      // the pen's angle about the centre, less where it started
+    const [x, y] = pagePoint(G.index, ev.clientX, ev.clientY), c = G.c;
+    let a = nrmDeg((Math.atan2(y - c[1], x - c[0]) - G.a0) * 180 / Math.PI);
+    const n = Math.round(a / 15) * 15;
+    if (Math.abs(a - n) <= 2.5) a = n;                             // near a multiple of 15: exactly that
+    G.a = nrmDeg(r1(a)) || 0;
+    liveSel(G);
     return;
   }
   if (G.kind === 'sresize') {
     const [x, y] = pagePoint(G.index, ev.clientX, ev.clientY), { o, c } = G;
     const vx = c[0] - o[0], vy = c[1] - o[1], L2 = vx * vx + vy * vy || 1;
     G.s = Math.max(0.05, ((x - o[0]) * vx + (y - o[1]) * vy) / L2);   // along the diagonal, so the aspect holds
-    liveSel(G, G.s, o[0], o[1], 0, 0);
+    liveSel(G);
     return;
   }
   for (const e of events) eraseTo(e.clientX, e.clientY);
@@ -975,12 +1034,14 @@ function up(e, cancelled) {
     if (ids.length) makeSel(g.page, ids);
     return;
   }
-  if (g.kind === 'smove' || g.kind === 'sresize') {
+  if (g.kind === 'smove' || g.kind === 'sresize' || g.kind === 'srotate') {
     unliveSel(g);
-    const dx = g.dx || 0, dy = g.dy || 0, s = g.kind === 'sresize' ? g.s : 1;
-    if (cancelled || (g.kind === 'smove' ? Math.hypot(dx, dy) < 0.5 : Math.abs(s - 1) < 1e-3)) return;
-    const f = g.kind === 'smove' ? (q) => [q[0] + dx, q[1] + dy] : (q) => [g.o[0] + (q[0] - g.o[0]) * s, g.o[1] + (q[1] - g.o[1]) * s];
-    const news = g.recs.map((r) => xform(r, f, s));
+    const same = g.kind === 'smove' ? Math.hypot(g.dx, g.dy) < 0.5 : g.kind === 'sresize' ? Math.abs(g.s - 1) < 1e-3 : !g.a;
+    if (cancelled || same) return;                                 // a tap or a 0 px drag: nothing changes, no reorder
+    // the changed selection comes to the front: fresh seq values after every stroke on the page, in its own order
+    const [f, s, rot] = selXf(g), all = data(g.page).strokes, top = all.length ? all[all.length - 1].seq : 0;
+    const base = Math.max(Date.now(), top + 1);
+    const news = g.recs.slice().sort(bySeq).map((r, k) => ({ ...xform(r, f, s, rot), seq: base + k }));
     doOp(changeOp([{ page: g.page, removed: g.recs, added: news }]));
     return;
   }

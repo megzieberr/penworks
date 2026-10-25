@@ -488,7 +488,7 @@ try:
         check("the eye toggles password to text and back", a == "password" and c == ["text", "Hide password"] and d == "password", [a, c, d])
         check("the eye sits inside the field", eb["x"] >= lb["x"] and eb["x"] + eb["width"] <= lb["x"] + lb["width"] and eb["y"] >= lb["y"] - 1 and eb["y"] + eb["height"] <= lb["y"] + lb["height"] + 1, [eb, lb])
         group[0] = "pwa and house rules"
-        check("cache is pw-v4f", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v4f"] or "pw-v4f" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v4g", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v4g"] or "pw-v4g" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the new files are in the offline shell", all(f in swt for f in ("./js/ink.js", "./js/store-local.js", "./js/tray.js")))
         pg.evaluate(SEED_JS, False); pg.reload(); ready(pg)
