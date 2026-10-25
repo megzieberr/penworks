@@ -79,6 +79,10 @@ def open_list(pg):
     if pg.locator("#pageList").is_hidden(): pg.click("#listBtn")
     pg.wait_for_selector("#pageList:not([hidden])")
 def thumb(pg, i): return pg.locator(f"#plThumbs .thumbP[data-index='{i}']")
+def drag_thumb(pg, i, j):          # hold thumbnail i (mouse = finger = S Pen: pointer events), drag it onto slot j
+    a, c = thumb(pg, i).bounding_box(), thumb(pg, j).bounding_box()
+    pg.mouse.move(a["x"] + a["width"] / 2, a["y"] + a["height"] / 2); pg.mouse.down(); pg.wait_for_timeout(450)
+    pg.mouse.move(c["x"] + c["width"] / 2, c["y"] + c["height"] / 2, steps=8); pg.mouse.up(); pg.wait_for_timeout(60)
 
 def creds():
     u, p = os.environ.get("PW_TEST_USER"), os.environ.get("PW_TEST_PASS")
@@ -209,11 +213,12 @@ try:
         open_list(pg); thumb(pg, 2).click(); pg.wait_for_timeout(80)
         check("tap thumbnail 2: page 2 is current, list closed", count_text(pg) == "2 / 4" and pg.locator("#pageList").is_hidden(), count_text(pg))
         open_list(pg); thumb(pg, 4).click(button="right"); items = menu_items(pg)
-        check("thumbnail menu: Add page, Copy, Cut, Delete, Erase page, Move up (last one; U2 A added Copy, Cut, Erase page)",
-              items == ["Add page", "Copy", "Cut", "Delete", "Erase page", "Move up"], items)
-        menu(pg, "Move up"); idle(pg)
+        check("thumbnail menu: Add page, Copy, Cut, Delete, Erase page (no Move up / down: pages are dragged)",
+              items == ["Add page", "Copy", "Cut", "Delete", "Erase page"], items)
+        pg.keyboard.press("Escape")
+        drag_thumb(pg, 4, 3); idle(pg)
         moved = [ids[0], ids[1], ids[3], ids[2]]
-        check("move page 4 up", pg.evaluate(ORDER_JS, "Algebra") == moved and pg.evaluate(STORED_JS, "Algebra") == moved)
+        check("hold page 4 and drag it to slot 3", pg.evaluate(ORDER_JS, "Algebra") == moved and pg.evaluate(STORED_JS, "Algebra") == moved)
         thumb(pg, 3).click(button="right"); menu(pg, "Delete"); idle(pg)
         gone = [ids[0], ids[1], ids[2]]
         check("delete page 3: gone for good (no Bin)", pg.evaluate(STORED_JS, "Algebra") == gone
@@ -374,7 +379,7 @@ try:
             st = pg.evaluate("(u)=>fetch(u).then(r=>r.status+' '+r.headers.get('content-type'))", ic["src"])
             check("icon " + ic["src"], st.startswith("200 image/png"), st)
         check("service worker registers and is active", pg.evaluate("navigator.serviceWorker.ready.then(r=>!!r.active)"))
-        check("cache is pw-v3f (scroll)", pg.evaluate("caches.keys()") == ["pw-v3f"] or "pw-v3f" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v3g (page drag)", pg.evaluate("caches.keys()") == ["pw-v3g"] or "pw-v3g" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
         inst = ctx.new_cdp_session(pg).send("Page.getInstallabilityErrors")
         check("Chrome sees it as installable", not inst.get("installabilityErrors"), inst)
         pg.reload(); ready(pg); pg.wait_for_timeout(500)

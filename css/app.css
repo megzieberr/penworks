@@ -314,6 +314,13 @@ body.full #noteBar, body.full #counter { display: none; }
 .thumbP.cur .paper { outline: 2px solid var(--ink); outline-offset: 2px; }
 .thumbP .num { font-size: 12.5px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
 .thumbP.cur .num { color: var(--ink); }
+.thumbP { position: relative; }
+.thumbP .more { position: absolute; right: -6px; bottom: -7px; width: 32px; height: 28px; }   /* the page menu */
+/* hold and drag: the lifted page grows a little, casts a stronger shadow and goes slightly see-through;
+   the others slide apart to show the gap where it will land */
+#plThumbs.dragging .thumbP:not(.lift) { transition: transform .15s ease; }
+.thumbP.lift { z-index: 3; opacity: .82; cursor: grabbing; }
+.thumbP.lift .paper { box-shadow: 0 10px 26px rgba(20,22,26,.38); }
 
 /* ---------- the tray: her 13 colours and the spare slot, the tools, a gap, undo, redo (top to bottom) ---------- */
 #tray {
@@ -458,4 +465,5 @@ body.full #noteBar, body.full #counter { display: none; }
   #toast, .chev svg { transition: none; }
   #pageList { animation: none; }
   #tray .colours.dragging .sw:not(.lift) { transition: none; }
+  #plThumbs.dragging .thumbP:not(.lift) { transition: none; }
 }

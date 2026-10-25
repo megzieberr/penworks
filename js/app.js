@@ -333,12 +333,6 @@ function erasePage(i) {
   if (!op) { toast('Nothing to erase on this page.'); return; }
   doOp(op);
 }
-function stepPage(i, dir) {
-  const list = pagesOf(S.openNote), j = i + dir;
-  if (j < 0 || j >= list.length) return;
-  const id = list[i].id;
-  doOp({ redo: () => { movePage(id, j); shown(j); }, undo: () => { movePage(id, i); shown(i); } });
-}
 // orientation or paper, for the current page or all of them
 function setPaper(field, value, all) {
   const list = pagesOf(S.openNote), targets = all ? list : [list[S.cur]].filter(Boolean);
@@ -431,9 +425,7 @@ function thumbMenu(i, anchor) {
   if (n > 1) items.push({ label: 'Cut', fn: () => cutPage(i) });
   if (S.clip[S.openNote]) items.push({ label: 'Paste', fn: () => pastePage(i) });
   if (n > 1) items.push({ label: 'Delete', fn: () => deletePage(i) });
-  items.push({ label: 'Erase page', fn: () => erasePage(i) });
-  if (i > 0) items.push({ label: 'Move up', fn: () => stepPage(i, -1) });
-  if (i < n - 1) items.push({ label: 'Move down', fn: () => stepPage(i, 1) });
+  items.push({ label: 'Erase page', fn: () => erasePage(i) });     // to move a page: hold it and drag (no Move up / down)
   openMenu(anchor, items);
 }
 function paperMenu(anchor) {
@@ -586,13 +578,107 @@ function renderPageList() {
   if (!S.listOpen) return;
   const T = $('plThumbs'); T.textContent = '';
   pagesOf(S.openNote).forEach((p, i) => {
-    const t = h('div', { class: 'thumbP ' + p.orientation, 'data-index': i + 1, role: 'button', tabindex: '0',
-      onclick: () => { S.listOpen = false; renderPageList(); scrollToPage(i); } },
-      paper(p, ' ' + p.orientation), h('span', { class: 'num' }, String(i + 1)));
-    pressable(t, () => thumbMenu(i, t));
+    const t = h('div', { class: 'thumbP ' + p.orientation, 'data-index': i + 1, 'data-id': p.id, role: 'button', tabindex: '0',
+      onclick: () => { S.listOpen = false; renderPageList(); scrollToPage(i); },
+      onpointerdown: thumbDown,
+      oncontextmenu: (e) => { e.preventDefault(); if (!pd) thumbMenu(i, t); } },   // right-click; a long press lifts instead
+      paper(p, ' ' + p.orientation), h('span', { class: 'num' }, String(i + 1)),
+      h('button', { class: 'more', type: 'button', 'aria-label': 'Page menu',
+        onclick: (e) => { e.stopPropagation(); thumbMenu(i, e.currentTarget); } }, '⋯'));
     T.append(t);
   });
   updateCount();
+}
+
+// page list: hold a page (350 ms, still) and drag it to its place. A quick tap goes to the page, a move
+// before the hold time scrolls the list. While a page is lifted the others slide apart to show the gap
+// (the nearest slot by centre distance), the list scrolls near its top and bottom edge, and the drop is
+// ONE undo step. pointercancel puts it back where it was.
+const HOLD_MS = 350, HOLD_PX = 6, EDGE = 40;
+let pd = null, eatThumbClick = false;
+function thumbDown(e) {
+  if (e.button !== 0 || pd || e.target.closest('button') || pagesOf(S.openNote).length < 2) return;   // one page: nothing lifts
+  pd = { t: e.currentTarget, id: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, lifted: false,
+         timer: setTimeout(liftPage, HOLD_MS) };
+  addEventListener('pointermove', pageDragMove, { passive: false });
+  addEventListener('pointerup', pageDragUp);
+  addEventListener('pointercancel', pageDragCancel);
+}
+function liftPage() {
+  const d = pd;
+  if (!d) return;
+  d.timer = 0;
+  const T = $('plThumbs');
+  d.r = T.getBoundingClientRect();
+  d.list = [...T.querySelectorAll('.thumbP')];
+  d.from = d.to = d.list.indexOf(d.t);
+  if (d.from < 0) { endPageDrag(true); return; }
+  d.max = Math.max(0, T.scrollHeight - T.clientHeight);          // the lifted page must not stretch the list
+  d.p0 = [d.x0 - d.r.left, d.y0 - d.r.top + T.scrollTop];         // where it was picked up, in list coordinates
+  d.slots = d.list.map((el) => {
+    const b = el.getBoundingClientRect();
+    return [b.left - d.r.left + b.width / 2, b.top - d.r.top + T.scrollTop + b.height / 2];
+  });
+  d.lifted = true;
+  closeMenu();
+  T.classList.add('dragging'); d.t.classList.add('lift');
+  placeLift();
+  const edge = () => {
+    if (!pd || pd !== d) return;
+    const top = d.y - d.r.top, bot = d.r.bottom - d.y;
+    let v = 0;
+    if (top < EDGE) v = -(1 + 5 * Math.min(1, (EDGE - top) / EDGE));
+    else if (bot < EDGE) v = 1 + 5 * Math.min(1, (EDGE - bot) / EDGE);
+    const st = Math.max(0, Math.min(d.max, T.scrollTop + v));
+    if (v && st !== T.scrollTop) { T.scrollTop = st; placeLift(); }
+    d.raf = requestAnimationFrame(edge);
+  };
+  d.raf = requestAnimationFrame(edge);
+}
+function placeLift() {
+  const d = pd, T = $('plThumbs');
+  const px = d.x - d.r.left, py = d.y - d.r.top + T.scrollTop;
+  let to = d.from, best = Infinity;
+  d.slots.forEach(([cx, cy], k) => { const dist = Math.hypot(px - cx, py - cy); if (dist < best) { best = dist; to = k; } });
+  d.to = to;
+  d.list.forEach((el, k) => {
+    if (k === d.from) return;
+    let n = k < d.from ? k : k - 1;                                   // its place with the lifted page taken out
+    if (n >= to) n++;                                                  // and the gap opened at `to`
+    const [ax, ay] = d.slots[k], [bx, by] = d.slots[n];
+    el.style.transform = n === k ? '' : `translate(${bx - ax}px, ${by - ay}px)`;
+  });
+  d.t.style.transform = `translate(${px - d.p0[0]}px, ${py - d.p0[1]}px) scale(1.06)`;
+}
+function pageDragMove(e) {
+  const d = pd;
+  if (!d || e.pointerId !== d.id) return;
+  d.x = e.clientX; d.y = e.clientY;
+  if (!d.lifted) {                                                     // moved before the hold time: a scroll, nothing lifts
+    if (d.timer && Math.hypot(d.x - d.x0, d.y - d.y0) > HOLD_PX) endPageDrag(true);
+    return;
+  }
+  e.preventDefault();
+  placeLift();
+}
+function pageDragUp(e) { if (pd && e.pointerId === pd.id) endPageDrag(false); }
+function pageDragCancel(e) { if (pd && e.pointerId === pd.id) endPageDrag(true); }
+function endPageDrag(cancelled) {
+  const d = pd;
+  pd = null;
+  clearTimeout(d.timer); cancelAnimationFrame(d.raf);
+  removeEventListener('pointermove', pageDragMove, { passive: false });
+  removeEventListener('pointerup', pageDragUp);
+  removeEventListener('pointercancel', pageDragCancel);
+  if (!d.lifted) return;                                               // a tap: the click goes to the page
+  eatThumbClick = true;                                                // the click that ends a drag goes nowhere
+  $('plThumbs').classList.remove('dragging');
+  d.t.classList.remove('lift');
+  d.list.forEach((el) => { el.style.transform = ''; });
+  const from = d.from, to = d.to, p = pagesOf(S.openNote)[from];
+  if (cancelled || to === from || !p) return;                          // same slot or cancelled: nothing moves
+  const id = p.id;
+  doOp({ redo: () => { movePage(id, to); shown(to); }, undo: () => { movePage(id, from); shown(from); } });
 }
 function renderNote() {
   const n = note(S.openNote);
@@ -700,6 +786,11 @@ function wire() {
   $('addBelow').addEventListener('click', () => addPageBelow(pagesOf(S.openNote).length - 1));
   $('listBtn').addEventListener('click', () => { S.listOpen = !S.listOpen; renderPageList(); });
   $('plClose').addEventListener('click', () => { S.listOpen = false; renderPageList(); });
+  // a lifted page: Chrome has not started a scroll (the finger was still for the hold), so cancelling the
+  // touchmove keeps it from starting; the click that ends a drag is eaten, a fresh press clears that
+  $('plThumbs').addEventListener('touchmove', (e) => { if (pd && pd.lifted && e.cancelable) e.preventDefault(); }, { passive: false });
+  $('plThumbs').addEventListener('pointerdown', () => { eatThumbClick = false; }, true);
+  $('plThumbs').addEventListener('click', (e) => { if (eatThumbClick) { eatThumbClick = false; e.stopPropagation(); e.preventDefault(); } }, true);
   $('desk').addEventListener('pointerdown', () => { if (S.listOpen) { S.listOpen = false; renderPageList(); } });
   $('prevBtn').addEventListener('click', () => scrollToPage(S.cur - 1));
   $('nextBtn').addEventListener('click', () => scrollToPage(S.cur + 1));
@@ -727,7 +818,8 @@ function wire() {
 }
 
 // test hook: the checks wait for writes and clean up their rows through this
-window.__pw = { S, api, idle: () => chain, failed: () => failed, current, ink, tray: trayState };
+window.__pw = { S, api, idle: () => chain, failed: () => failed, current, ink, tray: trayState,
+                pageDrag: () => (pd ? { lifted: pd.lifted, from: pd.from, to: pd.to } : null) };
 
 wire();
 (async () => {

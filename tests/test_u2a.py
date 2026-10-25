@@ -191,10 +191,10 @@ try:
         group[0] = "page menu"
         go_page(pg, 1); draw(pg, 1, line(300, 150, 450))
         items = thumb_menu(pg, 2); pg.keyboard.press("Escape")
-        check("Samsung's order, no Paste before a copy", items == ["Add page", "Copy", "Cut", "Delete", "Erase page", "Move up", "Move down"], items)
+        check("Samsung's order, no Paste before a copy", items == ["Add page", "Copy", "Cut", "Delete", "Erase page"], items)
         thumb_menu(pg, 2); menu(pg, "Copy")
         items = thumb_menu(pg, 3)
-        check("after Copy: Paste appears in its place", items == ["Add page", "Copy", "Cut", "Paste", "Delete", "Erase page", "Move up"], items)
+        check("after Copy: Paste appears in its place", items == ["Add page", "Copy", "Cut", "Paste", "Delete", "Erase page"], items)
         U = lambda: pg.evaluate("window.__pw.S.hist['n1'].u.length")
         u_paste = U(); menu(pg, "Paste"); idle(pg); u_paste = U() - u_paste
         ids = pg.evaluate(PAGES_JS)
@@ -488,7 +488,7 @@ try:
         check("the eye toggles password to text and back", a == "password" and c == ["text", "Hide password"] and d == "password", [a, c, d])
         check("the eye sits inside the field", eb["x"] >= lb["x"] and eb["x"] + eb["width"] <= lb["x"] + lb["width"] and eb["y"] >= lb["y"] - 1 and eb["y"] + eb["height"] <= lb["y"] + lb["height"] + 1, [eb, lb])
         group[0] = "pwa and house rules"
-        check("cache is pw-v3f", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v3f"] or "pw-v3f" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v3g", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v3g"] or "pw-v3g" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the new files are in the offline shell", all(f in swt for f in ("./js/ink.js", "./js/store-local.js", "./js/tray.js")))
         pg.evaluate(SEED_JS, False); pg.reload(); ready(pg)
