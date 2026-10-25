@@ -212,7 +212,7 @@ export function initPage(els) {
   ({ desk, stack, addBelow } = els);
   if (els.onCurrent) onCurrent = els.onCurrent;
   if (els.onSheets) onSheets = els.onSheets;
-  if (els.ink) ink = els.ink;                       // { down(e), move(events), up(e, cancelled), hover(e) }
+  if (els.ink) ink = els.ink;                       // { down(e), move(events), up(e, cancelled), hover(e), fingerTap(cx, cy) }
   const touches = new Map();
   let pinch = null, drag = null, penSeen = -1e9, inkId = null, chord = false;
   const now = () => performance.now();
@@ -221,6 +221,7 @@ export function initPage(els) {
   const pt = (e) => { const r = rect(); return [e.clientX - r.left, e.clientY - r.top]; };
   const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
   const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const TAP_PX = 6;                                 // a finger that lifts within 6 px of where it landed is a tap (the selection clears)
   function startPinch() {
     const [a, b] = [...touches.values()];
     stopGlide(); settle();
@@ -303,6 +304,7 @@ export function initPage(els) {
     if (drag && drag.id === e.pointerId) {
       const p = pt(e), t = when(e);
       V.x = drag.x0 + p[0] - drag.s0[0]; V.y = drag.y0 + p[1] - drag.s0[1];
+      if (dist(p, drag.s0) >= TAP_PX) drag.panned = true;                // once a pan, never a tap
       drag.trail.push([t, p[0], p[1]]);
       while (drag.trail.length > 2 && t - drag.trail[0][0] > WINDOW) drag.trail.shift();
       request();
@@ -312,7 +314,11 @@ export function initPage(els) {
     if (e.pointerId === inkId) { inkId = null; chord = false; ink.up(e, e.type === 'pointercancel'); return; }
     if (!touches.has(e.pointerId)) return;
     touches.delete(e.pointerId);
-    if (drag && drag.id === e.pointerId && e.type === 'pointerup' && !pinch) { settle(); flick(drag, e); }   // a finger only
+    if (drag && drag.id === e.pointerId && e.type === 'pointerup' && !pinch) {                             // a finger only
+      settle();
+      if (!drag.panned && dist(pt(e), drag.s0) < TAP_PX) { if (ink && ink.fingerTap) ink.fingerTap(e.clientX, e.clientY); }   // a tap: no flick
+      else flick(drag, e);
+    }
     if (touches.size >= 2) startPinch();
     else { pinch = null; drag = null; }
   };

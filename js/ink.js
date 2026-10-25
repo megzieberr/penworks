@@ -24,6 +24,8 @@
 // multiples of 15 degrees within 2.5); an ellipse keeps its turn in data.angle (degrees, absent = 0). A selection
 // that is moved, resized or turned comes to the front (fresh seq values, its own order kept); a resize keeps the
 // ink's width, only the shape grows or shrinks.
+// Select polish (pw-v4j): a tap selects the topmost stroke under it, a drag selects everything in the box; a finger
+// tap outside the selection clears it (any tool); a turn shows its degrees beside the ring; the chips are icons.
 
 import * as store from './store-local.js';
 import { pageAt, pagePoint, view, pageSize } from './page.js';
@@ -50,7 +52,11 @@ let doOp = (op) => op.redo();
 let onChange = null;             // optional: told the page id after every stroke change (apply), the page list's thumbs
 let G = null;                    // the gesture in progress
 let ring = null, hring = null, deskEl = null, deskBox = null;
-let SEL = null;                  // the selection: { page, ids, g, chips, z }
+let SEL = null;                  // the selection: { page, ids, g, chips, deg, z }
+// the chips' two icons (the same drawing style as SVG_BIN in js/app.js)
+const ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">';
+const SVG_COPY = ICON + '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>';
+const SVG_BIN = ICON + '<path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13"/></svg>';
 
 const uuid = () => crypto.randomUUID();
 const r1 = (v) => Math.round(v * 10) / 10;
@@ -671,7 +677,7 @@ function selBox(recs) {
 const selCorners = (b) => [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]];
 export function clearSelection() {
   if (!SEL) return;
-  SEL.g.remove(); SEL.chips.remove();
+  SEL.g.remove(); SEL.chips.remove(); SEL.deg.remove();
   SEL = null;
 }
 export function selection() { return SEL ? { page: SEL.page, ids: [...SEL.ids], box: selBox(selRecs()) } : null; }
@@ -681,6 +687,7 @@ function renderSel(t) {                          // t: a live transform while dr
   SEL.z = z;
   if (!SEL.g.parentNode) d.svg.appendChild(SEL.g);
   if (!SEL.chips.parentNode) d.svg.parentNode.appendChild(SEL.chips);
+  if (!SEL.deg.parentNode) d.svg.parentNode.appendChild(SEL.deg);
   const pad = 4 / z, x0 = b[0] - pad, y0 = b[1] - pad, x1 = b[2] + pad, y1 = b[3] + pad;
   SEL.g.textContent = '';
   const box = document.createElementNS(SVGNS, 'rect');
@@ -725,14 +732,16 @@ function makeSel(page, ids) {
   clearSelection();
   const g = document.createElementNS(SVGNS, 'g'); g.setAttribute('class', 'sel');
   const chips = document.createElement('div'); chips.className = 'selChips';
-  const chip = (act, label, fn) => {
+  const chip = (act, label, icon, fn) => {        // an icon only: the word lives in aria-label and title
     const btn = document.createElement('button');
-    btn.type = 'button'; btn.className = 'chip'; btn.dataset.act = act; btn.textContent = label;
+    btn.type = 'button'; btn.className = 'chip'; btn.dataset.act = act; btn.innerHTML = icon;
+    btn.setAttribute('aria-label', label); btn.title = label;
     btn.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
     chips.appendChild(btn);
   };
-  chip('copy', 'Copy', copySel); chip('delete', 'Delete', deleteSel);
-  SEL = { page, ids: new Set(ids), g, chips, z: 0, box: null, rot: null, live: null };
+  chip('copy', 'Copy', SVG_COPY, copySel); chip('delete', 'Delete', SVG_BIN, deleteSel);
+  const deg = document.createElement('div'); deg.className = 'selDeg';   // the turn's degrees, shown only while turning
+  SEL = { page, ids: new Set(ids), g, chips, deg, z: 0, box: null, rot: null, live: null };
   renderSel();
 }
 function copySel() {
@@ -773,6 +782,19 @@ function inBox(id, b) {
     if (hit) out.push(r.id);
   }
   return out;
+}
+// the stroke a tap lands on: walk the page from the top of the stack down (highest seq first), the first within reach
+function topAt(id, x, y, reach) {
+  const all = data(id).strokes;
+  for (let i = all.length - 1; i >= 0; i--) if (near(all[i], x, y, reach)) return all[i].id;
+  return null;
+}
+// a finger tap (page.js: a touch that lifted within 6 px of where it landed): outside the selection's box it clears
+function fingerTap(cx, cy) {
+  if (!SEL || G) return;
+  const at = pageAt(cx, cy), b = SEL.box;
+  if (at && b && at.id === SEL.page && at.x >= b[0] && at.x <= b[2] && at.y >= b[1] && at.y <= b[3]) return;   // inside: the pen moves it
+  clearSelection();
 }
 // the tray's colour tap and Restyle tap while a selection exists: one undo step each, the selection stays
 export function hasSelection() { return !!SEL; }
@@ -971,6 +993,11 @@ function liveSel(g) {
     SEL.live = null;
     SEL.g.setAttribute('transform', `rotate(${f1(g.a)} ${f1(g.c[0])} ${f1(g.c[1])})`);
     SEL.chips.style.visibility = 'hidden';
+    const z = SEL.z || view().z, dg = SEL.deg;                     // the degrees just right of the ring (where it was drawn)
+    dg.textContent = Math.round(g.a) + '°';
+    dg.style.left = f1(SEL.rot[0] + 14 / z) + 'px'; dg.style.top = f1(SEL.rot[1]) + 'px';
+    dg.style.transform = `scale(${1 / z}) translateY(-50%)`;
+    dg.classList.add('on');
     return;
   }
   const ox = g.kind === 'sresize' ? g.o[0] : 0, oy = g.kind === 'sresize' ? g.o[1] : 0, dx = g.dx || 0, dy = g.dy || 0;
@@ -981,7 +1008,7 @@ function liveSel(g) {
 function unliveSel(g) {
   const d = data(g.page);
   for (const r of g.recs) { const el = d.els.get(r.id); if (el) redraw(el, r); }
-  if (SEL) { SEL.live = null; SEL.g.removeAttribute('transform'); SEL.chips.style.visibility = ''; placeChips(null); }
+  if (SEL) { SEL.live = null; SEL.g.removeAttribute('transform'); SEL.chips.style.visibility = ''; SEL.deg.classList.remove('on'); placeChips(null); }
 }
 function move(events) {
   if (!G) return;
@@ -1054,7 +1081,12 @@ function up(e, cancelled) {
   if (g.kind === 'box') {
     g.band.remove();
     const b = [Math.min(g.p0[0], g.p1[0]), Math.min(g.p0[1], g.p1[1]), Math.max(g.p0[0], g.p1[0]), Math.max(g.p0[1], g.p1[1])];
-    if (cancelled || (b[2] - b[0]) * g.z < 4 || (b[3] - b[1]) * g.z < 4) return;    // a tap outside only clears
+    if (cancelled) return;
+    if ((b[2] - b[0]) * g.z < 4 || (b[3] - b[1]) * g.z < 4) {     // a tap: the topmost stroke under it, alone
+      const id = topAt(g.page, g.p0[0], g.p0[1], GRAB / g.z);
+      if (id) makeSel(g.page, [id]);
+      return;
+    }
     const ids = inBox(g.page, b);
     if (ids.length) makeSel(g.page, ids);
     return;
@@ -1075,4 +1107,4 @@ function up(e, cancelled) {
   g.changes.forEach((c, page) => { if (c.removed.size || c.added.size) changes.push({ page, removed: [...c.removed.values()], added: [...c.added.values()] }); });
   if (changes.length) doOp(changeOp(changes));
 }
-export const hook = { down, move, up, hover };
+export const hook = { down, move, up, hover, fingerTap };

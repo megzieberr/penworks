@@ -26,6 +26,10 @@
 # whose turn ring would pass the page's top edge puts the ring below the box, stem from the bottom edge, chips
 # unmoved at the box's top-left. The end of the "restyle" group and the "ring flips near the page top" group.
 # Page list (pw-v4i): the page list thumbs draw the ink, a thumb tap keeps the panel open; checks in tests/test_pagelist.py.
+# Select polish (pw-v4j): a tap with the select tool selects the topmost stroke under it (12 px reach), a drag box still
+# takes everything it touches; a finger tap outside the selection clears it (a pan keeps it); a turn shows its degrees
+# (.selDeg) beside the ring; the Copy and Delete chips are round icon buttons (the word in aria-label and title), so
+# SELUI_JS now reads the chips' aria-label instead of their text. The "select polish (pw-v4j)" group.
 import sys, subprocess, time, pathlib, re, json, math
 from playwright.sync_api import sync_playwright
 
@@ -63,7 +67,7 @@ SEL_JS = "() => window.__pw.ink.selection()"
 SELUI_JS = """() => { const g = document.querySelector('svg.ink g.sel'), c = document.querySelector('.selChips');
   return { g: !!g, box: g ? !!g.querySelector('rect.selbox') : false, dash: g && g.querySelector('rect.selbox') ? g.querySelector('rect.selbox').getAttribute('stroke-dasharray') : null,
     corners: g ? g.querySelectorAll('circle.selh').length : 0,
-    chips: c ? [...c.querySelectorAll('button')].map(b => b.textContent) : [], chipsShown: c ? c.getBoundingClientRect().height > 0 : false }; }"""
+    chips: c ? [...c.querySelectorAll('button')].map(b => b.getAttribute('aria-label')) : [], chipsShown: c ? c.getBoundingClientRect().height > 0 : false }; }"""
 
 def ready(pg): pg.wait_for_selector("body[data-ready='1']", timeout=20000)
 def idle(pg): pg.evaluate("window.__pw.idle()"); pg.wait_for_timeout(40)
@@ -1447,10 +1451,121 @@ try:
         check("no page errors in the ring flip group", not e21, e21)
         ctx.close()
 
+        # ------------------------------------------------------------ pw-v4j: tap selects one stroke, finger tap deselects, degrees, icon chips
+        group[0] = "select polish (pw-v4j)"
+        ctx, pg, e22 = fresh(b, has_touch=True); errs += e22
+        open_note(pg, "Select")
+        RING_JS = """() => { const c = document.querySelector('svg.ink g.sel circle.selrot'); return c ? [+c.getAttribute('cx'), +c.getAttribute('cy'), +c.getAttribute('r')] : null; }"""
+        DEG_JS = """() => { const d = document.querySelector('.selDeg'); if (!d) return null; const r = d.getBoundingClientRect();
+          return { text: d.textContent, shown: getComputedStyle(d).display !== 'none' && r.width > 0, left: r.left, cy: r.top + r.height / 2, h: Math.round(r.height) }; }"""
+        CHIP_JS = """() => [...document.querySelectorAll('.selChips .chip')].map(b => ({ act: b.dataset.act, text: b.textContent.trim(), svgs: b.querySelectorAll('svg').length,
+          label: b.getAttribute('aria-label'), title: b.title, w: Math.round(b.getBoundingClientRect().width), h: Math.round(b.getBoundingClientRect().height),
+          round: getComputedStyle(b).borderRadius }))"""
+        def by_id(): return {s["id"]: s for s in strokes(pg, "p4")}
+        def seg_d(p, a, c):
+            dx, dy = c[0] - a[0], c[1] - a[1]; L2 = dx * dx + dy * dy or 1
+            t = max(0, min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2))
+            return math.hypot(a[0] + t * dx - p[0], a[1] + t * dy - p[1])
+        def rect_d(p, pts): return min(seg_d(p, pts[k], pts[(k + 1) % len(pts)]) for k in range(len(pts)))
+        draw(pg, 1, [(450, 200), (550, 220), (650, 200)])                                   # a freehand stroke
+        draw(pg, 1, rough_square(150, 380, 200), steps=3, hold=650)                         # the first rect
+        draw(pg, 1, rough_square(250, 480, 200), steps=3, hold=650)                         # the second, drawn over it
+        FH, R1, R2 = [s["id"] for s in strokes(pg, "p4")]
+        d1, d2 = by_id()[R1]["data"], by_id()[R2]["data"]
+        check("a freehand stroke and two overlapping snapped rects", d1.get("type") == "rect" and d2.get("type") == "rect" and by_id()[R2]["seq"] > by_id()[R1]["seq"], [d1.get("type"), d2.get("type")])
+        if d1.get("type") == "rect" and d2.get("type") == "rect":
+            P1, P2 = d1["points"], d2["points"]
+            X = (max(p[0] for p in P1), min(p[1] for p in P2))                              # the first's right edge meets the second's top edge
+            check("the overlap tap point is on both outlines (within 3 px)", rect_d(X, P1) < 3 and rect_d(X, P2) < 3, [X, rect_d(X, P1), rect_d(X, P2)])
+            tool(pg, "select")
+            u0 = U(pg)
+            tap_page(pg, 1, *X)
+            check("a tap on the overlap selects ONLY the second rect (the higher seq)", sel(pg) and sel(pg)["ids"] == [R2], sel(pg))
+            check("the tap is not an undo step", U(pg) == u0)
+            bx = sel(pg)["box"]
+            drag_page(pg, 1, (bx[2] - 20, bx[3] - 20), (bx[2] - 20, bx[3] + 80))           # move the second 100 px down
+            P2m = by_id()[R2]["data"]["points"]
+            check("the second moved 100 px down", abs(min(p[1] for p in P2m) - (min(p[1] for p in P2) + 100)) < 0.6, [P2, P2m])
+            tap_page(pg, 1, *X)
+            check("a tap where the first now shows selects only the first", sel(pg) and sel(pg)["ids"] == [R1], sel(pg))
+            tap_page(pg, 1, 700, 1050)
+            check("a tap on empty paper: no selection", sel(pg) is None and not selui(pg)["g"], sel(pg))
+            tap_page(pg, 1, 550, 220)
+            check("a tap on a freehand stroke selects it alone", sel(pg) and sel(pg)["ids"] == [FH], sel(pg))
+            tap_page(pg, 1, 700, 1050)
+            drag_page(pg, 1, (130, 360), (480, 800))
+            check("a drag box over both rects still selects both", sel(pg) and sorted(sel(pg)["ids"]) == sorted([R1, R2]), sel(pg))
+            check("no page errors so far (tap select)", not e22, e22)
+
+            # finger taps: real touches through CDP
+            cdp = ctx.new_cdp_session(pg)
+            def touch(kind, x=0, y=0): cdp.send("Input.dispatchTouchEvent", {"type": kind, "touchPoints": [] if kind == "touchEnd" else [{"x": x, "y": y}]})
+            def ftap(px, py):
+                x, y = screen(pg, 1, px, py); touch("touchStart", x, y); pg.wait_for_timeout(30); touch("touchEnd"); pg.wait_for_timeout(60)
+            def fpan(px, py, dy, n=8):
+                x, y = screen(pg, 1, px, py); touch("touchStart", x, y)
+                for k in range(1, n + 1): touch("touchMove", x, y + dy * k / n); pg.wait_for_timeout(16)
+                touch("touchEnd"); pg.wait_for_timeout(300)
+            n0, u1 = len(strokes(pg, "p4")), U(pg)
+            ftap(300, 600)
+            check("a finger tap inside the selection's box keeps it", sel(pg) and sorted(sel(pg)["ids"]) == sorted([R1, R2]), sel(pg))
+            y0 = pg.locator("#stack .sheet[data-index='1']").bounding_box()["y"]
+            fpan(650, 950, -80)
+            y1 = pg.locator("#stack .sheet[data-index='1']").bounding_box()["y"]
+            check("a finger pan of 80 px (outside the box) pans and keeps the selection", abs((y0 - y1) - 80) < 2 and sel(pg) and sorted(sel(pg)["ids"]) == sorted([R1, R2]), [y0, y1, sel(pg)])
+            ftap(650, 1000)
+            check("a finger tap outside the selection clears it", sel(pg) is None and not selui(pg)["g"] and not selui(pg)["chips"], sel(pg))
+            check("the finger taps drew nothing and made no undo step", len(strokes(pg, "p4")) == n0 and U(pg) == u1, [len(strokes(pg, "p4")), n0, U(pg), u1])
+            drag_page(pg, 1, (130, 360), (480, 800))
+            check("selected again (both)", sel(pg) and len(sel(pg)["ids"]) == 2, sel(pg))
+            tool(pg, "pen")
+            P1now = by_id()[R1]["data"]["points"]
+            ftap(*P1now[0])                                                                 # on a rect corner: a pen there would grab it
+            check("with the pen tool on, a finger tap leaves no selection, grabs no handle, draws nothing",
+                  sel(pg) is None and by_id()[R1]["data"]["points"] == P1now and len(strokes(pg, "p4")) == n0 and U(pg) == u1, [sel(pg), len(strokes(pg, "p4")), U(pg)])
+            tool(pg, "select")
+
+            # the turn shows its degrees
+            tap_page(pg, 1, 700, 1050)
+            tap_page(pg, 1, *P1now[0])
+            check("the first rect selected by a tap on its corner", sel(pg) and sel(pg)["ids"] == [R1], sel(pg))
+            dg = pg.evaluate(DEG_JS)
+            check("the degrees label exists and is hidden while not turning", dg is not None and not dg["shown"], dg)
+            def turn_live(deg):
+                bx_ = sel(pg)["box"]; c = ((bx_[0] + bx_[2]) / 2, (bx_[1] + bx_[3]) / 2); r = pg.evaluate(RING_JS)
+                a = math.atan2(r[1] - c[1], r[0] - c[0]) + math.radians(deg); R = math.hypot(r[0] - c[0], r[1] - c[1]) * 1.4
+                t = (c[0] + R * math.cos(a), c[1] + R * math.sin(a))
+                sx, sy = screen(pg, 1, r[0], r[1]); pg.mouse.move(sx, sy); pg.mouse.down()
+                tx, ty = screen(pg, 1, *t); pg.mouse.move(tx, ty, steps=12); pg.wait_for_timeout(40)
+                mid = pg.evaluate(DEG_JS)
+                pg.mouse.up(); pg.wait_for_timeout(40)
+                return mid, (sx, sy), pg.evaluate(DEG_JS)
+            mid, rs, after = turn_live(45)
+            check("during a 45 degree turn .selDeg shows and reads 45°", mid and mid["shown"] and mid["text"] == "45°", mid)
+            check("... a 28 px pill just right of the ring", mid and mid["h"] == 28 and 0 < mid["left"] - rs[0] < 30 and abs(mid["cy"] - rs[1]) < 3, [mid, rs])
+            check("after the lift it is hidden", after and not after["shown"], after)
+            mid, rs, after = turn_live(-30)
+            check("during a -30 degree turn it reads -30°", mid and mid["shown"] and mid["text"] == "-30°", mid)
+            check("... and hides again after the lift", after and not after["shown"], after)
+
+            # the chips are icons
+            cs = pg.evaluate(CHIP_JS)
+            check("two chips, copy then delete, no words, one svg each, aria-label and title Copy / Delete",
+                  [c_["act"] for c_ in cs] == ["copy", "delete"] and all(c_["text"] == "" and c_["svgs"] == 1 for c_ in cs)
+                  and [c_["label"] for c_ in cs] == ["Copy", "Delete"] and [c_["title"] for c_ in cs] == ["Copy", "Delete"], cs)
+            check("each chip is a 38 px round button", all(c_["w"] == 38 and c_["h"] == 38 and c_["round"] == "50%" for c_ in cs), cs)
+            n1 = len(strokes(pg, "p4"))
+            pg.locator(".selChips .chip[aria-label='Copy']").click(); pg.wait_for_timeout(30)
+            check("the Copy icon still copies (a duplicate on the spot, now the selection)", len(strokes(pg, "p4")) == n1 + 1 and sel(pg) and sel(pg)["ids"] != [R1], sel(pg))
+            pg.locator(".selChips .chip[aria-label='Delete']").click(); pg.wait_for_timeout(30)
+            check("the Delete icon still deletes (the copy goes, the selection clears)", len(strokes(pg, "p4")) == n1 and sel(pg) is None and R1 in by_id(), sel(pg))
+        check("no page errors in the select polish group", not e22, e22)
+        ctx.close()
+
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v4i", "pw-v4i" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v4j", "pw-v4j" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)
