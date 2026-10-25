@@ -4,7 +4,10 @@
 // Each remembers its own colour, width and dash or opacity.
 // Colours: hold a swatch (350 ms, still) and drag it up or down to put her 13 in her order; the order is
 // kept on the device. Under them a 14th spare slot (rainbow ring) holds any colour picked from the honeycomb.
-import { setTool, setStyles } from './ink.js';
+// Restyle has its own colour (it starts as the last ink tool's colour when restyle is picked); a colour tap
+// while restyle is on changes only that. With the select tool and a selection on the page, a colour tap
+// recolours the selection and a tap on Restyle restyles it (the select tool and the selection stay).
+import { setTool, setStyles, hasSelection, recolourSelection, restyleSelection } from './ink.js';
 
 // Megan's own 13 (25 Oct 17:43: Sky blue out, Light green and Teal in), in her order: [hex, name].
 // This stays the DEFAULT order.
@@ -76,20 +79,23 @@ function load() {
     else s[t].colour = DEFAULTS[t].colour;
   }
   s.lastInk = s.tool;
+  const rc = String((saved.restyle && saved.restyle.colour) || '');   // restyle's own colour, the same rule
+  s.restyle = { colour: KNOWN.has(rc.toLowerCase()) ? CANON.get(rc.toLowerCase()) : s.spec && same(rc, s.spec) ? s.spec : s[s.lastInk].colour };
   return s;
 }
 function keep() {
-  try { localStorage.setItem(KEY, JSON.stringify({ tool: st.lastInk, pen: st.pen, highlighter: st.highlighter, order: st.order, spec: st.spec })); } catch (_) { /* ignore */ }
+  try { localStorage.setItem(KEY, JSON.stringify({ tool: st.lastInk, pen: st.pen, highlighter: st.highlighter, restyle: st.restyle, order: st.order, spec: st.spec })); } catch (_) { /* ignore */ }
 }
 function push() {
-  setStyles(st.pen, st.highlighter);                             // restyle hands out these
+  setStyles(st.pen, st.highlighter, st.restyle);                 // restyle hands out these
   setTool(st.tool, INK.includes(st.tool) ? st[st.tool] : null);
   paint();
 }
-const specOn = () => !!st.spec && same(st[st.lastInk].colour, st.spec);
+const ringColour = () => (st.tool === 'restyle' ? st.restyle.colour : st[st.lastInk].colour);   // the swatch ring
+const specOn = () => !!st.spec && same(ringColour(), st.spec);
 function paint() {
   for (const [t, b] of Object.entries(btns)) { b.classList.toggle('on', t === st.tool); b.setAttribute('aria-pressed', t === st.tool ? 'true' : 'false'); }
-  const c = st[st.lastInk].colour;
+  const c = ringColour();
   swatches.forEach((s) => s.classList.toggle('on', same(s.dataset.colour, c)));
   if (specBtn) {
     specBtn.dataset.colour = st.spec || '';
@@ -99,7 +105,8 @@ function paint() {
 }
 
 function useColour(c) {
-  if (st.tool === 'restyle') { st[st.lastInk].colour = c; keep(); push(); return; }   // restyle stays: the colour it hands out changes
+  if (st.tool === 'restyle') { st.restyle.colour = c; keep(); push(); return; }   // restyle stays: only its own colour changes
+  if (st.tool === 'select' && hasSelection()) { recolourSelection(c); return; }   // the selection takes it; no tool colour moves
   if (!INK.includes(st.tool)) st.tool = st.lastInk;              // after an eraser, a colour hands back the last ink tool
   st[st.tool].colour = c;
   keep(); push();
@@ -111,6 +118,11 @@ function pickTool(t) {
     if (!panel.hidden && panel.dataset.for === t) closePanel(); else openPanel(t);
     return;
   }
+  if (t === 'restyle' && st.tool !== 'restyle') st.restyle.colour = st[st.lastInk].colour;   // restyle starts in the last ink colour
+  if (t === 'restyle' && st.tool === 'select' && hasSelection()) {  // a selection: restyle it, select stays, restyle is not entered
+    closePanel(); keep(); push(); restyleSelection();
+    return;
+  }
   st.tool = t;
   if (INK.includes(t)) st.lastInk = t;
   closePanel(); keep(); push();
@@ -119,7 +131,7 @@ function pickTool(t) {
 // again while it is the selected swatch, the picker opens (the pen and highlighter panel rule)
 function tapSpec() {
   if (!st.spec) { openPicker(); return; }
-  if (specOn() && INK.includes(st.tool)) { if (picker.hidden) openPicker(); else closePicker(); return; }
+  if (specOn() && (INK.includes(st.tool) || st.tool === 'restyle')) { if (picker.hidden) openPicker(); else closePicker(); return; }
   useColour(st.spec);
 }
 

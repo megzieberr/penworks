@@ -11,8 +11,11 @@
 // Storage goes through js/store-local.js only.
 // Part B: hold the pen still at the end of a pen stroke and it snaps into a line, arrow, triangle, rect, circle
 // or ellipse (SVG primitives); with the pen tool a shape's handles can be grabbed and dragged; the restyle
-// tool gives strokes the pen's (or the highlighter's) current settings; rectangle select moves, resizes,
-// copies and deletes. Every one of these is one step on the note's undo stack.
+// tool gives strokes the restyle colour and the pen's (or the highlighter's) width, dash or opacity; rectangle
+// select moves, resizes, copies, deletes and (from the tray) recolours or restyles. Every one of these is one
+// step on the note's undo stack.
+// A held highlighter stroke snaps too (never to an arrow): a shape whose style.opacity is under 1 is a
+// highlighter-born shape and lives in the highlighter layer (inHl below is that one rule).
 
 import * as store from './store-local.js';
 import { pageAt, pagePoint, view } from './page.js';
@@ -26,14 +29,15 @@ const MIN_STEP = 0.4;            // page px; closer points than this are dropped
 const HOLD_PX = 4;               // snap: "still" means within 4 px on screen of where the pen settled
 const SNAP_MIN = 30;             // snap: a stroke shorter than this (page px) never snaps
 const SNAP_ANIM = 150;           // snap: the soft cross-fade, ms
-export const GRAB = 12;          // shape handles and selection corners: px on screen (12 px at zoom 1)
+export const GRAB = 12;          // selection corners: px on screen (12 px at zoom 1)
+export const HANDLE_REACH = 20;  // shape handles (pen tool): px on screen (20 px at zoom 1), a pen tip needs room
 const SEL_BLUE = '#2F4BB8';      // the selection box (the paper is white in both modes)
 
 const P = new Map();             // page id -> { strokes (by seq), byId, svg, hl, pen, hlo (opacity -> group), els (id -> path), w, h }
 const boxes = new WeakMap();     // record -> [x0, y0, x1, y1], its points' bounding box
 const T = { tool: 'pen', style: { colour: '#000000', width: 2.5, dash: 'solid', opacity: 1 } };
-// what restyle hands out: the pen's and the highlighter's current settings (the tray keeps these up to date)
-const ST = { pen: { colour: '#000000', width: 2.5, dash: 'solid' }, highlighter: { colour: '#FFC107', width: 18, opacity: 0.4 } };
+// what restyle hands out: its own colour, and the pen's and the highlighter's current settings (the tray keeps these up to date)
+const ST = { pen: { colour: '#000000', width: 2.5, dash: 'solid' }, highlighter: { colour: '#FFC107', width: 18, opacity: 0.4 }, restyle: null };
 let doOp = (op) => op.redo();
 let G = null;                    // the gesture in progress
 let ring = null, hring = null, deskEl = null, deskBox = null;
@@ -55,7 +59,7 @@ export function setTool(tool, style) {
   if (tool !== T.tool) { clearSelection(); hideHandle(); }
   T.tool = tool; if (style) T.style = { ...style };
 }
-export function setStyles(pen, highlighter) { ST.pen = { ...pen }; ST.highlighter = { ...highlighter }; }
+export function setStyles(pen, highlighter, restyle) { ST.pen = { ...pen }; ST.highlighter = { ...highlighter }; ST.restyle = restyle ? { ...restyle } : null; }
 export function tool() { return { tool: T.tool, style: { ...T.style } }; }
 
 // ---------------------------------------------------------------- the model
@@ -123,7 +127,7 @@ function styleEl(el, rec) {
   el.setAttribute('stroke-width', String(w));
   el.setAttribute('stroke-linejoin', 'round');
   el.setAttribute('class', rec.kind);
-  if (rec.kind === 'highlighter') {
+  if (inHl(rec)) {
     el.setAttribute('stroke-linecap', 'round');             // fully opaque: its .hlo group does the see-through
     el.removeAttribute('stroke-opacity');
   } else {
@@ -170,9 +174,11 @@ function makeEl(rec) {
   } else el.setAttribute('d', dOf(rec));
   return el;
 }
-// the layer groups: which group a record's path lives in, made on demand
+// the layer groups: which group a record's path lives in, made on demand. THE one rule: a highlighter stroke,
+// or a shape with opacity under 1 (a highlighter-born shape), lives in the highlighter layer
+const inHl = (rec) => rec.kind === 'highlighter' || (rec.kind === 'shape' && +((rec.style && rec.style.opacity) ?? 1) < 1);
 const opKey = (rec) => String(+((rec.style && rec.style.opacity) ?? 0.4));
-const keyOf = (rec) => (rec.kind === 'highlighter' ? 'hl' + opKey(rec) : 'pen');
+const keyOf = (rec) => (inHl(rec) ? 'hl' + opKey(rec) : 'pen');
 function hloGroup(d, key) {
   let g = d.hlo.get(key);
   if (!g) {
@@ -184,7 +190,7 @@ function hloGroup(d, key) {
   }
   return g;
 }
-function groupFor(d, rec) { return rec.kind === 'highlighter' ? hloGroup(d, opKey(rec)) : d.pen; }
+function groupFor(d, rec) { return inHl(rec) ? hloGroup(d, opKey(rec)) : d.pen; }
 // put a record's path in its group, before the next record (by seq) that shares that group
 function place(d, rec, el, idx) {
   const parent = groupFor(d, rec), k = keyOf(rec);
@@ -497,7 +503,7 @@ function hideHandle() { if (hring) hring.hidden = true; }
 function hover(e) {
   if (T.tool !== 'pen' || G) { hideHandle(); return; }
   const at = pageAt(e.clientX, e.clientY), z = view().z;
-  const h = at && handleAt(at.id, at.x, at.y, GRAB / z);
+  const h = at && handleAt(at.id, at.x, at.y, HANDLE_REACH / z);
   if (!h) { hideHandle(); return; }
   showHandle(e.clientX + (h.at[0] - at.x) * z, e.clientY + (h.at[1] - at.y) * z);
 }
@@ -596,24 +602,51 @@ function deleteSel() {
   clearSelection();
   if (recs.length) doOp(changeOp([{ page, removed: recs, added: [] }]));
 }
-// strokes whose bounding box is at least half inside the box b
+// does segment a-b touch the box B (inside it or crossing an edge)? Liang-Barsky clipping
+function segInBox(a, b, B) {
+  let t0 = 0, t1 = 1;
+  const dx = b[0] - a[0], dy = b[1] - a[1];
+  for (const [p, q] of [[-dx, a[0] - B[0]], [dx, B[2] - a[0]], [-dy, a[1] - B[1]], [dy, B[3] - a[1]]]) {
+    if (p === 0) { if (q < 0) return false; continue; }
+    const t = q / p;
+    if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t; } else { if (t < t0) return false; if (t < t1) t1 = t; }
+  }
+  return true;
+}
+// strokes that touch the box b anywhere: a point inside, or a segment (of the stroke, or of a shape's outline)
+// crossing its edge; the ink's half width counts as part of the stroke
 function inBox(id, b) {
   const out = [];
   for (const r of data(id).strokes) {
-    const q = boxOf(r), w = Math.max(1, (r.style.width || 0) / 2);
-    const x0 = q[0] - w, y0 = q[1] - w, x1 = q[2] + w, y1 = q[3] + w;
-    const ix = Math.max(0, Math.min(x1, b[2]) - Math.max(x0, b[0])), iy = Math.max(0, Math.min(y1, b[3]) - Math.max(y0, b[1]));
-    if (ix * iy >= 0.5 * (x1 - x0) * (y1 - y0)) out.push(r.id);
+    const q = boxOf(r), w = Math.max(1, (r.style.width || 0) / 2), B = [b[0] - w, b[1] - w, b[2] + w, b[3] + w];
+    if (q[2] < B[0] || q[0] > B[2] || q[3] < B[1] || q[1] > B[3]) continue;   // nowhere near
+    const pts = pointsOf(r);
+    let hit = pts.some(([x, y]) => x >= B[0] && x <= B[2] && y >= B[1] && y <= B[3]);
+    for (let i = 1; !hit && i < pts.length; i++) hit = segInBox(pts[i - 1], pts[i], B);
+    if (hit) out.push(r.id);
   }
   return out;
 }
+// the tray's colour tap and Restyle tap while a selection exists: one undo step each, the selection stays
+export function hasSelection() { return !!SEL; }
+function changeSel(fn) {
+  if (!SEL) return false;
+  const olds = [], news = [];
+  for (const r of selRecs()) { const n = fn(r); if (n) { olds.push(r); news.push(n); } }
+  if (olds.length) doOp(changeOp([{ page: SEL.page, removed: olds, added: news }]));
+  return true;
+}
+export function recolourSelection(c) {          // colour only: width, dash, opacity and geometry stay
+  return changeSel((r) => (same((r.style || {}).colour, c) ? null : { ...r, style: { ...r.style, colour: c } }));
+}
+export function restyleSelection() { return changeSel(restyled); }   // the full restyle rule
 
-// ---------------------------------------------------------------- restyle: the pen's (or the highlighter's) settings
+// ---------------------------------------------------------------- restyle: its own colour, the matching tool's width, dash, opacity
 function restyled(r) {
-  const p = ST.pen, h = ST.highlighter;
-  const style = r.kind === 'highlighter'
-    ? { colour: h.colour, width: h.width, dash: 'solid', opacity: h.opacity }
-    : { colour: p.colour, width: p.width, dash: p.dash || 'solid', opacity: 1 };
+  const p = ST.pen, h = ST.highlighter, hl = inHl(r), c = ST.restyle && ST.restyle.colour;
+  const style = hl                                                 // a highlight (stroke or shape) stays a highlight
+    ? { colour: c || h.colour, width: h.width, dash: 'solid', opacity: h.opacity }
+    : { colour: c || p.colour, width: p.width, dash: p.dash || 'solid', opacity: 1 };
   const s = r.style || {};
   if (same(s.colour, style.colour) && +s.width === +style.width && (s.dash || 'solid') === style.dash && +(s.opacity ?? 1) === +style.opacity) return null;
   return { ...r, style };
@@ -697,10 +730,14 @@ function armHold(cx, cy) {
 }
 function snapNow() {
   const g = G;
-  if (!g || g.kind !== 'draw' || g.rec.kind !== 'pen') return;     // never a highlighter stroke
-  const shape = classify(g.rec.data.points);
+  if (!g || g.kind !== 'draw') return;
+  let shape = classify(g.rec.data.points);
   if (!shape) return;                                              // stays freehand
-  const d = data(g.page), rec = { ...g.rec, kind: 'shape', data: shape }, el = makeEl(rec);
+  const hl = g.rec.kind === 'highlighter';
+  if (hl && shape.type === 'arrow') shape = { type: 'line', x1: shape.x1, y1: shape.y1, x2: shape.x2, y2: shape.y2 };   // no highlighter arrows
+  // a highlighter shape keeps the highlighter's look (opacity under 1: it stays in its .hlo group)
+  const style = hl ? { colour: g.rec.style.colour, width: g.rec.style.width, dash: 'solid', opacity: g.rec.style.opacity } : g.rec.style;
+  const d = data(g.page), rec = { ...g.rec, kind: 'shape', style, data: shape }, el = makeEl(rec);
   g.el.after(el);
   const old = g.el;                                                // the soft cross-fade, then the freehand goes
   try {
@@ -719,7 +756,7 @@ function down(e) {
   hideHandle();
   const z = view().z;
   if (T.tool === 'pen') {                                          // a shape's handle under the pen: grab it, do not draw
-    const h = handleAt(at.id, at.x, at.y, GRAB / z);
+    const h = handleAt(at.id, at.x, at.y, HANDLE_REACH / z);
     if (h) {
       G = { kind: 'grab', page: at.id, index: at.index, rec: h.rec, h: h.h, el: d.els.get(h.rec.id), now: h.rec, z,
             off: [h.at[0] - at.x, h.at[1] - at.y] };                   // the handle keeps its offset from the pen: no jump
@@ -736,7 +773,7 @@ function down(e) {
     const el = makeEl(rec);
     groupFor(d, rec).appendChild(el);                              // newest, so last in its group
     G = { kind: 'draw', index: at.index, page: at.id, rec, el, holdT: 0, anchor: null };
-    if (T.tool === 'pen') armHold(e.clientX, e.clientY);
+    armHold(e.clientX, e.clientY);                                 // pen and highlighter both snap when held
     return true;
   }
   if (T.tool === 'eraser' || T.tool === 'area' || T.tool === 'restyle') {
