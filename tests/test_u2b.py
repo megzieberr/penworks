@@ -25,6 +25,7 @@
 # pen's colour and width but keeps the stroke's OWN dash (the old "takes dashed" checks are flipped); a selection
 # whose turn ring would pass the page's top edge puts the ring below the box, stem from the bottom edge, chips
 # unmoved at the box's top-left. The end of the "restyle" group and the "ring flips near the page top" group.
+# Page list (pw-v4i): the page list thumbs draw the ink, a thumb tap keeps the panel open; checks in tests/test_pagelist.py.
 import sys, subprocess, time, pathlib, re, json, math
 from playwright.sync_api import sync_playwright
 
@@ -1449,7 +1450,7 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v4h", "pw-v4h" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v4i", "pw-v4i" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)

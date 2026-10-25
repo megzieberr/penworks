@@ -323,8 +323,9 @@ body.full #noteBar, body.full #counter { display: none; }
 .thumbP { container-type: inline-size; display: flex; flex-direction: column; align-items: center; gap: 5px; cursor: pointer; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .thumbP .paper {
   width: 100%; aspect-ratio: 794 / 1123; border-radius: 3px; border: 1px solid rgba(38,42,48,.12); --sq: calc(100cqw / 21);
-  box-shadow: 0 1px 3px rgba(38,42,48,.10);
+  box-shadow: 0 1px 3px rgba(38,42,48,.10); position: relative; overflow: hidden;
 }
+.thumbP .paper > svg.thumbInk { position: absolute; inset: 0; display: block; pointer-events: none; }   /* the page's ink (pw-v4i) */
 .thumbP .paper.landscape { aspect-ratio: 1123 / 794; --sq: calc(100cqw / 29.7); }
 .thumbP.cur .paper { outline: 2px solid var(--ink); outline-offset: 2px; }
 .thumbP .num { font-size: 12.5px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }

@@ -579,15 +579,35 @@ function renderPageList() {
   const T = $('plThumbs'); T.textContent = '';
   pagesOf(S.openNote).forEach((p, i) => {
     const t = h('div', { class: 'thumbP ' + p.orientation, 'data-index': i + 1, 'data-id': p.id, role: 'button', tabindex: '0',
-      onclick: () => { S.listOpen = false; renderPageList(); scrollToPage(i); },
+      onclick: () => scrollToPage(i),                                       // the panel stays open (her ruling, pw-v4i)
       onpointerdown: thumbDown,
       oncontextmenu: (e) => { e.preventDefault(); if (!pd) thumbMenu(i, t); } },   // right-click; a long press lifts instead
       paper(p, ' ' + p.orientation), h('span', { class: 'num' }, String(i + 1)),
       h('button', { class: 'more', type: 'button', 'aria-label': 'Page menu',
         onclick: (e) => { e.stopPropagation(); thumbMenu(i, e.currentTarget); } }, '⋯'));
+    t.querySelector('.paper').append(ink.thumbSvg(p.id, p.orientation));   // the page's ink on the paper
     T.append(t);
   });
   updateCount();
+}
+// the thumb of a page whose ink changed (ink.js apply: drawing, erasing, undo, redo): rebuild just its svg, once per
+// frame, so a stroke that lands in many pieces rebuilds once
+const thumbDue = new Set();
+let thumbRaf = 0;
+function refreshThumb(pageId) {
+  thumbDue.add(pageId);
+  if (thumbRaf) return;
+  thumbRaf = requestAnimationFrame(() => {
+    thumbRaf = 0;
+    const ids = [...thumbDue]; thumbDue.clear();
+    if (!S.listOpen) return;
+    for (const id of ids) {
+      const t = document.querySelector(`#plThumbs .thumbP[data-id="${CSS.escape(id)}"]`), p = t && page(id);
+      if (!t || !p) continue;
+      const old = t.querySelector('.paper > svg.thumbInk'), svg = ink.thumbSvg(id, p.orientation);
+      if (old) old.replaceWith(svg); else t.querySelector('.paper').append(svg);
+    }
+  });
 }
 
 // page list: hold a page (350 ms, still) and drag it to its place. A quick tap goes to the page, a move
@@ -764,7 +784,7 @@ function wire() {
     $('eyeBtn').setAttribute('aria-label', show ? 'Hide password' : 'Show password');
     $('eyeBtn').classList.toggle('on', show);
   });
-  ink.initInk({ doOp, desk: $('desk') });
+  ink.initInk({ doOp, desk: $('desk'), onChange: (pageId) => { if (S.listOpen) refreshThumb(pageId); } });
   initTray();
   initPage({ desk: $('desk'), stack: $('stack'), addBelow: $('addBelow'),
              onCurrent: (i) => { S.cur = Math.max(0, i); updateCount(); ink.clearSelection(); },   // a new page: the selection clears

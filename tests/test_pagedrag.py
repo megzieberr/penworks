@@ -78,7 +78,7 @@ try:
         open_note(pg, "Drag test"); open_list(pg)
         u0 = U(pg)
         thumb(pg, 3).click(); pg.wait_for_timeout(80)
-        check("tap thumb 3: page 3 is current, the list closes", pg.evaluate(COUNTERS_JS)[1] == "3 / 8" and pg.locator("#pageList").is_hidden(),
+        check("tap thumb 3: page 3 is current, the list stays open (pw-v4i)", pg.evaluate(COUNTERS_JS)[1] == "3 / 8" and pg.locator("#pageList").is_visible(),
               pg.evaluate(COUNTERS_JS))
         check("the tap moved nothing and added no undo step", pg.evaluate(MEM_JS, "n1") == PIDS and U(pg) == u0, [pg.evaluate(MEM_JS, "n1"), U(pg)])
 

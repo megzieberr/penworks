@@ -65,6 +65,7 @@ def go_page(pg, i):
     if pg.locator("#pageList").is_hidden(): pg.click("#listBtn")
     pg.wait_for_selector("#pageList:not([hidden])")
     pg.locator(f"#plThumbs .thumbP[data-index='{i}']").click(); pg.wait_for_timeout(120)
+    pg.click("#plClose"); pg.wait_for_selector("#pageList", state="hidden")    # pw-v4i: a thumb tap keeps the list open
 
 srv = subprocess.Popen([sys.executable, "-m", "http.server", str(PORT), "--bind", "127.0.0.1"], cwd=str(ROOT),
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

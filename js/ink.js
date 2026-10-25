@@ -26,7 +26,7 @@
 // ink's width, only the shape grows or shrinks.
 
 import * as store from './store-local.js';
-import { pageAt, pagePoint, view } from './page.js';
+import { pageAt, pagePoint, view, pageSize } from './page.js';
 
 // snap: the pen held still this long (ms) at the end of a stroke; ?hold=400 in the address overrides it
 export const HOLD_MS = (() => { const v = +new URLSearchParams(location.search).get('hold'); return v >= 100 && v <= 3000 ? v : 500; })();
@@ -47,6 +47,7 @@ const T = { tool: 'pen', style: { colour: '#000000', width: 2.5, dash: 'solid', 
 // what restyle hands out: its own colour, and the pen's and the highlighter's current settings (the tray keeps these up to date)
 const ST = { pen: { colour: '#000000', width: 2.5, dash: 'solid' }, highlighter: { colour: '#FFC107', width: 18, opacity: 0.4 }, restyle: null };
 let doOp = (op) => op.redo();
+let onChange = null;             // optional: told the page id after every stroke change (apply), the page list's thumbs
 let G = null;                    // the gesture in progress
 let ring = null, hring = null, deskEl = null, deskBox = null;
 let SEL = null;                  // the selection: { page, ids, g, chips, z }
@@ -57,6 +58,7 @@ const bySeq = (a, b) => a.seq - b.seq;
 
 export function initInk(o) {
   if (o.doOp) doOp = o.doOp;
+  if (o.onChange) onChange = o.onChange;
   deskEl = o.desk || document.getElementById('desk');
   deskEl.addEventListener('pointerleave', hideHandle);
   // the selection's handles and chips keep their size on screen: redraw them when the zoom changes
@@ -283,6 +285,25 @@ export function attach(sheets) {
   }
 }
 
+// the page list (pw-v4i): a page's ink as its own small <svg>, built from the records with the same builders as the
+// page (makeEl + groupFor, in seq order, highlighter groups below the pen group), so a thumb shows what the page
+// shows. Never a clone of the live layer: a page that is not attached has none. viewBox = the page in page px
+// (the attached size, else its orientation's size); the thumb's .paper already has the page's aspect ratio.
+export function thumbSvg(pageId, orientation = 'portrait') {
+  const d = data(pageId), sz = d.w && d.h ? { w: d.w, h: d.h } : pageSize(orientation);
+  const svg = document.createElementNS(SVGNS, 'svg');
+  svg.setAttribute('class', 'thumbInk');
+  svg.setAttribute('viewBox', `0 0 ${sz.w} ${sz.h}`);
+  svg.setAttribute('width', '100%'); svg.setAttribute('height', '100%');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('pointer-events', 'none');
+  const t = { hl: document.createElementNS(SVGNS, 'g'), pen: document.createElementNS(SVGNS, 'g'), hlo: new Map() };
+  t.hl.setAttribute('class', 'hl'); t.pen.setAttribute('class', 'pen');
+  for (const rec of d.strokes) groupFor(t, rec).appendChild(makeEl(rec));
+  svg.append(t.hl, t.pen);
+  return svg;
+}
+
 // ---------------------------------------------------------------- changes (every one is saved)
 const dirty = new Set();
 let saveT = null;
@@ -317,6 +338,7 @@ function apply(pageId, removeIds, adds) {
   }
   schedule(pageId);
   if (SEL && SEL.page === pageId) syncSel();          // an undo, redo or move: the box follows its strokes
+  if (onChange) onChange(pageId);                      // the page list refreshes that page's thumb
 }
 
 // one undo step: [{ page, removed: [records], added: [records] }]
