@@ -5,7 +5,7 @@
 import { api } from './api.js';
 import { initPage, showStack, fit, scrollToPage, relayout, current } from './page.js';
 import * as ink from './ink.js';
-import { initTray, closePanel, trayState } from './tray.js';
+import { initTray, closePanel, trayState, chooseTool } from './tray.js';
 
 const $ = (id) => document.getElementById(id);
 const S = { folders: [], notes: [], pages: [], sel: 'loose', openNote: null, cur: 0, fold: {}, renaming: null,
@@ -367,9 +367,17 @@ function exitFull() {
 
 // ---------------------------------------------------------------- menu (long-press, right-click or the dots)
 function closeMenu() { $('menu').hidden = true; $('menu').textContent = ''; }
+// anchor: an element (the menu under it, right edges lined up) or a point { x, y } (the menu's top-left 8 px down
+// and right of it); either way the menu stays inside the viewport
 function placeMenu(anchor) {
   const m = $('menu'); m.hidden = false;
-  const a = anchor.getBoundingClientRect(), mw = m.offsetWidth, mh = m.offsetHeight;
+  const mw = m.offsetWidth, mh = m.offsetHeight;
+  if (!(anchor instanceof Element)) {
+    m.style.left = Math.max(8, Math.min(innerWidth - mw - 8, anchor.x + 8)) + 'px';
+    m.style.top = Math.max(8, Math.min(innerHeight - mh - 8, anchor.y + 8)) + 'px';
+    return;
+  }
+  const a = anchor.getBoundingClientRect();
   m.style.left = Math.max(8, Math.min(innerWidth - mw - 8, a.right - mw)) + 'px';
   m.style.top = (a.bottom + mh + 8 < innerHeight ? a.bottom + 4 : Math.max(8, a.top - mh - 4)) + 'px';
 }
@@ -377,8 +385,8 @@ function openMenu(anchor, items) {
   const m = $('menu'); m.textContent = '';
   for (const it of items) {
     if (it.head) m.append(h('div', { class: 'hd' }, it.head));
-    else m.append(h('button', { type: 'button', class: it.on ? 'on' : '', role: 'menuitem',
-      onclick: (e) => { e.stopPropagation(); if (!it.keep) closeMenu(); it.fn(); } }, it.label));
+    else m.append(h('button', { type: 'button', class: it.on ? 'on' : '', role: 'menuitem', disabled: !!it.disabled,
+      onclick: (e) => { e.stopPropagation(); if (it.disabled) return; if (!it.keep) closeMenu(); it.fn(); } }, it.label));
   }
   placeMenu(anchor);
 }
@@ -784,7 +792,8 @@ function wire() {
     $('eyeBtn').setAttribute('aria-label', show ? 'Hide password' : 'Show password');
     $('eyeBtn').classList.toggle('on', show);
   });
-  ink.initInk({ doOp, desk: $('desk'), onChange: (pageId) => { if (S.listOpen) refreshThumb(pageId); } });
+  ink.initInk({ doOp, desk: $('desk'), onChange: (pageId) => { if (S.listOpen) refreshThumb(pageId); },
+                toast, openMenuAt: (x, y, items) => openMenu({ x, y }, items), selectTool: () => chooseTool('select') });
   initTray();
   initPage({ desk: $('desk'), stack: $('stack'), addBelow: $('addBelow'),
              onCurrent: (i) => { S.cur = Math.max(0, i); updateCount(); ink.clearSelection(); },   // a new page: the selection clears

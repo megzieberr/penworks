@@ -9,6 +9,9 @@
 // transform once and finds the current page, so many moves inside one frame cost one write. A finger flick
 // glides on after the lift and slows down (Samsung's scroll); any new touch, the pen, a pinch, the wheel or a
 // jump to a page stops the glide at once.
+// A finger held still for 500 ms on the desk (pw-v4k) stops that finger's pan and asks the ink hook for the hold
+// menu (Paste); a second finger, a move of more than 6 px, the lift or the pen cancels it. The pen button's
+// contextmenu never opens a menu.
 
 export const CM = 96 / 2.54;                 // 1 cm at 96 px per inch
 export const A4 = { w: 794, h: 1123 };       // 21 x 29.7 cm at zoom 1
@@ -212,9 +215,9 @@ export function initPage(els) {
   ({ desk, stack, addBelow } = els);
   if (els.onCurrent) onCurrent = els.onCurrent;
   if (els.onSheets) onSheets = els.onSheets;
-  if (els.ink) ink = els.ink;                       // { down(e), move(events), up(e, cancelled), hover(e), fingerTap(cx, cy) }
+  if (els.ink) ink = els.ink;                       // { down(e), move(events), up(e, cancelled), hover(e), fingerTap(cx, cy), holdMenu(cx, cy) }
   const touches = new Map();
-  let pinch = null, drag = null, penSeen = -1e9, inkId = null, chord = false;
+  let pinch = null, drag = null, penSeen = -1e9, inkId = null, chord = false, holdT = 0;
   const now = () => performance.now();
   const when = (e) => e.timeStamp || now();       // when the finger was there (a late event keeps its own time)
   const rect = () => desk.getBoundingClientRect();
@@ -222,7 +225,22 @@ export function initPage(els) {
   const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
   const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
   const TAP_PX = 6;                                 // a finger that lifts within 6 px of where it landed is a tap (the selection clears)
+  const FINGER_HOLD = 500;                          // ms a finger stays still (within TAP_PX) before the hold menu opens
+  function cancelHold() { clearTimeout(holdT); holdT = 0; }
+  // one finger down: when it is still there and still 500 ms later, its pan stops and the hold menu opens
+  function armHold(id) {
+    cancelHold();
+    holdT = setTimeout(() => {
+      holdT = 0;
+      if (!drag || drag.id !== id || pinch || inkId !== null || touches.size !== 1 || now() - penSeen < 600) return;
+      const [cx, cy] = drag.c;
+      drag = null; touches.delete(id);
+      try { desk.releasePointerCapture(id); } catch (_) { /* ignore */ }
+      if (ink && ink.holdMenu) ink.holdMenu(cx, cy);
+    }, FINGER_HOLD);
+  }
   function startPinch() {
+    cancelHold();
     const [a, b] = [...touches.values()];
     stopGlide(); settle();
     pinch = { z0: V.z, x0: V.x, y0: V.y, m0: mid(a, b), d0: Math.max(10, dist(a, b)) };
@@ -253,7 +271,7 @@ export function initPage(els) {
     R = desk.getBoundingClientRect();
     if (!ink.down(e)) return false;
     inkId = e.pointerId;
-    touches.clear(); pinch = null; drag = null;                            // a palm already down stops panning
+    touches.clear(); pinch = null; drag = null; cancelHold();              // a palm already down stops panning
     try { desk.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
     e.preventDefault();
     return true;
@@ -261,7 +279,7 @@ export function initPage(els) {
   desk.addEventListener('pointerdown', (e) => {
     stopGlide(); settle(); unscroll();                                     // any touch, pen or click holds the stack where it is
     if (e.pointerType === 'pen' || e.pointerType === 'mouse') {           // the S Pen and the mouse draw
-      if (e.pointerType === 'pen') penSeen = performance.now();
+      if (e.pointerType === 'pen') { penSeen = performance.now(); cancelHold(); }
       if (e.button > 0 && e.button !== 2) return;                         // button 2: the pen button / right mouse (a grab)
       chord = false;
       inkDown(e);
@@ -275,11 +293,15 @@ export function initPage(els) {
     try { desk.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
     pinned = null;
     if (touches.size >= 2) startPinch();
-    else { const p = pt(e); drag = { id: e.pointerId, s0: p, x0: V.x, y0: V.y, trail: [[when(e), p[0], p[1]]] }; }
+    else {
+      const p = pt(e);
+      drag = { id: e.pointerId, s0: p, x0: V.x, y0: V.y, trail: [[when(e), p[0], p[1]]], c: [e.clientX, e.clientY] };
+      armHold(e.pointerId);
+    }
     e.preventDefault();
   });
   desk.addEventListener('pointermove', (e) => {
-    if (e.pointerType === 'pen') penSeen = performance.now();
+    if (e.pointerType === 'pen') { penSeen = performance.now(); if (holdT) cancelHold(); }
     if (e.pointerId === inkId) {
       if (chord && !(e.buttons & 1)) {                                     // the tip lifted, the pen button still held: the end
         inkId = null; chord = false; ink.up(e, false);
@@ -304,6 +326,8 @@ export function initPage(els) {
     if (drag && drag.id === e.pointerId) {
       const p = pt(e), t = when(e);
       V.x = drag.x0 + p[0] - drag.s0[0]; V.y = drag.y0 + p[1] - drag.s0[1];
+      drag.c = [e.clientX, e.clientY];
+      if (dist(p, drag.s0) > TAP_PX) cancelHold();                       // moved: a pan, never a hold
       if (dist(p, drag.s0) >= TAP_PX) drag.panned = true;                // once a pan, never a tap
       drag.trail.push([t, p[0], p[1]]);
       while (drag.trail.length > 2 && t - drag.trail[0][0] > WINDOW) drag.trail.shift();
@@ -314,6 +338,7 @@ export function initPage(els) {
     if (e.pointerId === inkId) { inkId = null; chord = false; ink.up(e, e.type === 'pointercancel'); return; }
     if (!touches.has(e.pointerId)) return;
     touches.delete(e.pointerId);
+    if (drag && drag.id === e.pointerId) cancelHold();                     // lifted or cancelled before the hold
     if (drag && drag.id === e.pointerId && e.type === 'pointerup' && !pinch) {                             // a finger only
       settle();
       if (!drag.panned && dist(pt(e), drag.s0) < TAP_PX) { if (ink && ink.fingerTap) ink.fingerTap(e.clientX, e.clientY); }   // a tap: no flick

@@ -389,3 +389,5 @@ export function initTray() {
   push();
 }
 export function trayState() { return JSON.parse(JSON.stringify(st)); }
+// another part of the app picks a tool (a paste turns select on): the same path as a tap on its button, so it lights up
+export function chooseTool(t) { if (st && st.tool !== t) pickTool(t); }

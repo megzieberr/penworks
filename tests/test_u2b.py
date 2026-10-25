@@ -30,6 +30,10 @@
 # takes everything it touches; a finger tap outside the selection clears it (a pan keeps it); a turn shows its degrees
 # (.selDeg) beside the ring; the Copy and Delete chips are round icon buttons (the word in aria-label and title), so
 # SELUI_JS now reads the chips' aria-label instead of their text. The "select polish (pw-v4j)" group.
+# Clipboard (pw-v4k): the Copy chip puts the selection on a clipboard and adds nothing (the two old "Copy duplicates on
+# the spot" checks, in "select" and "select polish (pw-v4j)", are flipped); a finger held still 500 ms on a page opens a
+# small menu with Paste (disabled "Nothing to paste" while the clipboard is empty), which pastes there, centred on the
+# finger, kept inside the page, selected, select tool on, one undo step, across pages and notes. The "clipboard (pw-v4k)" group.
 import sys, subprocess, time, pathlib, re, json, math
 from playwright.sync_api import sync_playwright
 
@@ -537,22 +541,22 @@ try:
         u1 = U(pg)
         pg.locator(".selChips .chip[data-act='copy']").click(); pg.wait_for_timeout(30)
         all_ = strokes(pg, "p4")
-        copies = [s for s in all_ if s["id"] not in (A, B, C)]
-        check("Copy adds two more", len(all_) == 5 and len(copies) == 2)
-        cp = {tuple(s["data"]["points"][0]) for s in copies}
-        check("the copies sit 24 px down and right", cp == {tuple(mv([S1[A][0]], 24, 24)[0]), tuple(mv([S1[B][0]], 24, 24)[0])}, cp)
-        check("the copy becomes the selection", sorted(sel(pg)["ids"]) == sorted(s["id"] for s in copies))
-        check("Copy is one undo step", U(pg) == u1 + 1)
+        # pw-v4k: Copy fills the clipboard; it no longer duplicates on the spot (these checks are flipped)
+        check("Copy adds nothing to the page (still the same three)", len(all_) == 3 and sorted(s["id"] for s in all_) == sorted([A, B, C]))
+        check("Copy moves nothing", {s["id"]: s["data"]["points"] for s in all_} == S1)
+        check("the selection stays on the same two", sorted(sel(pg)["ids"]) == sorted([A, B]))
+        check("Copy is not an undo step", U(pg) == u1)
+        check("the clipboard holds them (hasClip)", pg.evaluate("window.__pw.ink.hasClip()") is True)
         pg.locator(".selChips .chip[data-act='delete']").click(); pg.wait_for_timeout(30)
-        check("Delete removes the selection (the copies)", sorted(s["id"] for s in strokes(pg, "p4")) == sorted([A, B, C]))
+        check("Delete removes the selection (the two)", [s["id"] for s in strokes(pg, "p4")] == [C])
         check("Delete clears the selection and its chips", sel(pg) is None and not selui(pg)["g"] and not selui(pg)["chips"])
-        check("Delete is one undo step", U(pg) == u1 + 2)
+        check("Delete is one undo step", U(pg) == u1 + 1)
         undo(pg)
-        check("undo Delete: the copies are back", len(strokes(pg, "p4")) == 5)
+        check("undo Delete: the two are back", len(strokes(pg, "p4")) == 3)
+        redo(pg)
+        check("redo Delete: one left", len(strokes(pg, "p4")) == 1 and U(pg) == u1 + 1)
         undo(pg)
-        check("undo Copy: back to three", len(strokes(pg, "p4")) == 3)
-        redo(pg); redo(pg)
-        check("redo Copy and redo Delete", len(strokes(pg, "p4")) == 3 and U(pg) == u1 + 2)
+        check("undo again: three", len(strokes(pg, "p4")) == 3)
         # resize: scale about the opposite corner, aspect kept
         drag_page(pg, 1, (120, 570), (380, 650))
         check("box around the third only", sel(pg)["ids"] == [C])
@@ -1556,16 +1560,171 @@ try:
             check("each chip is a 38 px round button", all(c_["w"] == 38 and c_["h"] == 38 and c_["round"] == "50%" for c_ in cs), cs)
             n1 = len(strokes(pg, "p4"))
             pg.locator(".selChips .chip[aria-label='Copy']").click(); pg.wait_for_timeout(30)
-            check("the Copy icon still copies (a duplicate on the spot, now the selection)", len(strokes(pg, "p4")) == n1 + 1 and sel(pg) and sel(pg)["ids"] != [R1], sel(pg))
+            # pw-v4k: flipped, the Copy icon fills the clipboard (no duplicate on the spot, the selection stays)
+            check("the Copy icon copies to the clipboard (nothing added, the selection stays)", len(strokes(pg, "p4")) == n1 and sel(pg) and sel(pg)["ids"] == [R1]
+                  and pg.evaluate("window.__pw.ink.hasClip()") is True, sel(pg))
             pg.locator(".selChips .chip[aria-label='Delete']").click(); pg.wait_for_timeout(30)
-            check("the Delete icon still deletes (the copy goes, the selection clears)", len(strokes(pg, "p4")) == n1 and sel(pg) is None and R1 in by_id(), sel(pg))
+            check("the Delete icon still deletes (the rect goes, the selection clears)", len(strokes(pg, "p4")) == n1 - 1 and sel(pg) is None and R1 not in by_id(), sel(pg))
         check("no page errors in the select polish group", not e22, e22)
+        ctx.close()
+
+        # ------------------------------------------------------------ pw-v4k: the selection clipboard, hold a finger to paste
+        group[0] = "clipboard (pw-v4k)"
+        ctx, pg, e23 = fresh(b, has_touch=True); errs += e23
+        open_note(pg, "Select")
+        cdp = ctx.new_cdp_session(pg)
+        def touch(kind, pts=()): cdp.send("Input.dispatchTouchEvent", {"type": kind, "touchPoints": [{"x": x, "y": y, "id": k} for k, (x, y) in enumerate(pts)]})
+        def hold(i, px, py, ms=600):                     # one finger down and still for ms; returns the screen point
+            x, y = screen(pg, i, px, py); touch("touchStart", [(x, y)]); pg.wait_for_timeout(ms); return x, y
+        def lift(): touch("touchEnd"); pg.wait_for_timeout(60)
+        MENU_JS = """() => { const m = document.getElementById('menu'), r = m.getBoundingClientRect();
+          return { shown: !m.hidden && r.height > 0, left: r.left, top: r.top,
+                   items: [...m.querySelectorAll('button')].map(b => ({ label: b.textContent.trim(), disabled: b.disabled })) }; }"""
+        def menu(): return pg.evaluate(MENU_JS)
+        def sheet_y(i): return pg.locator(f"#stack .sheet[data-index='{i}']").bounding_box()["y"]
+        def ids(pid): return [s["id"] for s in strokes(pg, pid)]
+        def pbox(recs):                                  # the strokes' box with half the ink width, the way selBox measures
+            b_ = [1e9, 1e9, -1e9, -1e9]
+            for r in recs:
+                w = r["style"]["width"] / 2
+                for x, y in r["data"]["points"]: b_ = [min(b_[0], x - w), min(b_[1], y - w), max(b_[2], x + w), max(b_[3], y + w)]
+            return b_
+        def ctr(b_): return ((b_[0] + b_[2]) / 2, (b_[1] + b_[3]) / 2)
+        def tool_now(): return pg.evaluate("window.__pw.ink.tool().tool")
+        def tray_on(t): return pg.evaluate(f"document.getElementById('tool-{t}').classList.contains('on')")
+
+        # 6: nothing copied yet: the hold still answers, with a disabled item
+        check("a fresh app has an empty clipboard", pg.evaluate("window.__pw.ink.hasClip()") is False)
+        hx, hy = hold(1, 400, 500); m0 = menu(); lift()
+        check("nothing copied: a finger hold opens the menu with one disabled 'Nothing to paste'", m0["shown"] and m0["items"] == [{"label": "Nothing to paste", "disabled": True}], m0)
+        check("the menu's top-left sits 8 px down and right of the finger", abs(m0["left"] - (hx + 8)) < 1.5 and abs(m0["top"] - (hy + 8)) < 1.5, [m0, hx, hy])
+        check("it stays open after the finger lifts", menu()["shown"])
+        pg.keyboard.press("Escape"); pg.wait_for_timeout(30)
+        check("Escape closes it", not menu()["shown"])
+        pg.evaluate("() => document.getElementById('desk').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 600, clientY: 600 }))")
+        pg.wait_for_timeout(30)
+        check("a contextmenu on the desk (the pen button) opens no menu", not menu()["shown"])
+        ox, oy = screen(pg, 1, -14, 400)
+        off = pg.evaluate(f"(() => {{ const e = document.elementFromPoint({ox}, {oy}); return e ? (e.closest('#desk') && !e.closest('.sheet') ? 'desk' : e.tagName) : null; }})()")
+        touch("touchStart", [(ox, oy)]); pg.wait_for_timeout(600); m_off = menu(); lift()
+        check("a hold off every page (on the desk beside the page) opens nothing", off == "desk" and not m_off["shown"], [off, m_off])
+
+        # 1: Copy puts the selection on the clipboard and adds nothing
+        draw(pg, 1, [(150, 200), (250, 220), (350, 200)])
+        draw(pg, 1, [(150, 280), (250, 300), (350, 280)])
+        draw(pg, 1, [(150, 600), (250, 620), (350, 600)])
+        A, B, C = ids("p4")
+        tool(pg, "select")
+        drag_page(pg, 1, (120, 170), (380, 330))
+        check("two of three selected", sel(pg) and sorted(sel(pg)["ids"]) == sorted([A, B]), sel(pg))
+        u0, before = U(pg), {s["id"]: s for s in strokes(pg, "p4")}
+        pg.locator(".selChips .chip[data-act='copy']").click(); pg.wait_for_timeout(30)
+        check("Copy: the page's stroke count is unchanged", len(strokes(pg, "p4")) == 3)
+        check("Copy: the selection is still those two", sel(pg) and sorted(sel(pg)["ids"]) == sorted([A, B]), sel(pg))
+        check("Copy: hasClip() is true", pg.evaluate("window.__pw.ink.hasClip()") is True)
+        check("Copy: no undo step", U(pg) == u0, [U(pg), u0])
+        check("Copy: the toast says Copied.", pg.evaluate("document.getElementById('toast').textContent") == "Copied." and pg.evaluate("document.getElementById('toast').classList.contains('show')"))
+        tool(pg, "pen")                                    # the paste must turn select on by itself
+        check("the pen tool is on before the paste", tool_now() == "pen" and tray_on("pen"))
+
+        # 2: hold on page 1 and paste
+        y_before = sheet_y(1)
+        hx, hy = hold(1, 500, 760); m1 = menu(); lift()
+        check("a finger held still 600 ms: the menu shows one item, Paste", m1["shown"] and m1["items"] == [{"label": "Paste", "disabled": False}], m1)
+        check("the hold did not pan the page", abs(sheet_y(1) - y_before) < 0.5, [sheet_y(1), y_before])
+        check("the hold drew nothing", len(strokes(pg, "p4")) == 3)
+        u1 = U(pg)
+        pg.locator("#menu button").tap(); pg.wait_for_timeout(60)
+        all_ = strokes(pg, "p4"); news = [s for s in all_ if s["id"] not in (A, B, C)]
+        check("Paste: the menu closes", not menu()["shown"])
+        check("Paste: the page gains two strokes, with new ids", len(all_) == 5 and len(news) == 2, [len(all_), len(news)])
+        if len(news) == 2:
+            c_ = ctr(pbox(news))
+            check("Paste: the new box's centre is on the hold point (2 px)", near(c_, (500, 760), 2), c_)
+            check("Paste: their seq values are above every old one", min(s["seq"] for s in news) > max(before[k]["seq"] for k in before), [s["seq"] for s in news])
+            c0 = ctr(pbox([before[A], before[B]])); dx_, dy_ = c_[0] - c0[0], c_[1] - c0[1]
+            first = sorted(news, key=lambda s: s["seq"])
+            check("Paste: in the copied order, each a moved copy (A first, then B)",
+                  near(first[0]["data"]["points"][0], (before[A]["data"]["points"][0][0] + dx_, before[A]["data"]["points"][0][1] + dy_), 0.3)
+                  and near(first[1]["data"]["points"][0], (before[B]["data"]["points"][0][0] + dx_, before[B]["data"]["points"][0][1] + dy_), 0.3)
+                  and first[0]["style"] == before[A]["style"] and first[0]["page_id"] == "p4", [first[0]["data"]["points"][0], before[A]["data"]["points"][0], dx_, dy_])
+            check("Paste: the originals are untouched", all(next(s for s in all_ if s["id"] == k) == before[k] for k in before))
+            check("Paste: the pasted two are selected", sel(pg) and sorted(sel(pg)["ids"]) == sorted(s["id"] for s in news), sel(pg))
+            check("Paste: the tool is select, and the tray's select button is lit", tool_now() == "select" and tray_on("select") and not tray_on("pen"))
+            check("Paste: one undo step", U(pg) == u1 + 1, [U(pg), u1])
+            undo(pg)
+            check("undo removes both", ids("p4") == [A, B, C] and sel(pg) is None, [ids("p4"), sel(pg)])
+            redo(pg)
+            check("redo brings them back", sorted(ids("p4")) == sorted([A, B, C] + [s["id"] for s in news]))
+            check("the clipboard keeps its contents after a paste", pg.evaluate("window.__pw.ink.hasClip()") is True)
+            hold(1, 600, 950); lift()
+            pg.locator("#menu button").tap(); pg.wait_for_timeout(60)
+            check("paste twice: two more copies (seven strokes)", len(strokes(pg, "p4")) == 7)
+
+        # 5: a moving finger, two fingers: no menu (here, in a two page note, where the desk has room to pan)
+        pg.keyboard.press("Escape")
+        n5, y0 = len(strokes(pg, "p4")), sheet_y(1)
+        x, y = screen(pg, 1, 400, 700); touch("touchStart", [(x, y)])
+        for k in range(1, 11): touch("touchMove", [(x, y - 2 * k)]); pg.wait_for_timeout(16)
+        pg.wait_for_timeout(600); m5 = menu(); touch("touchEnd"); pg.wait_for_timeout(300)
+        check("a finger that moves 20 px during the hold: no menu", not m5["shown"], m5)
+        check("... and the desk panned 20 px", abs((y0 - sheet_y(1)) - 20) < 2, [y0, sheet_y(1)])
+        x, y = screen(pg, 1, 300, 500)
+        touch("touchStart", [(x, y), (x + 120, y + 60)]); pg.wait_for_timeout(700); m6 = menu(); touch("touchEnd"); pg.wait_for_timeout(100)
+        check("two fingers held still: no menu", not m6["shown"], m6)
+        check("the fingers drew and pasted nothing", len(strokes(pg, "p4")) == n5)
+        # 3: page 2, then another note
+        go_page(pg, 2)
+        if pg.locator("#pageList").is_visible(): pg.click("#plClose"); pg.wait_for_timeout(60)
+        hold(2, 400, 500); m2 = menu(); lift()
+        check("a hold on page 2 opens Paste", m2["shown"] and m2["items"] == [{"label": "Paste", "disabled": False}], m2)
+        pg.locator("#menu button").tap(); pg.wait_for_timeout(60)
+        p2 = strokes(pg, "p4b")
+        check("pasted on page 2: the two land there, centred on the hold", len(p2) == 2 and all(s["page_id"] == "p4b" for s in p2) and near(ctr(pbox(p2)), (400, 500), 2),
+              [len(p2), ctr(pbox(p2)) if p2 else None])
+        check("page 1 is unchanged by the page 2 paste", len(strokes(pg, "p4")) == n5)
+        back(pg)
+        open_note(pg, "Erase")
+        check("the clipboard survives closing the note", pg.evaluate("window.__pw.ink.hasClip()") is True)
+        hold(1, 300, 400); lift()
+        pg.locator("#menu button").tap(); pg.wait_for_timeout(60)
+        p5 = strokes(pg, "p5")
+        check("another note: the paste lands there (the clipboard crossed notes)", len(p5) == 2 and all(s["page_id"] == "p5" for s in p5) and near(ctr(pbox(p5)), (300, 400), 2),
+              [len(p5), ctr(pbox(p5)) if p5 else None])
+
+        # 4: near a page edge the box is kept inside the page
+        W, H = 794, 1123
+        seen = {r["id"] for r in strokes(pg, "p5")}
+        hold(1, 785, 1110); lift()
+        pg.locator("#menu button").tap(); pg.wait_for_timeout(60)
+        e1 = [s for s in strokes(pg, "p5") if s["id"] not in seen]
+        bb_ = pbox(e1) if e1 else None
+        check("a hold near the bottom-right corner: the pasted box stays inside the page, against both edges",
+              len(e1) == 2 and bb_[2] <= W + 0.11 and bb_[3] <= H + 0.11 and abs(bb_[2] - W) < 0.6 and abs(bb_[3] - H) < 0.6 and bb_[0] >= 0 and bb_[1] >= 0, bb_)
+        seen = {r["id"] for r in strokes(pg, "p5")}
+        hold(1, 6, 8); lift()
+        pg.locator("#menu button").tap(); pg.wait_for_timeout(60)
+        e2 = [s for s in strokes(pg, "p5") if s["id"] not in seen]
+        bb2 = pbox(e2) if e2 else None
+        check("a hold near the top-left corner: the box is kept inside, against the top and left edges",
+              len(e2) == 2 and bb2[0] >= -0.11 and bb2[1] >= -0.11 and abs(bb2[0]) < 0.6 and abs(bb2[1]) < 0.6, bb2)
+
+        # 5 (the pen): a pen held still opens no menu
+        pg.keyboard.press("Escape")
+        n5 = len(strokes(pg, "p5"))
+        tool(pg, "pen")
+        pen = Pen(ctx, pg)
+        pen.stroke([screen(pg, 1, *q) for q in rough_line(300, 100, 420)], hold=700)
+        lp = last(pg, "p5")
+        check("a pen held still: no menu, and its hold still snaps (a line)", not menu()["shown"] and lp and lp["kind"] == "shape" and lp["data"].get("type") == "line" and len(strokes(pg, "p5")) == n5 + 1,
+              [menu(), lp and lp["kind"], lp and lp["data"].get("type")])
+        check("no page errors in the clipboard group", not e23, e23)
         ctx.close()
 
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v4j", "pw-v4j" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v4k", "pw-v4k" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)

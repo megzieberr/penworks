@@ -26,6 +26,9 @@
 // ink's width, only the shape grows or shrinks.
 // Select polish (pw-v4j): a tap selects the topmost stroke under it, a drag selects everything in the box; a finger
 // tap outside the selection clears it (any tool); a turn shows its degrees beside the ring; the chips are icons.
+// Clipboard (pw-v4k): the Copy chip puts the selection on a clipboard (CLIP, kept while the app is open, across notes)
+// and adds nothing; a finger held still on a page (page.js) opens a small menu with Paste, which puts a copy there,
+// centred on the finger and kept inside the page, selected, as one undo step.
 
 import * as store from './store-local.js';
 import { pageAt, pagePoint, view, pageSize } from './page.js';
@@ -53,6 +56,8 @@ let onChange = null;             // optional: told the page id after every strok
 let G = null;                    // the gesture in progress
 let ring = null, hring = null, deskEl = null, deskBox = null;
 let SEL = null;                  // the selection: { page, ids, g, chips, deg, z }
+let CLIP = null;                 // the selection clipboard: { recs (deep copies, by seq), box (their selBox) }
+let toast = null, openMenuAt = null, selectTool = null;   // optional, from app.js: a toast, the menu at a point, the tray's select tool
 // the chips' two icons (the same drawing style as SVG_BIN in js/app.js)
 const ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">';
 const SVG_COPY = ICON + '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>';
@@ -65,6 +70,9 @@ const bySeq = (a, b) => a.seq - b.seq;
 export function initInk(o) {
   if (o.doOp) doOp = o.doOp;
   if (o.onChange) onChange = o.onChange;
+  if (o.toast) toast = o.toast;
+  if (o.openMenuAt) openMenuAt = o.openMenuAt;
+  if (o.selectTool) selectTool = o.selectTool;
   deskEl = o.desk || document.getElementById('desk');
   deskEl.addEventListener('pointerleave', hideHandle);
   // the selection's handles and chips keep their size on screen: redraw them when the zoom changes
@@ -744,13 +752,43 @@ function makeSel(page, ids) {
   SEL = { page, ids: new Set(ids), g, chips, deg, z: 0, box: null, rot: null, live: null };
   renderSel();
 }
+// Copy: the selection goes on the clipboard; nothing is added, the selection stays, no undo step
 function copySel() {
   if (!SEL) return;
-  const page = SEL.page, now = Date.now();
-  const copies = selRecs().sort(bySeq).map((r, k) => ({ ...xform(r, (q) => [q[0] + 24, q[1] + 24], 1), id: uuid(), seq: now + k }));
-  doOp(changeOp([{ page, removed: [], added: copies }]));
-  if (SEL && SEL.page === page) { SEL.ids = new Set(copies.map((r) => r.id)); renderSel(); }
-  else makeSel(page, copies.map((r) => r.id));
+  const recs = selRecs().sort(bySeq);
+  if (!recs.length) return;
+  CLIP = { recs: JSON.parse(JSON.stringify(recs)), box: selBox(recs) };
+  if (toast) toast('Copied.');
+}
+export function hasClip() { return !!CLIP; }
+// Paste: the clipboard's strokes on page pageId, the box's centre on (x, y) (page px), nudged inside the page where
+// it fits (a box bigger than the page is centred on it); fresh ids, seq values above every stroke on the page in the
+// copied order; one undo step; the pasted strokes become the selection with the select tool on. The clipboard stays.
+export function pasteAt(pageId, x, y) {
+  if (!CLIP) return false;
+  const d = data(pageId), b = CLIP.box;
+  const fit = (lo, hi, at, W) => {                 // the shift along one axis: centre on at, then keep [lo, hi] on [0, W]
+    const v = at - (lo + hi) / 2;
+    if (!W) return v;
+    if (hi - lo > W) return W / 2 - (lo + hi) / 2;
+    return Math.min(W - hi, Math.max(-lo, v));
+  };
+  const dx = fit(b[0], b[2], x, d.w), dy = fit(b[1], b[3], y, d.h);
+  const top = d.strokes.length ? d.strokes[d.strokes.length - 1].seq : 0, base = Math.max(Date.now(), top + 1);
+  const news = CLIP.recs.map((r, k) => ({ ...xform(r, (q) => [q[0] + dx, q[1] + dy], 1, 0), id: uuid(), page_id: pageId, seq: base + k }));
+  doOp(changeOp([{ page: pageId, removed: [], added: news }]));
+  if (T.tool !== 'select') { if (selectTool) selectTool(); else setTool('select'); }
+  if (d.svg) makeSel(pageId, news.map((r) => r.id));
+  return true;
+}
+// a finger held still on the desk (page.js): over a page, a small menu with Paste (disabled with nothing copied)
+function holdMenu(cx, cy) {
+  if (G || !openMenuAt) return;
+  const at = pageAt(cx, cy);
+  if (!at) return;                                 // off every page: nothing opens
+  const pageId = at.id, x = at.x, y = at.y;
+  openMenuAt(cx, cy, [CLIP ? { label: 'Paste', fn: () => pasteAt(pageId, x, y) }
+                           : { label: 'Nothing to paste', disabled: true, fn: () => {} }]);
 }
 function deleteSel() {
   if (!SEL) return;
@@ -1107,4 +1145,4 @@ function up(e, cancelled) {
   g.changes.forEach((c, page) => { if (c.removed.size || c.added.size) changes.push({ page, removed: [...c.removed.values()], added: [...c.added.values()] }); });
   if (changes.length) doOp(changeOp(changes));
 }
-export const hook = { down, move, up, hover, fingerTap };
+export const hook = { down, move, up, hover, fingerTap, holdMenu };
