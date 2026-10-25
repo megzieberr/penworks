@@ -21,6 +21,10 @@
 # box's centre, snapping to multiples of 15 degrees within 2.5; an ellipse keeps data.angle and rotate(angle cx cy);
 # a moved, resized or turned selection comes to the front (fresh seq, last in its own layer group); a resize keeps
 # the ink's width (the old "the ink width scales" check now asserts it stays). The "rotate, front, width" group.
+# Restyle keeps the dash, ring flips (pw-v4h): a restyle (tap, drag, or the Restyle tap on a selection) takes the
+# pen's colour and width but keeps the stroke's OWN dash (the old "takes dashed" checks are flipped); a selection
+# whose turn ring would pass the page's top edge puts the ring below the box, stem from the bottom edge, chips
+# unmoved at the box's top-left. The end of the "restyle" group and the "ring flips near the page top" group.
 import sys, subprocess, time, pathlib, re, json, math
 from playwright.sync_api import sync_playwright
 
@@ -396,10 +400,10 @@ try:
         u0 = U(pg)
         tap_page(pg, 1, 250, 211)
         s = {x["id"]: x for x in strokes(pg, "p3")}
-        check("a tap on a stroke: it takes red, 6, dashed", s[A]["style"] == {"colour": "#FF3636", "width": 6, "dash": "dashed", "opacity": 1}, s[A]["style"])
+        check("a tap on a stroke: it takes red and 6, and keeps its own dash (solid stays solid under a dashed pen, pw-v4h)", s[A]["style"] == {"colour": "#FF3636", "width": 6, "dash": "solid", "opacity": 1}, s[A]["style"])
         check("the others are untouched", s[B]["style"] == old and s[C]["style"] == old)
         e = elinfo(pg, 1, A)
-        check("its path shows it (stroke, width, dasharray)", e["stroke"] == "#FF3636" and e["width"] == "6" and e["dash"] == "18 18", e)
+        check("its path shows it (stroke, width, and no dasharray: still solid)", e["stroke"] == "#FF3636" and e["width"] == "6" and e["dash"] is None, e)
         check("the points did not change", s[A]["data"]["points"][0] == [100, 200])
         check("one undo step per tap", U(pg) == u0 + 1)
         undo(pg)
@@ -447,8 +451,46 @@ try:
         pg.click("#tray .sw[data-colour='#2CB05F']")           # restyle starts in the pen's red: green is a change
         tap_page(pg, 1, 560 + 70, 850)
         s2 = {x["id"]: x for x in strokes(pg, "p3")}[S_["id"]]
-        check("a shape restyles too (pen settings)", S_["kind"] == "shape" and s2["style"]["colour"] == "#2CB05F" and s2["style"]["width"] == 6 and s2["style"]["dash"] == "dashed", s2["style"])
+        check("a shape restyles too (pen colour and width, its own dash: drawn dashed, stays dashed)", S_["kind"] == "shape" and s2["style"]["colour"] == "#2CB05F" and s2["style"]["width"] == 6 and s2["style"]["dash"] == "dashed", s2["style"])
         check("... and stays the same shape", s2["data"] == S_["data"] and elinfo(pg, 1, S_["id"])["tag"] == "circle")
+        # pw-v4h: restyle never changes the dash. The pen is red, 6, dashed here.
+        tool(pg, "pen")
+        draw(pg, 1, [(100, 500), (250, 510), (400, 500)])
+        D = last(pg, "p3")["id"]
+        draw(pg, 1, rough_line(560, 100, 400), hold=650)
+        DL = last(pg, "p3")
+        pg.click("#tool-pen")
+        pg.locator("#toolPanel .dash[data-dash='solid']").click()
+        for _ in range(2): pg.locator("#toolPanel [aria-label='Width bigger']").click()
+        pg.mouse.click(400, 10)
+        W = pg.evaluate("window.__pw.tray()")["pen"]["width"]
+        draw(pg, 1, rough_line(700, 100, 400), hold=650)
+        SL = last(pg, "p3")
+        check("set up: a dashed freehand stroke, a dashed snapped line, a solid snapped line; the pen is now solid and wider",
+              last(pg, "p3")["kind"] == "shape" and SL["style"]["dash"] == "solid" and DL["kind"] == "shape" and DL["style"]["dash"] == "dashed"
+              and {x["id"]: x for x in strokes(pg, "p3")}[D]["style"]["dash"] == "dashed" and W > 6, [SL["style"], DL["style"], W])
+        tool(pg, "restyle")
+        pg.click("#tray .sw[data-colour='#2CB05F']")           # restyle starts in the pen's colour again: green is a change
+        tap_page(pg, 1, 250, 510)
+        tap_page(pg, 1, 250, 564)
+        s3 = {x["id"]: x for x in strokes(pg, "p3")}
+        check("a dashed stroke restyled with a solid pen panel stays dashed; colour and width still change",
+              s3[D]["style"] == {"colour": "#2CB05F", "width": W, "dash": "dashed", "opacity": 1} and elinfo(pg, 1, D)["dash"] is not None, [s3[D]["style"], elinfo(pg, 1, D)])
+        check("a dashed snapped line restyled with a solid pen panel stays dashed; colour and width still change, geometry too",
+              s3[DL["id"]]["style"] == {"colour": "#2CB05F", "width": W, "dash": "dashed", "opacity": 1} and s3[DL["id"]]["data"] == DL["data"]
+              and elinfo(pg, 1, DL["id"])["dash"] is not None, [s3[DL["id"]]["style"], elinfo(pg, 1, DL["id"])])
+        tool(pg, "pen"); pg.click("#tool-pen")
+        pg.locator("#toolPanel .dash[data-dash='dashed']").click(); pg.mouse.click(400, 10)
+        tool(pg, "restyle")
+        pg.click("#tray .sw[data-colour='#2CB05F']")
+        tap_page(pg, 1, 250, 704)
+        s4 = {x["id"]: x for x in strokes(pg, "p3")}
+        check("a solid snapped line restyled with a dashed pen panel stays solid; colour and width still change",
+              s4[SL["id"]]["style"] == {"colour": "#2CB05F", "width": W, "dash": "solid", "opacity": 1} and s4[SL["id"]]["data"] == SL["data"]
+              and elinfo(pg, 1, SL["id"])["dash"] is None, [s4[SL["id"]]["style"], elinfo(pg, 1, SL["id"])])
+        u2 = U(pg)
+        tap_page(pg, 1, 250, 704)
+        check("restyling again with the same settings adds no step (a dash-only difference no longer counts as a change)", U(pg) == u2)
         ctx.close()
 
         # ------------------------------------------------------------ rectangle select
@@ -802,7 +844,8 @@ try:
         u1 = U(pg)
         tool(pg, "restyle")
         now = {x["id"]: x for x in strokes(pg, "p4")}
-        check("tapping Restyle restyles the selection: pen settings for the pen stroke", now[A]["style"] == {"colour": "#000000", "width": 2.5, "dash": "solid", "opacity": 1}, now[A]["style"])
+        check("tapping Restyle restyles the selection: pen colour and width for the pen stroke, its dash stays dashed (pw-v4h)", now[A]["style"] == {"colour": "#000000", "width": 2.5, "dash": "dashed", "opacity": 1}, now[A]["style"])
+        check("... and the dashed stroke still draws dashed", elinfo(pg, 1, A)["dash"] is not None, elinfo(pg, 1, A))
         check("... highlighter settings for the highlight and the highlighter shape (colour from restyle)",
               all(now[i]["style"] == {"colour": "#000000", "width": 18, "dash": "solid", "opacity": 0.4} for i in (H, S)), [now[H]["style"], now[S]["style"]])
         check("one undo step, the selection kept, select still the tool, restyle not entered",
@@ -1369,10 +1412,44 @@ try:
         check("no page errors in the rotate, front, width group", not (e18 or e19 or e20), [e18, e19, e20])
         ctx.close()
 
+        # ------------------------------------------------------------ pw-v4h: the turn ring flips below the box near the page top
+        group[0] = "ring flips near the page top"
+        ctx, pg, e21 = fresh(b); errs += e21
+        open_note(pg, "Select")
+        RB_JS = """() => { const g = document.querySelector('svg.ink g.sel'); if (!g) return null;
+          const k = g.querySelector('circle.selrot'), b = g.querySelector('rect.selbox'), s = g.querySelector('line.selstem');
+          const c = document.querySelector('.selChips');
+          return { ring: [+k.getAttribute('cx'), +k.getAttribute('cy'), +k.getAttribute('r')], top: +b.getAttribute('y'), bottom: +b.getAttribute('y') + +b.getAttribute('height'),
+            left: +b.getAttribute('x'), stem: [+s.getAttribute('y1'), +s.getAttribute('y2')], chipsLeft: c ? c.getBoundingClientRect().left : null,
+            boxLeft: b.getBoundingClientRect().left, rot: window.__pw.ink.selection() && true }; }"""
+        T0 = [[200, 10], [400, 10], [400, 130], [200, 130]]
+        M0 = [[200, 500], [400, 500], [400, 620], [200, 620]]
+        pg.evaluate(PUT_JS, ["p4", [rec("t1", "shape", {"type": "rect", "points": T0}, k=0), rec("m1", "shape", {"type": "rect", "points": M0}, k=1)]])
+        tool(pg, "select")
+        select_box((180, 2), (420, 150))
+        z = zoom(pg); rb = pg.evaluate(RB_JS)
+        check("the rect 10 px from the page top is selected", sel(pg) and sel(pg)["ids"] == ["t1"], sel(pg))
+        if rb:
+            check("its ring is BELOW the box: the ring's cy is greater than the box's bottom, 28 px on screen under it",
+                  rb["ring"][1] > rb["bottom"] and abs((rb["ring"][1] - rb["bottom"]) * z - 28) < 0.3, [rb, z])
+            check("the stem runs from the bottom edge to the ring's top", abs(rb["stem"][0] - rb["bottom"]) < 0.01 and abs(rb["stem"][1] - (rb["ring"][1] - rb["ring"][2])) < 0.01, rb)
+            check("the ring is centred under the box and no part of the selection UI is above the page's top edge", abs(rb["ring"][0] - 300) < 0.2 and rb["top"] > -0.5, rb)
+            check("the Copy and Delete chips sit at the box's top-left (not pushed right of a ring)", abs(rb["chipsLeft"] - rb["boxLeft"]) < 3, rb)
+        u0 = U(pg)
+        c = turn_sel(40)
+        P1 = by_id()["t1"]["data"]["points"]; exp = [rot_about(q, c, 40) for q in T0]
+        check("dragging the lower ring still turns the rect through 40 degrees about its centre (1 px)", all(near(p, e, 1) for p, e in zip(P1, exp)) and U(pg) == u0 + 1, [P1, exp, U(pg), u0])
+        undo(pg)
+        select_box((180, 480), (420, 640))
+        rb2 = pg.evaluate(RB_JS)
+        check("a rect in the middle of the page keeps its ring above the box", sel(pg) and sel(pg)["ids"] == ["m1"] and rb2 and rb2["ring"][1] < rb2["top"] and abs(rb2["stem"][0] - rb2["top"]) < 0.01, [sel(pg), rb2])
+        check("no page errors in the ring flip group", not e21, e21)
+        ctx.close()
+
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v4g", "pw-v4g" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v4h", "pw-v4h" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)

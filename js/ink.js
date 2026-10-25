@@ -670,10 +670,13 @@ function renderSel(t) {                          // t: a live transform while dr
     setAttrs(c, { class: 'selh', 'data-corner': String(k), cx: q[0], cy: q[1], r: 6 / z, fill: '#FFFFFF', stroke: SEL_BLUE, 'stroke-width': 1.5 / z });
     SEL.g.appendChild(c);
   });
-  // the turn handle: a ring 28 px (on screen) above the top edge's middle, on a thin stem
-  const cx = (x0 + x1) / 2, ry = y0 - 28 / z;
+  // the turn handle: a ring 28 px (on screen) above the top edge's middle, on a thin stem;
+  // when that would pass the page's top edge, the ring goes 28 px BELOW the bottom edge instead
+  const cx = (x0 + x1) / 2, below = y0 - 28 / z - 6 / z < 0, ry = below ? y1 + 28 / z : y0 - 28 / z;
   const stem = document.createElementNS(SVGNS, 'line');
-  setAttrs(stem, { class: 'selstem', x1: cx, y1: y0, x2: cx, y2: ry + 6 / z, stroke: SEL_BLUE, 'stroke-width': 1.2 / z });
+  setAttrs(stem, below
+    ? { class: 'selstem', x1: cx, y1: y1, x2: cx, y2: ry - 6 / z, stroke: SEL_BLUE, 'stroke-width': 1.2 / z }
+    : { class: 'selstem', x1: cx, y1: y0, x2: cx, y2: ry + 6 / z, stroke: SEL_BLUE, 'stroke-width': 1.2 / z });
   const knob = document.createElementNS(SVGNS, 'circle');
   setAttrs(knob, { class: 'selrot', cx, cy: ry, r: 6 / z, fill: '#FFFFFF', stroke: SEL_BLUE, 'stroke-width': 1.5 / z });
   SEL.g.append(stem, knob);
@@ -683,7 +686,7 @@ function renderSel(t) {                          // t: a live transform while dr
   placeChips(t ? SEL.live : null);
 }
 function placeChips(m) {                         // m: [s, ox, oy, dx, dy] while dragging, so the chips ride along
-  let [x0, y0] = SEL.box, rx = SEL.rot ? SEL.rot[0] : -Infinity;
+  let [x0, y0] = SEL.box, rx = SEL.rot && SEL.rot[1] < SEL.box[1] ? SEL.rot[0] : Infinity;   // only a ring ABOVE the box crowds the chips (Infinity: nothing to dodge)
   if (m) { const [s, ox, oy, dx, dy] = m; x0 = ox + (x0 - ox) * s + dx; y0 = oy + (y0 - oy) * s + dy; rx = ox + (rx - ox) * s + dx; }
   const c = SEL.chips, gap = 14 / SEL.z;
   if (x0 + c.offsetWidth / SEL.z > rx - gap) x0 = rx + gap;      // they would cover the turn ring: they start just right of it
@@ -763,12 +766,12 @@ export function recolourSelection(c) {          // colour only: width, dash, opa
 }
 export function restyleSelection() { return changeSel(restyled); }   // the full restyle rule
 
-// ---------------------------------------------------------------- restyle: its own colour, the matching tool's width, dash, opacity
+// ---------------------------------------------------------------- restyle: its own colour, the matching tool's width and opacity; restyle never changes the dash
 function restyled(r) {
   const p = ST.pen, h = ST.highlighter, hl = inHl(r), c = ST.restyle && ST.restyle.colour;
   const style = hl                                                 // a highlight (stroke or shape) stays a highlight
     ? { colour: c || h.colour, width: h.width, dash: 'solid', opacity: h.opacity }
-    : { colour: c || p.colour, width: p.width, dash: p.dash || 'solid', opacity: 1 };
+    : { colour: c || p.colour, width: p.width, dash: (r.style && r.style.dash) || 'solid', opacity: 1 };
   const s = r.style || {};
   if (same(s.colour, style.colour) && +s.width === +style.width && (s.dash || 'solid') === style.dash && +(s.opacity ?? 1) === +style.opacity) return null;
   return { ...r, style };
