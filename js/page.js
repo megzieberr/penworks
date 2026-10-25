@@ -209,7 +209,7 @@ export function initPage(els) {
   if (els.onSheets) onSheets = els.onSheets;
   if (els.ink) ink = els.ink;                       // { down(e), move(events), up(e, cancelled), hover(e) }
   const touches = new Map();
-  let pinch = null, drag = null, penSeen = -1e9, inkId = null;
+  let pinch = null, drag = null, penSeen = -1e9, inkId = null, chord = false;
   const now = () => performance.now();
   const when = (e) => e.timeStamp || now();       // when the finger was there (a late event keeps its own time)
   const rect = () => desk.getBoundingClientRect();
@@ -240,18 +240,25 @@ export function initPage(els) {
     glide = { vx, vy, t: now() }; request();
   }
 
+  // the pen or mouse going down on the desk: true when the ink layer took it
+  function inkDown(e) {
+    if (inkId !== null || !ink) return false;
+    if (e.target.closest('button, #pageList')) return false;
+    R = desk.getBoundingClientRect();
+    if (!ink.down(e)) return false;
+    inkId = e.pointerId;
+    touches.clear(); pinch = null; drag = null;                            // a palm already down stops panning
+    try { desk.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+    e.preventDefault();
+    return true;
+  }
   desk.addEventListener('pointerdown', (e) => {
     stopGlide(); settle();                                                 // any touch, pen or click holds the stack where it is
     if (e.pointerType === 'pen' || e.pointerType === 'mouse') {           // the S Pen and the mouse draw
       if (e.pointerType === 'pen') penSeen = performance.now();
-      if (e.button > 0 || inkId !== null || !ink) return;
-      if (e.target.closest('button, #pageList')) return;
-      R = desk.getBoundingClientRect();
-      if (!ink.down(e)) return;
-      inkId = e.pointerId;
-      touches.clear(); pinch = null; drag = null;                          // a palm already down stops panning
-      try { desk.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
-      e.preventDefault();
+      if (e.button > 0 && e.button !== 2) return;                         // button 2: the pen button / right mouse (a grab)
+      chord = false;
+      inkDown(e);
       return;
     }
     if (e.pointerType !== 'touch') return;
@@ -268,11 +275,22 @@ export function initPage(els) {
   desk.addEventListener('pointermove', (e) => {
     if (e.pointerType === 'pen') penSeen = performance.now();
     if (e.pointerId === inkId) {
+      if (chord && !(e.buttons & 1)) {                                     // the tip lifted, the pen button still held: the end
+        inkId = null; chord = false; ink.up(e, false);
+        try { desk.releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+        return;
+      }
       const all = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
       ink.move(all.length ? all : [e]);
       return;
     }
-    if (inkId === null && e.pointerType !== 'touch' && ink && ink.hover) ink.hover(e);   // the pen hovering: shape handles show
+    // the tip touching while the pen button is already held: the spec sends that as a move (button 0, buttons 3),
+    // not a pointerdown, because a button was already down; it is a pen down all the same
+    if (inkId === null && e.pointerType === 'pen' && e.button === 0 && (e.buttons & 3) === 3) {
+      stopGlide(); settle();
+      if (inkDown(e)) { chord = true; return; }
+    }
+    if (inkId === null && e.pointerType !== 'touch' && ink && ink.hover) ink.hover(e);   // the pen hovering, button held: shape handles show
     if (e.pointerType === 'pen' || inkId !== null) return;
     if (!touches.has(e.pointerId)) return;
     touches.set(e.pointerId, pt(e));
@@ -286,7 +304,7 @@ export function initPage(els) {
     }
   });
   const up = (e) => {
-    if (e.pointerId === inkId) { inkId = null; ink.up(e, e.type === 'pointercancel'); return; }
+    if (e.pointerId === inkId) { inkId = null; chord = false; ink.up(e, e.type === 'pointercancel'); return; }
     if (!touches.has(e.pointerId)) return;
     touches.delete(e.pointerId);
     if (drag && drag.id === e.pointerId && e.type === 'pointerup' && !pinch) { settle(); flick(drag, e); }   // a finger only

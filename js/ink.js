@@ -499,9 +499,12 @@ function showHandle(cx, cy) {
   hring.style.transform = `translate(${cx - r.left}px, ${cy - r.top}px)`;
 }
 function hideHandle() { if (hring) hring.hidden = true; }
-// the pen hovering (or a mouse moving with no button): a small ring on a handle within reach
+// the S Pen's side button (the barrel button) or the right mouse button: bit 2 in buttons, button 2 on a press
+const barrel = (e) => !!(e.buttons & 2) || e.button === 2;
+// the pen hovering with its button held (or a mouse moving with the right button held): a small ring on a handle
+// within reach, meaning "you can grab now"; without the button, no ring
 function hover(e) {
-  if (T.tool !== 'pen' || G) { hideHandle(); return; }
+  if (T.tool !== 'pen' || G || !barrel(e)) { hideHandle(); return; }
   const at = pageAt(e.clientX, e.clientY), z = view().z;
   const h = at && handleAt(at.id, at.x, at.y, HANDLE_REACH / z);
   if (!h) { hideHandle(); return; }
@@ -749,21 +752,21 @@ function snapNow() {
 }
 
 function down(e) {
+  if (e.button === 2 && T.tool !== 'pen') return false;            // the right button / pen button: only the pen tool uses it
   const at = pageAt(e.clientX, e.clientY);
   if (!at) { if (T.tool === 'select') clearSelection(); return false; }
   const d = data(at.id);
   if (!d.svg) return false;
   hideHandle();
   const z = view().z;
-  if (T.tool === 'pen') {                                          // a shape's handle under the pen: grab it, do not draw
+  if (T.tool === 'pen' && barrel(e)) {                            // the button held: grab a shape's handle, never draw
     const h = handleAt(at.id, at.x, at.y, HANDLE_REACH / z);
-    if (h) {
-      G = { kind: 'grab', page: at.id, index: at.index, rec: h.rec, h: h.h, el: d.els.get(h.rec.id), now: h.rec, z,
-            off: [h.at[0] - at.x, h.at[1] - at.y] };                   // the handle keeps its offset from the pen: no jump
-      showHandle(e.clientX + (h.at[0] - at.x) * z, e.clientY + (h.at[1] - at.y) * z);
-      return true;
-    }
-  }
+    if (!h) return false;                                          // no handle within reach: a harmless miss
+    G = { kind: 'grab', page: at.id, index: at.index, rec: h.rec, h: h.h, el: d.els.get(h.rec.id), now: h.rec, z,
+          off: [h.at[0] - at.x, h.at[1] - at.y] };                     // the handle keeps its offset from the pen: no jump
+    showHandle(e.clientX + (h.at[0] - at.x) * z, e.clientY + (h.at[1] - at.y) * z);
+    return true;                                                   // the button let go mid-drag: the drag runs on to the lift
+  }                                                                // the plain pen always draws, on a handle too
   if (T.tool === 'pen' || T.tool === 'highlighter') {
     const s = T.style;
     const style = T.tool === 'pen'
