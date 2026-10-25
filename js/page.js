@@ -295,7 +295,7 @@ export function initPage(els) {
       stopGlide(); settle();
       if (inkDown(e)) { chord = true; return; }
     }
-    if (inkId === null && e.pointerType !== 'touch' && ink && ink.hover) ink.hover(e);   // the pen hovering, button held: shape handles show
+    if (inkId === null && e.pointerType !== 'touch' && ink && ink.hover) ink.hover(e);   // the pen or mouse hovering: a shape handle in reach shows its ring
     if (e.pointerType === 'pen' || inkId !== null) return;
     if (!touches.has(e.pointerId)) return;
     touches.set(e.pointerId, pt(e));
@@ -325,17 +325,10 @@ export function initPage(els) {
     if (e.ctrlKey) zoomAt(pt(e), Math.exp(-e.deltaY * 0.0025));
     else { pinned = null; clampView(); V.x -= e.shiftKey ? e.deltaY : e.deltaX; V.y -= e.shiftKey ? 0 : e.deltaY; request(); }
   }, { passive: false });
-  // the S Pen's button on her tablet arrives only as this contextmenu, once per press: it picks a shape handle up
-  // or puts a floating one down (js/ink.js, press). A finger's long press never does either.
+  // the S Pen's button on her tablet arrives only as this contextmenu, once per press: no menu, and it does nothing
   desk.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     unscroll();
-    if (e.pointerType === 'touch' || touches.size || !ink || !ink.press) return;
-    R = desk.getBoundingClientRect();
-    ink.press(e);
-  });
-  document.addEventListener('contextmenu', (e) => {                       // a press off the desk: only a drop, the menu stays
-    if (ink && ink.drop && e.pointerType !== 'touch' && !desk.contains(e.target)) ink.drop();
   });
   window.addEventListener('resize', () => { R = null; stopGlide(); if (L.tops.length) relayout(); });
   desk.addEventListener('scroll', () => { unscroll(); R = null; }, { passive: true });   // cannot fire with overflow: clip; a fallback only
