@@ -9,8 +9,8 @@
 // Inside .hl there is one <g class="hlo" data-opacity> per opacity used on the page; its paths are fully
 // opaque and the group's opacity makes them see-through, so going over a spot again stays one flat colour.
 // Storage goes through js/store-local.js only.
-// Part B: hold the pen still at the end of a pen stroke and it snaps into a line, arrow, triangle, rect, circle
-// or ellipse (SVG primitives); with the pen tool a shape's handles can be grabbed and dragged; the restyle
+// Part B: hold the pen still at the end of a pen stroke and it snaps into a line, arrow, arc, triangle, rect,
+// circle or ellipse (SVG primitives); with the pen tool a shape's handles can be grabbed and dragged; the restyle
 // tool gives strokes the restyle colour and the pen's (or the highlighter's) width, dash or opacity; rectangle
 // select moves, resizes, copies, deletes and (from the tray) recolours or restyles. Every one of these is one
 // step on the note's undo stack.
@@ -18,6 +18,8 @@
 // highlighter-born shape and lives in the highlighter layer (inHl below is that one rule).
 // Shape handles (pw-v4e): with the pen tool, the pen landing within reach of an end point, corner or compass point
 // grabs it and drags it, button or no button; anywhere else the pen draws. The pen button changes nothing.
+// Arc snap (pw-v4f): an open curve held still snaps into a circular arc, data { type: 'arc', x1, y1, xm, ym, x2, y2 }
+// (start, the point half way round, end); its three handles move one point each, the arc is the circle through them.
 
 import * as store from './store-local.js';
 import { pageAt, pagePoint, view } from './page.js';
@@ -88,8 +90,30 @@ export function outline(rec) {
     for (let k = 0; k <= 48; k++) { const a = (k / 48) * 2 * Math.PI; out.push([d.cx + rx * Math.cos(a), d.cy + ry * Math.sin(a)]); }
     return out;
   }
+  if (d.type === 'arc') {                                          // 48 points from the start to the end
+    const g = arcGeom(d);
+    if (!g) return [[d.x1, d.y1], [d.xm, d.ym], [d.x2, d.y2]];
+    const out = [[d.x1, d.y1]];
+    for (let k = 1; k < 47; k++) { const a = g.t1 + (g.sweep * k) / 47; out.push([g.ox + g.r * Math.cos(a), g.oy + g.r * Math.sin(a)]); }
+    out.push([d.x2, d.y2]);
+    return out;
+  }
   return [];
 }
+// an arc's circle, through its start, middle and end: { ox, oy, r, t1 (the start's angle), sweep (signed, radians:
+// plus is the way angles grow on the page, SVG's sweep flag 1) }; null when the three sit in a line (the middle
+// under 0.5 px off the chord) or the ends meet
+function arcGeom(d) {
+  const ax = d.x1, ay = d.y1, bx = d.xm, by = d.ym, cx = d.x2, cy = d.y2, chord = Math.hypot(cx - ax, cy - ay);
+  if (!chord || Math.abs((bx - ax) * (cy - ay) - (by - ay) * (cx - ax)) / chord < 0.5) return null;
+  const D = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+  const a2 = ax * ax + ay * ay, b2 = bx * bx + by * by, c2 = cx * cx + cy * cy;
+  const ox = (a2 * (by - cy) + b2 * (cy - ay) + c2 * (ay - by)) / D, oy = (a2 * (cx - bx) + b2 * (ax - cx) + c2 * (bx - ax)) / D;
+  const t1 = Math.atan2(ay - oy, ax - ox), tm = Math.atan2(by - oy, bx - ox), t2 = Math.atan2(cy - oy, cx - ox);
+  const toEnd = nrmA(t2 - t1);
+  return { ox, oy, r: Math.hypot(ax - ox, ay - oy), t1, sweep: nrmA(tm - t1) <= toEnd ? toEnd : toEnd - 2 * Math.PI };
+}
+const nrmA = (t) => ((t % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);   // an angle in [0, 2 pi)
 const pointsOf = (rec) => (rec.kind === 'shape' ? outline(rec) : ((rec.data && rec.data.points) || []));
 function boxOf(rec) {
   let b = boxes.get(rec);
@@ -140,9 +164,9 @@ function styleEl(el, rec) {
   if (s.dash === 'dashed') el.setAttribute('stroke-dasharray', dashOf(w));
   else el.removeAttribute('stroke-dasharray');
 }
-// shapes are SVG primitives: line, polygon (rect, triangle), circle, ellipse; an arrow is a <g> of its
+// shapes are SVG primitives: line, polygon (rect, triangle), circle, ellipse, path (arc); an arrow is a <g> of its
 // line and an open head (the head never dashed, so every arrow ends the same way)
-const SHAPE_TAG = { line: 'line', arrow: 'g', rect: 'polygon', triangle: 'polygon', circle: 'circle', ellipse: 'ellipse' };
+const SHAPE_TAG = { line: 'line', arrow: 'g', rect: 'polygon', triangle: 'polygon', circle: 'circle', ellipse: 'ellipse', arc: 'path' };
 function arrowHead(d, w) {
   const dx = d.x2 - d.x1, dy = d.y2 - d.y1, L = Math.hypot(dx, dy) || 1, ux = dx / L, uy = dy / L;
   const len = Math.min(L * 0.45, Math.max(14, w * 4)), a = 28 * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
@@ -160,6 +184,12 @@ function setGeom(el, rec) {
   } else if (d.type === 'rect' || d.type === 'triangle') el.setAttribute('points', d.points.map((q) => f1(q[0]) + ',' + f1(q[1])).join(' '));
   else if (d.type === 'circle') { at('cx', d.cx); at('cy', d.cy); at('r', d.r); }
   else if (d.type === 'ellipse') { at('cx', d.cx); at('cy', d.cy); at('rx', d.rx); at('ry', d.ry); }
+  else if (d.type === 'arc') {                                     // M start A r r 0 large sweep end; in a line: straight
+    const g = arcGeom(d), p = (x, y) => f1(x) + ' ' + f1(y);
+    el.setAttribute('d', g
+      ? 'M' + p(d.x1, d.y1) + 'A' + f1(g.r) + ' ' + f1(g.r) + ' 0 ' + (Math.abs(g.sweep) > Math.PI ? 1 : 0) + ' ' + (g.sweep > 0 ? 1 : 0) + ' ' + p(d.x2, d.y2)
+      : 'M' + p(d.x1, d.y1) + 'L' + p(d.xm, d.ym) + 'L' + p(d.x2, d.y2));
+  }
 }
 function makeEl(rec) {
   const shape = rec.kind === 'shape' && rec.data && SHAPE_TAG[rec.data.type];
@@ -400,7 +430,47 @@ function strays(pts, v) {
   return Math.sqrt(worst);
 }
 const rp = (q) => [r1(q[0]), r1(q[1])];
-// in this order: arrow, line, triangle, rect, circle or ellipse; null = stays freehand
+// arc: an open stroke that sits on one circle. The Kasa fit (least squares on x^2 + y^2 + a x + b y + c = 0, the
+// points centred on their mean first so the sums stay small): every point within 6% of the size from the circle,
+// the radius at most 3 x the size, the end further than 10% of the size from the start, and 25 to 330 degrees swept
+// the way the stroke travels (the raw point half way along its length, against the chord, gives that way)
+function arcOf(raw, A, Z, size) {
+  if (dist(A, Z) <= 0.1 * size) return null;                       // closed: the closed test's
+  const n = raw.length;
+  let mx = 0, my = 0;
+  for (const q of raw) { mx += q[0]; my += q[1]; }
+  mx /= n; my /= n;
+  let sxx = 0, sxy = 0, syy = 0, sx = 0, sy = 0, sxz = 0, syz = 0, sz = 0;
+  for (const q of raw) {
+    const x = q[0] - mx, y = q[1] - my, z = x * x + y * y;
+    sxx += x * x; sxy += x * y; syy += y * y; sx += x; sy += y; sxz += x * z; syz += y * z; sz += z;
+  }
+  // the normal equations [sxx sxy sx; sxy syy sy; sx sy n] [a b c] = -[sxz syz sz], by Cramer's rule
+  const M = [[sxx, sxy, sx], [sxy, syy, sy], [sx, sy, n]], R = [-sxz, -syz, -sz];
+  const det3 = (m) => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+    + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+  const D = det3(M);
+  if (!(Math.abs(D) > 1e-12 * n * sxx * syy)) return null;        // all in a line: no circle
+  const col = (i) => M.map((row, k) => row.map((v, j) => (j === i ? R[k] : v)));
+  const a = det3(col(0)) / D, b = det3(col(1)) / D, c = det3(col(2)) / D;
+  const ox = mx - a / 2, oy = my - b / 2, r2 = (a * a + b * b) / 4 - c;
+  if (!(r2 > 0)) return null;
+  const r = Math.sqrt(r2);
+  if (r > 3 * size) return null;                                   // flatter: a line or freehand
+  for (const q of raw) if (Math.abs(Math.hypot(q[0] - ox, q[1] - oy) - r) > 0.06 * size) return null;
+  const half = polyLen(raw) / 2;
+  let walked = 0, mid = raw[n - 1];
+  for (let i = 1; i < n; i++) { walked += dist(raw[i - 1], raw[i]); if (walked >= half) { mid = raw[i]; break; } }
+  const cross = (mid[0] - A[0]) * (Z[1] - A[1]) - (mid[1] - A[1]) * (Z[0] - A[0]);
+  if (!cross) return null;
+  const t1 = Math.atan2(A[1] - oy, A[0] - ox), t2 = Math.atan2(Z[1] - oy, Z[0] - ox);
+  const sweep = cross > 0 ? nrmA(t2 - t1) : -nrmA(t1 - t2), deg = (Math.abs(sweep) * 180) / Math.PI;
+  if (deg < 25 || deg > 330) return null;
+  const on = (t) => [r1(ox + r * Math.cos(t)), r1(oy + r * Math.sin(t))];  // the ends and middle ON the fitted circle
+  const [x1, y1] = on(t1), [xm, ym] = on(t1 + sweep / 2), [x2, y2] = on(t2);
+  return { type: 'arc', x1, y1, xm, ym, x2, y2 };
+}
+// in this order: arrow, line, arc, then closed: triangle, rect, circle or ellipse; null = stays freehand
 export function classify(raw) {
   if (!raw || raw.length < 3 || polyLen(raw) < SNAP_MIN) return null;
   const b = bbox(raw), W = b[2] - b[0], H = b[3] - b[1], size = Math.hypot(W, H);
@@ -427,6 +497,9 @@ export function classify(raw) {
   }
   // line: every point close to the chord
   if (straight(raw, A, Z, 0.06)) return { type: 'line', x1: r1(A[0]), y1: r1(A[1]), x2: r1(Z[0]), y2: r1(Z[1]) };
+  // arc: open, and on one circle (arcOf above)
+  const arc = arcOf(raw, A, Z, size);
+  if (arc) return arc;
   // closed: the end (or, for an overshoot, the point nearest the start in the last 30%) within 10% of the size
   let ci = raw.length - 1, cd = Infinity;
   for (let i = Math.floor(raw.length * 0.7); i < raw.length; i++) { const dd = dist(A, raw[i]); if (dd < cd) { cd = dd; ci = i; } }
@@ -466,6 +539,7 @@ export function handles(rec) {
     const rx = d.type === 'circle' ? d.r : d.rx, ry = d.type === 'circle' ? d.r : d.ry;
     return [[d.cx, d.cy - ry], [d.cx + rx, d.cy], [d.cx, d.cy + ry], [d.cx - rx, d.cy]];   // N, E, S, W
   }
+  if (d.type === 'arc') return [[d.x1, d.y1], [d.xm, d.ym], [d.x2, d.y2]];                  // start, middle, end
   return [];
 }
 // the handle nearest (x, y) on page `id`, within reach: { rec, h, at }
@@ -492,6 +566,9 @@ function dragHandle(rec, h, x, y) {
   } else if (d.type === 'circle') d.r = r1(Math.max(2, Math.hypot(x - d.cx, y - d.cy)));
   else if (d.type === 'ellipse') {                                 // the centre holds; N and S set the height, E and W the width
     if (h % 2) d.rx = r1(Math.max(2, Math.abs(x - d.cx))); else d.ry = r1(Math.max(2, Math.abs(y - d.cy)));
+  } else if (d.type === 'arc') {                                   // only that point moves: the arc is the circle through the three
+    const k = ['1', 'm', '2'][h];
+    d['x' + k] = r1(x); d['y' + k] = r1(y);
   }
   return { ...rec, data: d };
 }
@@ -521,7 +598,10 @@ function xform(rec, f, s) {
   if (rec.kind !== 'shape') nd = { ...d, points: d.points.map(P) };
   else if (d.type === 'line' || d.type === 'arrow') { const a = P([d.x1, d.y1]), b = P([d.x2, d.y2]); nd = { ...d, x1: a[0], y1: a[1], x2: b[0], y2: b[1] }; }
   else if (d.type === 'rect' || d.type === 'triangle') nd = { ...d, points: d.points.map(P) };
-  else if (d.type === 'circle') { const c = P([d.cx, d.cy]); nd = { ...d, cx: c[0], cy: c[1], r: r1(d.r * s) }; }
+  else if (d.type === 'arc') {
+    const a = P([d.x1, d.y1]), m = P([d.xm, d.ym]), z = P([d.x2, d.y2]);
+    nd = { ...d, x1: a[0], y1: a[1], xm: m[0], ym: m[1], x2: z[0], y2: z[1] };
+  } else if (d.type === 'circle') { const c = P([d.cx, d.cy]); nd = { ...d, cx: c[0], cy: c[1], r: r1(d.r * s) }; }
   else if (d.type === 'ellipse') { const c = P([d.cx, d.cy]); nd = { ...d, cx: c[0], cy: c[1], rx: r1(d.rx * s), ry: r1(d.ry * s) }; }
   else nd = { ...d };
   const style = { ...rec.style };

@@ -15,6 +15,8 @@
 # so the pw-v4a rule is back: with the pen tool, any pen or mouse down within 20 px of a shape handle grabs it,
 # button or not, anywhere else it draws; the hover ring shows within reach, button or not; a contextmenu changes
 # nothing and the pick-up code is gone. The pw-v4b and pw-v4c groups are rewritten to this rule.
+# Arc snap (pw-v4f): an open curve held still snaps to { type: 'arc', x1, y1, xm, ym, x2, y2 }, an SVG path with an A;
+# three handles (start, middle, end); the "arc snap" group. The old "a half circle stays freehand" check now expects arc.
 import sys, subprocess, time, pathlib, re, json, math
 from playwright.sync_api import sync_playwright
 
@@ -123,6 +125,10 @@ def rough_triangle():
 def rough_arrow(y=980, x0=120, x1=420):
     return [(x0 + (x1 - x0) * k / 8, y + wobble(k, 1.5)) for k in range(9)] + [(x1 - 24, y - 20), (x1, y), (x1 - 24, y + 20)]
 def squiggle(): return [(100 + 20 * k, 1060 + (18 if k % 2 else -18)) for k in range(12)]
+# a hand arc: angles a0 to a1 in degrees (page px, y down, so growing angles go clockwise on screen), every point
+# nudged up to amp px each way
+def rough_arc(cx, cy, r, a0, a1, n=24, amp=1.5):
+    return [(cx + r * math.cos(math.radians(a0 + (a1 - a0) * k / n)) + wobble(k, amp), cy + r * math.sin(math.radians(a0 + (a1 - a0) * k / n)) + wobble(k + 3, amp)) for k in range(n + 1)]
 
 # real pen input: Chromium's own input pipeline (CDP Input.dispatchMouseEvent with pointerType 'pen'), so the
 # browser hit-tests, fires pointerdown / pointermove / pointerup with pointerType 'pen' and page.js sees a pen
@@ -291,7 +297,8 @@ try:
         check("an L stays freehand", cls([(100, 100), (100, 160), (100, 220), (140, 220), (180, 220)]) is None)
         check("a tick (V) stays freehand", cls([(100, 200), (120, 220), (140, 240), (180, 180), (220, 120)]) is None)
         check("a zigzag stays freehand", cls(squiggle()) is None)
-        check("a half circle (arc) stays freehand", cls([(300 + 80 * math.cos(math.pi * k / 20), 300 - 80 * math.sin(math.pi * k / 20)) for k in range(21)]) is None)
+        hc = [(300 + 80 * math.cos(math.pi * k / 20), 300 - 80 * math.sin(math.pi * k / 20)) for k in range(21)]
+        check("a half circle is an arc now (pw-v4f; it stayed freehand before)", cls(hc) == "arc", cls(hc))
         bow = [(100 + 15 * k, 300 + 6 * math.sin(math.pi * k / 20)) for k in range(21)]
         check("a line with a slight bow (2% of its length): line", cls(bow) == "line", cls(bow))
 
@@ -1058,10 +1065,151 @@ try:
         check("... and a plain touch on the end grabs it with the readout on (x2 +30)", abs(g["x2"] - (d0["x2"] + 30)) <= 1.0 and U(pg) == u0 + 1, [d0, g])
         ctx.close()
 
+        # ------------------------------------------------------------ pw-v4f: hold-to-snap makes an arc
+        group[0] = "arc snap"
+        ctx, pg, e14 = fresh(b); errs += e14
+        open_note(pg, "Snap")
+        tool(pg, "pen")
+        ARC_JS = """(id) => { const e = document.querySelector(`svg.ink [data-id="${id}"]`); if (!e) return null;
+          const L = e.getTotalLength(), h = e.getPointAtLength(L / 2); return { d: e.getAttribute('d'), mid: [h.x, h.y] }; }"""
+        ON_JS = """([id, x, y]) => { const e = document.querySelector(`svg.ink [data-id="${id}"]`); return !!e && e.isPointInStroke(new DOMPoint(x, y)); }"""
+        def arcinfo(sid): return pg.evaluate(ARC_JS, sid)
+        def on_stroke(sid, x, y): return pg.evaluate(ON_JS, [sid, x, y])
+        def flags(dd):                                  # (large-arc, sweep) from "A r r 0 L S"
+            m = re.search(r"A([\d.]+) ([\d.]+) 0 ([01]) ([01]) ", dd or "")
+            return m and (int(m.group(3)), int(m.group(4)))
+        ARCK = ("x1", "y1", "xm", "ym", "x2", "y2")
+        u0 = U(pg)
+        A1 = rough_arc(300, 300, 120, -150, -30)
+        draw(pg, 1, A1, hold=650)
+        r = last(pg, "p1")
+        check("a 120 degree arc with a little wobble, held: shape/arc", r["kind"] == "shape" and r["data"]["type"] == "arc", [r["kind"], r["data"]])
+        ids = []
+        if r["data"].get("type") == "arc":
+            d = r["data"]; ids.append(r["id"])
+            check("its ends within 3 px of the stroke's first and last points", near((d["x1"], d["y1"]), A1[0], 3) and near((d["x2"], d["y2"]), A1[-1], 3), [d, A1[0], A1[-1]])
+            check("its middle point within 4 px of the circle", abs(math.hypot(d["xm"] - 300, d["ym"] - 300) - 120) <= 4, d)
+            check("... and half way round (near 12 o'clock)", near((d["xm"], d["ym"]), (300, 180), 6), d)
+            check("stored to 0.1 px", all(round(d[k], 1) == d[k] for k in ARCK), d)
+            check("same colour, width and dash as the pen", r["style"] == {"colour": "#000000", "width": 2.5, "dash": "solid", "opacity": 1}, r["style"])
+            e = elinfo(pg, 1, r["id"]); ai = arcinfo(r["id"])
+            check("drawn as an SVG <path> in g.pen, stroke only", e["tag"] == "path" and e["type"] == "arc" and e["parent"] == "pen" and e["fill"] == "none"
+                  and e["stroke"] == "#000000" and e["width"] == "2.5", e)
+            check("its d starts with M and has an A, small-arc flag 0 (120 degrees)", ai["d"].startswith("M") and "A" in ai["d"] and flags(ai["d"]) and flags(ai["d"])[0] == 0, ai)
+            check("the drawn path's half-length point is the arc's middle point", near(ai["mid"], (d["xm"], d["ym"]), 1.5), [ai, d])
+        check("an arc snap is ONE undo step, one stroke on the page", U(pg) == u0 + 1 and len(strokes(pg, "p1")) == 1, [u0, U(pg)])
+        pg.wait_for_timeout(200)
+        check("after the fade only the arc is in the layer", pg.evaluate("document.querySelectorAll('#stack .sheet[data-index=\"1\"] svg.ink g.pen > *').length") == 1)
+        # 270 degrees, both ways round
+        for name, pts, mid_at, want in [("clockwise", rough_arc(300, 650, 120, 0, 270, n=40), (300 - 84.9, 650 + 84.9), (1, 1)),
+                                        ("anticlockwise", rough_arc(600, 650, 120, 0, -270, n=40), (600 - 84.9, 650 - 84.9), (1, 0))]:
+            draw(pg, 1, pts, hold=650)
+            r = last(pg, "p1")
+            ok = r["kind"] == "shape" and r["data"]["type"] == "arc"
+            check(f"a 270 degree arc drawn {name}: arc", ok, [r["kind"], r["data"]])
+            if ok:
+                d = r["data"]; ai = arcinfo(r["id"]); ids.append(r["id"])
+                check(f"... large-arc flag 1, sweep flag {want[1]} (it goes the way it was drawn)", flags(ai["d"]) == want, ai["d"])
+                check(f"... its middle point is the drawn stroke's middle (the {name} side)", near((d["xm"], d["ym"]), mid_at, 6), [d, mid_at])
+                check(f"... and the rendered path runs through it", near(ai["mid"], mid_at, 6), [ai, mid_at])
+                check(f"... ends near the stroke's ends", near((d["x1"], d["y1"]), pts[0], 3) and near((d["x2"], d["y2"]), pts[-1], 3), [d, pts[0], pts[-1]])
+        ring_ = rough_arc(600, 300, 90, -90, 260, n=36)              # ends 16 px apart: inside 10% of the size
+        draw(pg, 1, ring_, steps=2, hold=650)
+        check("a near-full ring (end within 10% of the start) still snaps to circle, not arc", last(pg, "p1")["data"].get("type") == "circle", last(pg, "p1")["data"])
+        draw(pg, 1, rough_line(1000, 100, 420), hold=650)
+        check("a line still snaps to line (never arc)", last(pg, "p1")["data"].get("type") == "line", last(pg, "p1")["data"])
+        S = [(100 + 300 * k / 24, 850 + 35 * math.sin(2 * math.pi * k / 24)) for k in range(25)]
+        n = len(strokes(pg, "p1"))
+        draw(pg, 1, S, steps=3, hold=650)
+        check("an S-curve held stays freehand", len(strokes(pg, "p1")) == n + 1 and last(pg, "p1")["kind"] == "pen", last(pg, "p1")["kind"])
+        check("classify: the S-curve is not a shape", cls(S) is None, cls(S))
+        loop = [(100 + 5 * k, 500) for k in range(21)] + [(200 + 40 * math.cos(math.radians(90 + 15 * k)), 460 + 40 * math.sin(math.radians(90 + 15 * k))) for k in range(1, 25)] \
+            + [(200 + 5 * k, 500) for k in range(1, 21)]
+        check("classify: a loop (line, a full turn, line) stays freehand", cls(loop) is None, cls(loop))
+        V = [(100 + 5 * k, 600 + 10 * k) for k in range(11)] + [(150 + 5 * k, 700 - 10 * k) for k in range(1, 11)]
+        check("classify: a sharp V stays freehand", cls(V) is None, cls(V))
+        sliver = [(300 + 300 * math.cos(math.radians(-100 + k)), 400 + 300 * math.sin(math.radians(-100 + k))) for k in range(21)]
+        check("classify: a 20 degree sliver of a circle is a line, not an arc (the line test runs first)", cls(sliver) == "line", cls(sliver))
+        tool(pg, "highlighter")
+        draw(pg, 1, rough_arc(600, 1050, 100, -160, -20), hold=650)
+        h = last(pg, "p1")
+        check("a highlighter arc held: shape/arc", h["kind"] == "shape" and h["data"]["type"] == "arc", [h["kind"], h["data"]])
+        check("... with the highlighter's look", h["style"] == {"colour": "#FFC107", "width": 18, "dash": "solid", "opacity": 0.4}, h["style"])
+        e = elinfo(pg, 1, h["id"])
+        check("... a <path> in its g.hlo (0.4) group under g.hl", e["tag"] == "path" and e["parent"] == "hlo" and e["gp"] == "hl" and e["opacity"] == "0.4", e)
+        ids.append(h["id"])
+        tool(pg, "pen")
+        before = {i: arcinfo(i)["d"] for i in ids}
+        idle(pg); pg.reload(); ready(pg); open_note(pg, "Snap")
+        after = {i: (arcinfo(i) or {}).get("d") for i in ids}
+        check("after a reload every arc is redrawn the same", before == after, [before, after])
+        ctx.close()
+
+        # the arc's handles, eraser and selection
+        ctx, pg, e15 = fresh(b); errs += e15
+        open_note(pg, "Handles")
+        pen = Pen(ctx, pg)
+        draw(pg, 1, rough_arc(400, 500, 150, -150, -30), hold=650)
+        a = last(pg, "p2")
+        check("an arc to grab", a["kind"] == "shape" and a["data"]["type"] == "arc", a["data"])
+        if a["data"].get("type") == "arc":
+            d0 = dict(a["data"]); u0 = U(pg)
+            hs = pg.evaluate("(id) => import('./js/ink.js').then(m => m.handles(m.strokesOf('p2').find(r => r.id === id)))", a["id"])
+            check("handles gives 3: start, middle, end", hs == [[d0["x1"], d0["y1"]], [d0["xm"], d0["ym"]], [d0["x2"], d0["y2"]]], hs)
+            pen.stroke([screen(pg, 1, d0["xm"], d0["ym"]), screen(pg, 1, d0["xm"], d0["ym"] - 40)])
+            d1 = last(pg, "p2")["data"]
+            check("the pen on the middle handle drags it: the new middle is where it was dragged to", abs(d1["xm"] - d0["xm"]) <= 1.5 and abs(d1["ym"] - (d0["ym"] - 40)) <= 1.5, [d0, d1])
+            check("... the ends unchanged", all(d1[k] == d0[k] for k in ("x1", "y1", "x2", "y2")), [d0, d1])
+            check("... no stroke drawn, one undo step", len(strokes(pg, "p2")) == 1 and U(pg) == u0 + 1, [len(strokes(pg, "p2")), U(pg), u0])
+            check("... the bulge changed: the path now runs through the new middle and the ends",
+                  on_stroke(a["id"], d1["xm"], d1["ym"]) and on_stroke(a["id"], d1["x1"], d1["y1"]) and on_stroke(a["id"], d1["x2"], d1["y2"])
+                  and not on_stroke(a["id"], d0["xm"], d0["ym"]), arcinfo(a["id"]))
+            undo(pg)
+            check("undo puts the middle back", last(pg, "p2")["data"] == d0, [last(pg, "p2")["data"], d0])
+            redo(pg)
+            check("redo drags it again", last(pg, "p2")["data"] == d1)
+            pen.stroke([screen(pg, 1, d1["x2"], d1["y2"]), screen(pg, 1, d1["x2"] + 30, d1["y2"] + 40)])
+            d2 = last(pg, "p2")["data"]
+            check("dragging an end moves only that end, the middle (and the start) stay",
+                  abs(d2["x2"] - (d1["x2"] + 30)) <= 1.5 and abs(d2["y2"] - (d1["y2"] + 40)) <= 1.5 and all(d2[k] == d1[k] for k in ("x1", "y1", "xm", "ym")), [d1, d2])
+            check("... and the path goes through the new end", on_stroke(a["id"], d2["x2"], d2["y2"]))
+        ctx.close()
+        ctx, pg, e16 = fresh(b); errs += e16
+        open_note(pg, "Erase")
+        draw(pg, 1, rough_arc(400, 400, 150, -150, -30), hold=650)
+        a = last(pg, "p5")
+        check("an arc to erase", a["kind"] == "shape" and a["data"]["type"] == "arc", a["data"])
+        tool(pg, "eraser")
+        u0 = U(pg)
+        tap_page(pg, 1, 400, 300)                                     # inside the bow: 50 px under the curve, above the chord (y 325)
+        check("the stroke eraser inside the chord's bow leaves the arc alone", len(strokes(pg, "p5")) == 1 and U(pg) == u0)
+        q = pg.evaluate("(id) => import('./js/ink.js').then(m => m.outline(m.strokesOf('p5').find(r => r.id === id))[12])", a["id"])
+        tap_page(pg, 1, q[0] + 2, q[1] + 2)
+        check("the stroke eraser on the curve removes the arc, one undo step", len(strokes(pg, "p5")) == 0 and U(pg) == u0 + 1, [q, strokes(pg, "p5")])
+        ctx.close()
+        ctx, pg, e17 = fresh(b); errs += e17
+        open_note(pg, "Select")
+        draw(pg, 1, rough_arc(400, 400, 150, -150, -30), hold=650)
+        a = last(pg, "p4")
+        check("an arc to select", a["kind"] == "shape" and a["data"]["type"] == "arc", a["data"])
+        if a["data"].get("type") == "arc":
+            d0 = dict(a["data"])
+            tool(pg, "select")
+            drag_page(pg, 1, (230, 230), (570, 345))
+            check("a select box around it selects it", sel(pg) and sel(pg)["ids"] == [a["id"]], sel(pg))
+            u0 = U(pg)
+            drag_page(pg, 1, (400, 300), (450, 340))
+            d1 = last(pg, "p4")["data"]
+            check("a selection move moves all three points by (50, 40)",
+                  all(abs(d1[k] - (d0[k] + (50 if k[0] == "x" else 40))) <= 0.11 for k in ARCK), [d0, d1])
+            check("... one undo step, and the path follows", U(pg) == u0 + 1 and on_stroke(a["id"], d1["xm"], d1["ym"]), [U(pg), u0])
+        check("no page errors in the arc groups", not (e14 or e15 or e16 or e17), [e14, e15, e16, e17])
+        ctx.close()
+
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v4e", "pw-v4e" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v4f", "pw-v4f" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)
