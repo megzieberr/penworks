@@ -7,6 +7,8 @@
 # restyle's own colour, colour tap and Restyle tap on a selection.
 # Pen button round (pw-v4b): the plain pen always draws; a handle is grabbed only with the S Pen's side button
 # (buttons & 2) or the right mouse button; the ?dbg=1 pointer readout.
+# Pen button 2 round (pw-v4c): her tablet sends the button only as one contextmenu per press, so a press near a
+# handle picks it up, the pen's moves carry it, a touch and lift (or a second press, a tool change, Escape, undo) drops it.
 import sys, subprocess, time, pathlib, re, json, math
 from playwright.sync_api import sync_playwright
 
@@ -924,10 +926,128 @@ try:
         check("dbg.js is in the service worker shell list", "./js/dbg.js" in pg.evaluate("fetch('./sw.js').then(r => r.text())"))
         ctx.close()
 
+        # ------------------------------------------------------------ pen button 2: pick up, follow, drop
+        group[0] = "pen button 2"
+        ctx, pg, e12 = fresh(b); errs += e12
+        open_note(pg, "Handles")
+        draw(pg, 1, rough_line(300, 150, 450), hold=650)
+        ln = last(pg, "p2"); d0 = dict(ln["data"])
+        check("a line to work with", ln["kind"] == "shape" and ln["data"]["type"] == "line", ln["data"])
+        L = lambda: [x for x in strokes(pg, "p2") if x["id"] == ln["id"]][0]["data"]
+        CM = """([x, y, pt]) => { const el = document.elementFromPoint(x, y) || document.getElementById('desk');
+          const o = { clientX: x, clientY: y, bubbles: true, cancelable: true };
+          return el.dispatchEvent(pt ? new PointerEvent('contextmenu', { ...o, pointerType: pt }) : new MouseEvent('contextmenu', o)); }"""
+        PE = """([t, x, y, b]) => (document.elementFromPoint(x, y) || document.getElementById('desk')).dispatchEvent(new PointerEvent(t,
+          { bubbles: true, cancelable: true, composed: true, pointerId: 11, pointerType: 'pen', isPrimary: true, clientX: x, clientY: y,
+            button: t === 'pointermove' ? -1 : 0, buttons: b, pressure: b ? 0.5 : 0 }))"""
+        cmx = lambda x, y, pt=None: pg.evaluate(CM, [x, y, pt])
+        pe = lambda t, x, y, bt=0: pg.evaluate(PE, [t, x, y, bt])
+        fl = lambda: pg.evaluate("window.__pw.ink.floating()")
+        ring = lambda: pg.evaluate("""(() => { const r = document.getElementById('handleRing'); if (!r || r.hidden) return null;
+          const b = r.getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; })()""")
+        ex2 = lambda: pg.evaluate("""(id) => { const e = document.querySelector(`svg.ink [data-id="${id}"]`); return [+e.getAttribute('x2'), +e.getAttribute('y2')]; }""", ln["id"])
+        n = len(strokes(pg, "p2")); u0 = U(pg)
+        ex, ey = screen(pg, 1, d0["x2"], d0["y2"])
+        ok = cmx(ex + 6, ey + 4)
+        check("a press 7 px from the line's end: its contextmenu is default-prevented", ok is False, ok)
+        f = fl()
+        check("... the end is picked up (a float on that handle)", f is not None and f["id"] == ln["id"] and f["h"] == 1 and not f["touching"], f)
+        r0 = ring()
+        check("... the ring shows on the end itself", r0 is not None and near(r0, (ex, ey), 1.5), [r0, (ex, ey)])
+        check("... no stroke, the shape unchanged, no undo step yet", len(strokes(pg, "p2")) == n and L() == d0 and U(pg) == u0)
+        pe("pointermove", ex + 36, ey + 24); pe("pointermove", ex + 66, ey + 44)
+        g = ex2()
+        check("hover moves (buttons 0) carry the end along, offset kept (x2 +60, y2 +40)", near(g, (d0["x2"] + 60, d0["y2"] + 40), 1.0), [d0, g])
+        r1 = ring(); tx, ty = screen(pg, 1, d0["x2"] + 60, d0["y2"] + 40)
+        check("... the ring follows the end", r1 is not None and near(r1, (tx, ty), 1.5), [r1, (tx, ty)])
+        check("... still floating, the record not written yet, no undo step", fl() is not None and L() == d0 and U(pg) == u0)
+        pg.evaluate("() => { const d = document.getElementById('desk'); for (const t of ['pointerout', 'pointerleave']) d.dispatchEvent(new PointerEvent(t, { pointerId: 11, pointerType: 'pen' })); }")
+        check("the pen leaving the desk (pointerleave / pointerout) does not drop, the ring stays", fl() is not None and ring() is not None)
+        pe("pointerdown", ex + 66, ey + 44, 1); pe("pointermove", ex + 72, ey + 44, 1); pe("pointermove", ex + 76, ey + 44, 1)
+        check("the pen touching while floating: still the float (touching), no stroke", (fl() or {}).get("touching") is True and len(strokes(pg, "p2")) == n, fl())
+        pe("pointerup", ex + 76, ey + 44, 0)
+        g1 = L()
+        check("touch and lift drops it there (x2 +70, y2 +40)", fl() is None and near((g1["x2"], g1["y2"]), (d0["x2"] + 70, d0["y2"] + 40), 1.0) and g1["x1"] == d0["x1"], [d0, g1])
+        check("... stroke count unchanged, ONE undo step, the ring gone", len(strokes(pg, "p2")) == n and U(pg) == u0 + 1 and ring() is None, [len(strokes(pg, "p2")), U(pg)])
+        idle(pg)
+        check("... and it is saved", [x for x in stored(pg, "p2") if x["id"] == ln["id"]][0]["data"] == g1)
+        undo(pg)
+        check("undo puts the old end back", L() == d0, [L(), d0])
+        redo(pg)
+        check("redo moves it again", L() == g1)
+        # a second press drops instead
+        ex, ey = screen(pg, 1, g1["x2"], g1["y2"])
+        cmx(ex - 3, ey + 2); pe("pointermove", ex - 23, ey + 2); pe("pointermove", ex - 43, ey + 2)
+        cmx(*screen(pg, 1, 650, 1000))
+        g2 = L()
+        check("a second press (anywhere) drops it where it is (x2 -40)", fl() is None and near((g2["x2"], g2["y2"]), (g1["x2"] - 40, g1["y2"]), 1.0), [g1, g2])
+        check("... one more undo step, no stroke", U(pg) == u0 + 2 and len(strokes(pg, "p2")) == n)
+        pe("pointermove", ex + 100, ey + 100)
+        check("... and later hover moves leave it alone", L() == g2)
+        # a press away from any handle: nothing at all, and the next touch draws
+        fx, fy = screen(pg, 1, 600, 900)
+        cmx(fx, fy)
+        check("a press away from any handle does nothing (no float, no ring)", fl() is None and ring() is None and U(pg) == u0 + 2)
+        pg.evaluate(SYNTH_JS, [[(fx, fy), (fx + 40, fy + 20), (fx + 80, fy + 30)], 0])
+        s3 = strokes(pg, "p2")
+        check("... the next pen touch draws as normal (count +1)", len(s3) == n + 1 and s3[-1]["kind"] == "pen" and L() == g2, [x["kind"] for x in s3])
+        n += 1; u1 = U(pg)
+        # picked up, never moved: nothing recorded
+        ex, ey = screen(pg, 1, g2["x2"], g2["y2"])
+        cmx(ex + 2, ey); pe("pointerdown", ex + 2, ey, 1); pe("pointerup", ex + 2, ey, 0)
+        check("picked up and put down without moving: no undo step, no stroke", fl() is None and U(pg) == u1 and L() == g2 and len(strokes(pg, "p2")) == n)
+        # a tool change while floating drops it
+        cmx(ex + 2, ey); pe("pointermove", ex + 2, ey + 25)
+        tool(pg, "eraser")
+        g3 = L()
+        check("a tool change while floating drops it where it is (y2 +25)", fl() is None and near((g3["x2"], g3["y2"]), (g2["x2"], g2["y2"] + 25), 1.0) and U(pg) == u1 + 1, [g2, g3])
+        ex, ey = screen(pg, 1, g3["x2"], g3["y2"])
+        cmx(ex, ey)
+        check("with the eraser on, a press near the end does nothing", fl() is None and ring() is None)
+        tool(pg, "pen")
+        # Escape drops; undo while floating takes the move back
+        cmx(ex, ey); pe("pointermove", ex + 15, ey)
+        pg.keyboard.press("Escape"); pg.wait_for_timeout(20)
+        g4 = L()
+        check("Escape drops it where it is (x2 +15)", fl() is None and near((g4["x2"], g4["y2"]), (g3["x2"] + 15, g3["y2"]), 1.0) and U(pg) == u1 + 2, [g3, g4])
+        ex, ey = screen(pg, 1, g4["x2"], g4["y2"])
+        cmx(ex, ey); pe("pointermove", ex, ey - 30)
+        undo(pg)
+        check("undo while floating: dropped first, so the undo takes that move back", fl() is None and L() == g4 and U(pg) == u1 + 2, [L(), g4, U(pg)])
+        # a finger never picks up
+        cmx(ex, ey, "touch")
+        check("a finger's long press (contextmenu, pointerType touch) does not pick up", fl() is None)
+        # the laptop: a right-mouse grab still works once, its own contextmenu does not grab again
+        pg.evaluate("() => { window.__cm = []; document.addEventListener('contextmenu', (e) => window.__cm.push(e.defaultPrevented)); }")
+        u2 = U(pg)
+        grab_page(pg, 1, (g4["x2"] + 3, g4["y2"] - 2), (g4["x2"] + 3, g4["y2"] + 48))
+        g5 = L()
+        check("the right mouse button grabs and drags the end once (y2 +50)", abs(g5["y2"] - (g4["y2"] + 50)) <= 1.5 and abs(g5["x2"] - g4["x2"]) <= 1.5 and U(pg) == u2 + 1, [g4, g5, U(pg) - u2])
+        check("... its contextmenu fired, was prevented, and started no float (no double grab)", pg.evaluate("window.__cm") == [True] and fl() is None and ring() is None, [pg.evaluate("window.__cm"), fl()])
+        px, py = screen(pg, 1, g5["x2"] + 40, g5["y2"] + 40)
+        pe("pointermove", px, py); pg.mouse.move(px, py)
+        check("... and later moves leave the end alone", L() == g5 and len(strokes(pg, "p2")) == n)
+        check("no page errors in this group", not e12, e12)
+        ctx.close()
+        # the readout stays and logs the press
+        ctx, pg, e13 = fresh(b, url=LOCAL + "&dbg=1"); errs += e13
+        open_note(pg, "Handles")
+        pg.wait_for_selector("#dbg", state="attached", timeout=5000)
+        draw(pg, 1, rough_line(300, 150, 450), hold=650)
+        ln = last(pg, "p2"); d0 = dict(ln["data"]); u0 = U(pg)
+        ex, ey = screen(pg, 1, d0["x2"], d0["y2"])
+        cmx(ex, ey)
+        txt = pg.evaluate("document.getElementById('dbg').textContent").split("\n")
+        check("?dbg=1: the box is there and logs the press as a contextmenu line", txt[0].startswith("contextmenu "), txt)
+        pe("pointermove", ex + 30, ey); pe("pointerdown", ex + 30, ey, 1); pe("pointerup", ex + 30, ey, 0)
+        g = [x for x in strokes(pg, "p2") if x["id"] == ln["id"]][0]["data"]
+        check("... and the pick up, follow and drop work with the readout on (x2 +30)", abs(g["x2"] - (d0["x2"] + 30)) <= 1.0 and U(pg) == u0 + 1, [d0, g])
+        ctx.close()
+
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v4b", "pw-v4b" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v4c", "pw-v4c" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)

@@ -16,6 +16,8 @@
 // step on the note's undo stack.
 // A held highlighter stroke snaps too (never to an arrow): a shape whose style.opacity is under 1 is a
 // highlighter-born shape and lives in the highlighter layer (inHl below is that one rule).
+// Pen button 2: on her Galaxy Tab the S Pen's button reaches Chrome only as one contextmenu per press, so a press
+// near a handle picks it up (a floating grab), the pen carries it and a touch and lift puts it down (press below).
 
 import * as store from './store-local.js';
 import { pageAt, pagePoint, view } from './page.js';
@@ -42,6 +44,8 @@ let doOp = (op) => op.redo();
 let G = null;                    // the gesture in progress
 let ring = null, hring = null, deskEl = null, deskBox = null;
 let SEL = null;                  // the selection: { page, ids, g, chips, z }
+let grabT = -1e9;                // when a pointerdown grab (the right mouse button) last started or ended
+const GUARD_MS = 150;            // a contextmenu this soon after one is that same click, never a pick-up
 
 const uuid = () => crypto.randomUUID();
 const r1 = (v) => Math.round(v * 10) / 10;
@@ -50,13 +54,15 @@ const bySeq = (a, b) => a.seq - b.seq;
 export function initInk(o) {
   if (o.doOp) doOp = o.doOp;
   deskEl = o.desk || document.getElementById('desk');
-  deskEl.addEventListener('pointerleave', hideHandle);
-  // the selection's handles and chips keep their size on screen: redraw them when the zoom changes
+  deskEl.addEventListener('pointerleave', () => { if (!floatG()) hideHandle(); });   // a floating handle keeps its ring
+  // the selection's handles and chips keep their size on screen: redraw them when the zoom changes;
+  // a floating handle's ring rides along with a finger pan or pinch
   const stack = deskEl.querySelector('#stack');
-  if (stack) new MutationObserver(() => { if (SEL && SEL.z !== view().z) renderSel(); }).observe(stack, { attributes: true, attributeFilter: ['data-zoom'] });
+  if (stack) new MutationObserver(() => { if (SEL && SEL.z !== view().z) renderSel(); if (floatG()) floatRing(); })
+    .observe(stack, { attributes: true, attributeFilter: ['data-zoom', 'style'] });
 }
 export function setTool(tool, style) {
-  if (tool !== T.tool) { clearSelection(); hideHandle(); }
+  if (tool !== T.tool) { dropFloat(); clearSelection(); hideHandle(); }
   T.tool = tool; if (style) T.style = { ...style };
 }
 export function setStyles(pen, highlighter, restyle) { ST.pen = { ...pen }; ST.highlighter = { ...highlighter }; ST.restyle = restyle ? { ...restyle } : null; }
@@ -227,6 +233,7 @@ function sizeLayer(d, w, h) {
 
 // page.js calls this after it (re)builds the stack: every sheet gets its page's ink layer back
 export function attach(sheets) {
+  dropFloat();
   clearSelection();
   for (const el of sheets) {
     const d = data(el.dataset.id), w = parseFloat(el.style.width), h = parseFloat(el.style.height);
@@ -504,11 +511,59 @@ const barrel = (e) => !!(e.buttons & 2) || e.button === 2;
 // the pen hovering with its button held (or a mouse moving with the right button held): a small ring on a handle
 // within reach, meaning "you can grab now"; without the button, no ring
 function hover(e) {
+  if (floatG()) { if (e.pointerType === 'pen') follow(e); return; }   // a floating handle follows the hovering pen (not a mouse)
   if (T.tool !== 'pen' || G || !barrel(e)) { hideHandle(); return; }
   const at = pageAt(e.clientX, e.clientY), z = view().z;
   const h = at && handleAt(at.id, at.x, at.y, HANDLE_REACH / z);
   if (!h) { hideHandle(); return; }
   showHandle(e.clientX + (h.at[0] - at.x) * z, e.clientY + (h.at[1] - at.y) * z);
+}
+
+// The pen button on her tablet (pw-v4c). Her gesture: hover near a point, press the button once, move the pen,
+// touch the page to drop.
+// The S Pen's button reaches Chrome there only as ONE contextmenu event per press, at the pen's point, with no
+// buttons bit and no release. So a press within reach of a handle picks it up: a floating grab (G.kind 'float')
+// that every pen move carries, hovering or touching, keeping its offset from the press point. It goes down at a
+// touch and lift of the pen (that touch never draws), a second press, a tool change, a page or note change, undo,
+// redo or Escape: one undo step, only when it moved at least 0.5 px. A press away from any handle does nothing.
+const floatG = () => (G && G.kind === 'float' ? G : null);
+export function floating() { const g = floatG(); return g ? { page: g.page, id: g.rec.id, h: g.h, touching: g.touching } : null; }
+function floatRing() {                                              // the ring on the handle itself, wherever the view is
+  const g = floatG(), d = g && data(g.page), q = g && handles(g.now)[g.h];
+  if (!d || !d.svg || !q) return;
+  const r = d.svg.getBoundingClientRect(), s = r.width / (d.w || 1);
+  showHandle(r.left + q[0] * s, r.top + q[1] * s);
+}
+function follow(ev) {
+  const g = G, [x, y] = pagePoint(g.index, ev.clientX, ev.clientY), tx = x + g.off[0], ty = y + g.off[1];
+  g.moved = Math.hypot(tx - g.at[0], ty - g.at[1]);
+  g.now = dragHandle(g.rec, g.h, tx, ty);
+  if (g.el) setGeom(g.el, g.now);
+  floatRing();
+}
+function press(e) {                                                 // the contextmenu on the desk (page.js)
+  const f = floatG();
+  if (f) { if (!f.touching) dropFloat(); return; }                  // a second press puts it down; mid-touch the lift does
+  if (G || T.tool !== 'pen' || performance.now() - grabT < GUARD_MS) return;   // the right click of a mouse grab: no double grab
+  const at = pageAt(e.clientX, e.clientY);
+  if (!at) return;
+  const d = data(at.id), z = view().z;
+  if (!d.svg) return;
+  const h = handleAt(at.id, at.x, at.y, HANDLE_REACH / z);
+  if (!h) return;                                                   // nothing in reach: nothing at all
+  G = { kind: 'float', page: at.id, index: at.index, rec: h.rec, h: h.h, el: d.els.get(h.rec.id), now: h.rec,
+        at: h.at, off: [h.at[0] - at.x, h.at[1] - at.y], moved: 0, touching: false };
+  floatRing();
+}
+// put a floating handle down where it is: true when one was floating
+export function dropFloat() {
+  const g = floatG();
+  if (!g) return false;
+  G = null;
+  hideHandle();
+  if (g.moved < 0.5 || JSON.stringify(g.now.data) === JSON.stringify(g.rec.data)) { if (g.el) setGeom(g.el, g.rec); return true; }
+  doOp(changeOp([{ page: g.page, removed: [g.rec], added: [g.now] }]));
+  return true;
 }
 
 // ---------------------------------------------------------------- moving and scaling records (selection)
@@ -752,6 +807,10 @@ function snapNow() {
 }
 
 function down(e) {
+  if (floatG()) {
+    if (e.button === 2) { grabT = performance.now(); dropFloat(); return false; }   // a pen that sends its button: a second press
+    G.touching = true; follow(e); return true;                       // the touch that drops it: never a stroke
+  }
   if (e.button === 2 && T.tool !== 'pen') return false;            // the right button / pen button: only the pen tool uses it
   const at = pageAt(e.clientX, e.clientY);
   if (!at) { if (T.tool === 'select') clearSelection(); return false; }
@@ -762,6 +821,7 @@ function down(e) {
   if (T.tool === 'pen' && barrel(e)) {                            // the button held: grab a shape's handle, never draw
     const h = handleAt(at.id, at.x, at.y, HANDLE_REACH / z);
     if (!h) return false;                                          // no handle within reach: a harmless miss
+    grabT = performance.now();
     G = { kind: 'grab', page: at.id, index: at.index, rec: h.rec, h: h.h, el: d.els.get(h.rec.id), now: h.rec, z,
           off: [h.at[0] - at.x, h.at[1] - at.y] };                     // the handle keeps its offset from the pen: no jump
     showHandle(e.clientX + (h.at[0] - at.x) * z, e.clientY + (h.at[1] - at.y) * z);
@@ -837,6 +897,7 @@ function move(events) {
     return;
   }
   if (G.kind === 'snapped') return;                                // a snapped shape stays put until the pen lifts
+  if (G.kind === 'float') { follow(ev); return; }
   if (G.kind === 'grab') {
     const [x, y] = pagePoint(G.index, ev.clientX, ev.clientY);
     G.now = dragHandle(G.rec, G.h, x + G.off[0], y + G.off[1]);
@@ -866,6 +927,7 @@ function move(events) {
   for (const e of events) eraseTo(e.clientX, e.clientY);
 }
 function up(e, cancelled) {
+  if (floatG()) { dropFloat(); return; }                           // the lift after the drop touch: it goes down here
   const g = G; G = null;
   if (!g) return;
   if (g.kind === 'draw' || g.kind === 'snapped') {
@@ -876,6 +938,7 @@ function up(e, cancelled) {
     return;
   }
   if (g.kind === 'grab') {
+    grabT = performance.now();
     hideHandle();
     const moved = JSON.stringify(g.now.data) !== JSON.stringify(g.rec.data);
     if (cancelled || !moved) { if (g.el) setGeom(g.el, g.rec); return; }
@@ -904,4 +967,4 @@ function up(e, cancelled) {
   g.changes.forEach((c, page) => { if (c.removed.size || c.added.size) changes.push({ page, removed: [...c.removed.values()], added: [...c.added.values()] }); });
   if (changes.length) doOp(changeOp(changes));
 }
-export const hook = { down, move, up, hover };
+export const hook = { down, move, up, hover, press, drop: dropFloat };

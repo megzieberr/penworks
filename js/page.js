@@ -320,6 +320,16 @@ export function initPage(els) {
     if (e.ctrlKey) zoomAt(pt(e), Math.exp(-e.deltaY * 0.0025));
     else { pinned = null; clampView(); V.x -= e.shiftKey ? e.deltaY : e.deltaX; V.y -= e.shiftKey ? 0 : e.deltaY; request(); }
   }, { passive: false });
-  desk.addEventListener('contextmenu', (e) => e.preventDefault());
+  // the S Pen's button on her tablet arrives only as this contextmenu, once per press: it picks a shape handle up
+  // or puts a floating one down (js/ink.js, press). A finger's long press never does either.
+  desk.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (e.pointerType === 'touch' || touches.size || !ink || !ink.press) return;
+    R = desk.getBoundingClientRect();
+    ink.press(e);
+  });
+  document.addEventListener('contextmenu', (e) => {                       // a press off the desk: only a drop, the menu stays
+    if (ink && ink.drop && e.pointerType !== 'touch' && !desk.contains(e.target)) ink.drop();
+  });
   window.addEventListener('resize', () => { R = null; stopGlide(); if (L.tops.length) relayout(); });
 }

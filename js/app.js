@@ -227,6 +227,7 @@ function openNote(id, index = 0) {
   stackKey = ''; render(); fit(index);
 }
 function closeNote(skipHistory) {
+  ink.dropFloat();                                             // a floating shape handle goes down first
   if (document.body.classList.contains('full')) exitFull();
   closePanel(); ink.clearSelection();
   if (S.openNote) { delete S.hist[S.openNote]; tidyInk(); }    // closing a note ends its undo history
@@ -257,8 +258,9 @@ function tidyInk() {
   for (const H of Object.values(S.hist)) for (const op of [...H.u, ...H.r]) (op.pages || []).forEach((id) => held.add(id));
   for (const id of [...orphans]) if (!held.has(id) && !page(id)) { ink.forget(id); orphans.delete(id); }
 }
-function undo() { if (!S.openNote) return; const H = hist(), op = H.u.pop(); if (!op) return; op.undo(); H.r.push(op); renderTray(); }
-function redo() { if (!S.openNote) return; const H = hist(), op = H.r.pop(); if (!op) return; op.redo(); H.u.push(op); renderTray(); }
+// a floating shape handle goes down first (js/ink.js): undo then takes that move back
+function undo() { if (!S.openNote) return; ink.dropFloat(); const H = hist(), op = H.u.pop(); if (!op) return; op.undo(); H.r.push(op); renderTray(); }
+function redo() { if (!S.openNote) return; ink.dropFloat(); const H = hist(), op = H.r.pop(); if (!op) return; op.redo(); H.u.push(op); renderTray(); }
 
 function touchNote(nid) { const n = note(nid); if (n) n.updated_at = nowIso(); }
 function renumber(list) {
@@ -767,7 +769,7 @@ function wire() {
   ink.initInk({ doOp, desk: $('desk') });
   initTray();
   initPage({ desk: $('desk'), stack: $('stack'), addBelow: $('addBelow'),
-             onCurrent: (i) => { S.cur = Math.max(0, i); updateCount(); ink.clearSelection(); },   // a new page clears the selection
+             onCurrent: (i) => { S.cur = Math.max(0, i); updateCount(); ink.dropFloat(); ink.clearSelection(); },   // a new page: a floating handle goes down, the selection clears
              onSheets: ink.attach, ink: ink.hook });
   if (new URLSearchParams(location.search).get('dbg') === '1') import('./dbg.js').then((m) => m.startDbg($('desk')));   // the pen readout, ?dbg=1 only
   $('loginForm').addEventListener('submit', async (e) => {
@@ -808,6 +810,7 @@ function wire() {
   document.addEventListener('keydown', (e) => {
     if (e.target.closest && e.target.closest('input')) return;
     if (e.key === 'Escape') {
+      if (ink.dropFloat()) return;                             // a floating shape handle goes down where it is
       if (!$('menu').hidden) closeMenu();
       else if (S.listOpen) { S.listOpen = false; renderPageList(); }
       else if (document.body.classList.contains('full') && !document.fullscreenElement) exitFull();
