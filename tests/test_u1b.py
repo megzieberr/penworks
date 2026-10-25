@@ -46,6 +46,20 @@ def side(pg): return pg.evaluate(SIDE_JS)
 def grid(pg): return pg.evaluate(GRID_JS)
 def stack(pg): return pg.evaluate(STACK_JS)
 def idle(pg): pg.evaluate("window.__pw.idle()"); pg.wait_for_timeout(60)
+# the paper's lines, read from its patterns (one pattern + rect per direction): every line position
+# (x for class gv, y for gh and ln) that the rect lets show, in page px
+LINES_JS = r"""([i, cls]) => {
+  const svg = document.querySelectorAll('#stack .sheet')[i].querySelector('svg[data-bg]'), out = [];
+  for (const r of svg.querySelectorAll(`rect.${cls}`)) {
+    const p = svg.querySelector('#' + CSS.escape(/url\(#(.+)\)/.exec(r.getAttribute('fill'))[1])), l = p.querySelector('line');
+    const v = l.getAttribute('x1') === l.getAttribute('x2');
+    const step = +p.getAttribute(v ? 'width' : 'height'), at = +p.getAttribute(v ? 'x' : 'y') + +l.getAttribute(v ? 'x1' : 'y1');
+    const lo = +r.getAttribute(v ? 'x' : 'y'), hi = lo + +r.getAttribute(v ? 'width' : 'height');
+    for (let k = Math.ceil((lo - at) / step - 1e-6); at + k * step <= hi + 0.01; k++) out.push(+(at + k * step).toFixed(3));
+  }
+  return out;
+}"""
+def paper_lines(pg, i, cls): return pg.evaluate(LINES_JS, [i, cls])
 def ready(pg): pg.wait_for_selector("body[data-ready='1']", timeout=20000)
 def menu_items(pg): return [t.strip() for t in pg.locator("#menu button[role='menuitem']").all_inner_texts()]
 def menu(pg, label): pg.locator("#menu button", has_text=label).first.click()
@@ -227,14 +241,14 @@ try:
         check("one wide sheet among portrait ones", widths == [794, 1123, 794, 794], widths)
         pg.click("#noteMore"); menu(pg, "Lined"); menu(pg, "All pages"); idle(pg)
         check("All pages lined: every page lined", [bg for _, _, bg in stack(pg)] == ["lined"] * 4, stack(pg))
-        ys = pg.evaluate("[...document.querySelectorAll('#stack .sheet')[0].querySelectorAll('line.ln')].map(l => +l.getAttribute('y1'))")
+        ys = paper_lines(pg, 0, 'ln')
         check("lined = 8 mm apart", len(ys) > 25 and all(abs(ys[i + 1] - ys[i] - 0.8 * 96 / 2.54) < 0.02 for i in range(len(ys) - 1)), len(ys))
         pg.click("#undoBtn"); idle(pg)
         check("undo puts the old paper back", [bg for _, _, bg in stack(pg)] == ["grid"] * 4, stack(pg))
-        gx = pg.evaluate("[...document.querySelectorAll('#stack .sheet')[0].querySelectorAll('line.gv')].map(l => +l.getAttribute('x1'))")
-        gy = pg.evaluate("[...document.querySelectorAll('#stack .sheet')[0].querySelectorAll('line.gh')].map(l => +l.getAttribute('y1'))")
-        lx = pg.evaluate("[...document.querySelectorAll('#stack .sheet')[1].querySelectorAll('line.gv')].map(l => +l.getAttribute('x1'))")
-        ly = pg.evaluate("[...document.querySelectorAll('#stack .sheet')[1].querySelectorAll('line.gh')].map(l => +l.getAttribute('y1'))")
+        gx = paper_lines(pg, 0, 'gv')
+        gy = paper_lines(pg, 0, 'gh')
+        lx = paper_lines(pg, 1, 'gv')
+        ly = paper_lines(pg, 1, 'gh')
         P = 794 / 22
         check("grid portrait: 22 blocks across, pitch 794/22 px", len(gx) == 23 and gx[0] == 0 and abs(gx[-1] - 794) < 0.02
               and all(abs(gx[i + 1] - gx[i] - P) < 0.02 for i in range(len(gx) - 1)), gx[:3] + gx[-2:])
@@ -244,7 +258,7 @@ try:
               and all(abs(lx[i + 1] - lx[i] - P) < 0.02 for i in range(len(lx) - 1))
               and all(abs(ly[i + 1] - ly[i] - P) < 0.02 for i in range(len(ly) - 1)), (len(lx), lx[:2], ly[:2]))
         pg.click("#redoBtn"); idle(pg)
-        xs = pg.evaluate("[...document.querySelectorAll('#stack .sheet')[0].querySelectorAll('line.gv')].map(l => +l.getAttribute('x1'))")
+        xs = paper_lines(pg, 0, 'gv')
         pg.reload(); ready(pg)
         check("reload: note reopens, paper and orientation saved", pg.inner_text("#noteName") == "Algebra"
               and [bg for _, _, bg in stack(pg)] == ["lined"] * 4 and [w for _, w, _ in stack(pg)] == [794, 1123, 794, 794], stack(pg))
@@ -360,7 +374,7 @@ try:
             st = pg.evaluate("(u)=>fetch(u).then(r=>r.status+' '+r.headers.get('content-type'))", ic["src"])
             check("icon " + ic["src"], st.startswith("200 image/png"), st)
         check("service worker registers and is active", pg.evaluate("navigator.serviceWorker.ready.then(r=>!!r.active)"))
-        check("cache is pw-v3d (U2 A fix 2)", pg.evaluate("caches.keys()") == ["pw-v3d"] or "pw-v3d" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v3e (scroll)", pg.evaluate("caches.keys()") == ["pw-v3e"] or "pw-v3e" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
         inst = ctx.new_cdp_session(pg).send("Page.getInstallabilityErrors")
         check("Chrome sees it as installable", not inst.get("installabilityErrors"), inst)
         pg.reload(); ready(pg); pg.wait_for_timeout(500)

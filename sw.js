@@ -3,7 +3,7 @@
    Supabase calls are never cached. The supabase-js library and the fonts are cached network-first.
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v3d";
+const CACHE = "pw-v3e";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",
   "./js/local-backend.js", "./js/page.js", "./js/ink.js", "./js/store-local.js", "./js/tray.js",

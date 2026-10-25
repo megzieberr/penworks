@@ -5,6 +5,10 @@
 // point (lifted from the constructions tool, including "ignore fingers while the pen is near").
 // On a laptop the wheel scrolls and Ctrl + wheel (or a trackpad pinch) zooms. Zoom is one value for
 // the whole stack. The current page is the one with most of itself on screen.
+// Moves only change the view (V) and ask for a frame: one requestAnimationFrame callback clamps, writes the
+// transform once and finds the current page, so many moves inside one frame cost one write. A finger flick
+// glides on after the lift and slows down (Samsung's scroll); any new touch, the pen, a pinch, the wheel or a
+// jump to a page stops the glide at once.
 
 export const CM = 96 / 2.54;                 // 1 cm at 96 px per inch
 export const A4 = { w: 794, h: 1123 };       // 21 x 29.7 cm at zoom 1
@@ -14,6 +18,7 @@ const LINE_GAP = 0.8 * CM;                   // lined paper: 8 mm
 const LINE_TOP = 2.4 * CM;                   // first line sits below a top margin
 const ZMIN = 0.2, ZMAX = 4, MARGIN = 24, GAP = 24, BELOW = 90;   // BELOW: room for "Add a page below"
 const SVGNS = 'http://www.w3.org/2000/svg';
+const FLICK = 0.25, STOP = 0.02, DECAY = 0.95, FRAME = 1000 / 60, WINDOW = 100;   // glide: px per ms, per 16.7 ms, ms
 
 let desk, stack, addBelow, onCurrent = () => {}, onSheets = () => {}, ink = null;
 const V = { x: 0, y: 0, z: 1 };
@@ -21,6 +26,10 @@ const L = { tops: [], sizes: [], ids: [], w: A4.w, h: 0 };
 let R = null;        // the desk's place on screen, refreshed at every pen-down and resize
 let cur = -1;
 let pinned = null;   // a page asked for by number (arrows, page list) stays current while any of it shows
+let raf = 0;         // a frame is asked for
+let glide = null;    // { vx, vy (px per ms on screen), t } while the stack glides after a flick
+let shown = '';      // the transform last written
+let bgN = 0;         // unique pattern ids, one set per page
 
 export function pageSize(orientation) {
   return orientation === 'landscape' ? { w: A4.h, h: A4.w } : { ...A4 };
@@ -31,19 +40,32 @@ function bgSvg(w, h, kind) {
   svg.setAttribute('width', w); svg.setAttribute('height', h);
   svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
   svg.dataset.bg = kind;
-  const line = (x1, y1, x2, y2, cls) => {
-    const l = document.createElementNS(SVGNS, 'line');
-    l.setAttribute('x1', x1.toFixed(2)); l.setAttribute('y1', y1.toFixed(2));
-    l.setAttribute('x2', x2.toFixed(2)); l.setAttribute('y2', y2.toFixed(2));
-    l.setAttribute('class', cls);
-    l.setAttribute('stroke', '#D3D7DE'); l.setAttribute('stroke-width', '1');
-    svg.appendChild(l);
+  const el = (tag, at, parent) => {
+    const e = document.createElementNS(SVGNS, tag);
+    for (const k in at) e.setAttribute(k, typeof at[k] === 'number' ? String(+at[k].toFixed(3)) : at[k]);
+    parent.appendChild(e); return e;
+  };
+  // one pattern per direction: a tile one gap wide (or tall) and the whole page long, with its line in the
+  // middle of the tile, so no line touches a tile edge (no seams) and every line is one piece. Vertical
+  // lines sit at x = at + k * gap, horizontal ones at y = at + k * gap; the rect sets where they stop.
+  let defs = null;
+  const lines = (dir, at, gap, cls, rect) => {
+    if (!defs) defs = el('defs', {}, svg);
+    const id = `pw-${cls}-${++bgN}`, v = dir === 'v';
+    const p = el('pattern', { id, patternUnits: 'userSpaceOnUse', x: v ? at - gap / 2 : 0, y: v ? 0 : at - gap / 2,
+      width: v ? gap : w, height: v ? h : gap }, defs);
+    el('line', { ...(v ? { x1: gap / 2, y1: 0, x2: gap / 2, y2: h } : { x1: 0, y1: gap / 2, x2: w, y2: gap / 2 }),
+      class: cls, stroke: '#D3D7DE', 'stroke-width': '1' }, p);
+    el('rect', { ...rect, fill: `url(#${id})`, class: cls }, svg);
   };
   if (kind === 'grid') {
-    for (let i = 0; i * GRID <= w + 0.01; i++) line(i * GRID, 0, i * GRID, h, 'gv');
-    for (let j = 0; GRID_TOP + j * GRID <= h + 0.01; j++) line(0, GRID_TOP + j * GRID, w, GRID_TOP + j * GRID, 'gh');
+    // as before: verticals at 0, GRID, ... across the page, top to bottom; horizontals from GRID_TOP down
+    lines('v', 0, GRID, 'gv', { x: 0, y: 0, width: w, height: h });
+    lines('h', GRID_TOP, GRID, 'gh', { x: 0, y: 0, width: w, height: h });
   } else if (kind === 'lined') {
-    for (let y = LINE_TOP; y <= h - CM; y += LINE_GAP) line(0, y, w, y, 'ln');
+    // as before: lines from LINE_TOP every LINE_GAP, the last one at or above h - 1 cm
+    const n = Math.floor((h - CM - LINE_TOP) / LINE_GAP + 1e-6);
+    if (n >= 0) lines('h', LINE_TOP, LINE_GAP, 'ln', { x: 0, y: LINE_TOP - LINE_GAP / 2, width: w, height: (n + 1) * LINE_GAP });
   }
   return svg;
 }
@@ -61,10 +83,32 @@ function findCurrent() {
 }
 
 function apply() {
-  stack.style.transform = `translate(${V.x}px, ${V.y}px) scale(${V.z})`;
-  stack.dataset.zoom = V.z.toFixed(3);
+  const t = `translate(${V.x}px, ${V.y}px) scale(${V.z})`;
+  if (t !== shown) { shown = t; stack.style.transform = t; stack.dataset.zoom = V.z.toFixed(3); }
   const c = findCurrent();
   if (c !== cur) { cur = c; onCurrent(cur); }
+}
+
+// moves call this; the frame does the clamp, the one transform write and the current page
+function request() { if (!raf) raf = requestAnimationFrame(frame); }
+function frame(now) {
+  raf = 0;
+  if (glide) {
+    const dt = Math.min(50, Math.max(0, now - glide.t)); glide.t = now;
+    const x = V.x + glide.vx * dt, y = V.y + glide.vy * dt;
+    V.x = x; V.y = y; clampView();
+    if (Math.abs(V.x - x) > 0.01) glide.vx = 0;       // the end of the stack (or a centred page) stops that axis
+    if (Math.abs(V.y - y) > 0.01) glide.vy = 0;
+    const k = Math.pow(DECAY, dt / FRAME); glide.vx *= k; glide.vy *= k;
+    if (Math.hypot(glide.vx, glide.vy) < STOP) glide = null;
+  } else clampView();
+  apply();
+  if (glide) request();
+}
+function stopGlide() { glide = null; }
+// a move still waiting for its frame is shown now (a jump, the pen or a new finger needs the view as seen)
+function settle() {
+  if (raf) { cancelAnimationFrame(raf); raf = 0; clampView(); apply(); }
 }
 
 function clampView() {
@@ -101,7 +145,7 @@ export function showStack(pages) {
   stack.style.width = L.w + 'px'; stack.style.height = L.h + 'px';
   cur = -1;
   if (pinned !== null && pinned >= L.tops.length) pinned = L.tops.length - 1;
-  clampView(); apply();
+  stopGlide(); settle(); clampView(); apply();
   onSheets([...stack.querySelectorAll('.sheet')]);
 }
 
@@ -113,7 +157,7 @@ export function fit(index = Math.max(0, cur)) {
   V.x = (dw - L.w * V.z) / 2;                            // pages sit centred in the stack
   pinned = L.tops.length ? Math.min(index, L.tops.length - 1) : null;
   V.y = MARGIN - (L.tops[index] || 0) * V.z;
-  clampView(); apply();
+  stopGlide(); settle(); clampView(); apply();
 }
 
 export function scrollToPage(index) {
@@ -121,18 +165,19 @@ export function scrollToPage(index) {
   const i = Math.max(0, Math.min(L.tops.length - 1, index));
   pinned = i;
   V.y = MARGIN - L.tops[i] * V.z;
-  clampView(); apply();
+  stopGlide(); settle(); clampView(); apply();
 }
 
 // after the desk changes size (full screen, header hidden): keep the current page in place
 export function relayout() { const i = Math.max(0, cur); fit(i); }
 
 export function current() { return cur; }
-export function view() { return { ...V }; }
+export function view() { if (raf) clampView(); return { ...V }; }
 
 // screen point to page px at zoom 1. pageAt: the page under the point (or null);
 // pagePoint: the same point measured on page `index`, even when it is off that page
 function deskPoint(cx, cy) {
+  if (raf) clampView();                            // a move waiting for its frame: measure where it will show
   const r = R || (R = desk.getBoundingClientRect());
   return [(cx - r.left - V.x) / V.z, (cy - r.top - V.y) / V.z];
 }
@@ -151,10 +196,11 @@ export function pageAt(cx, cy) {
 
 function zoomAt(p, f) {
   pinned = null;
+  clampView();
   const z = Math.min(ZMAX, Math.max(ZMIN, V.z * f));
   const wx = (p[0] - V.x) / V.z, wy = (p[1] - V.y) / V.z;
   V.z = z; V.x = p[0] - wx * z; V.y = p[1] - wy * z;
-  clampView(); apply();
+  request();
 }
 
 export function initPage(els) {
@@ -164,12 +210,15 @@ export function initPage(els) {
   if (els.ink) ink = els.ink;                       // { down(e), move(events), up(e, cancelled) }
   const touches = new Map();
   let pinch = null, drag = null, penSeen = -1e9, inkId = null;
+  const now = () => performance.now();
+  const when = (e) => e.timeStamp || now();       // when the finger was there (a late event keeps its own time)
   const rect = () => desk.getBoundingClientRect();
   const pt = (e) => { const r = rect(); return [e.clientX - r.left, e.clientY - r.top]; };
   const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
   const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
   function startPinch() {
     const [a, b] = [...touches.values()];
+    stopGlide(); settle();
     pinch = { z0: V.z, x0: V.x, y0: V.y, m0: mid(a, b), d0: Math.max(10, dist(a, b)) };
     drag = null;
   }
@@ -178,10 +227,21 @@ export function initPage(els) {
     const z = Math.min(ZMAX, Math.max(ZMIN, pinch.z0 * d / pinch.d0));
     const w = [(pinch.m0[0] - pinch.x0) / pinch.z0, (pinch.m0[1] - pinch.y0) / pinch.z0];
     V.z = z; V.x = m[0] - w[0] * z; V.y = m[1] - w[1] * z;
-    clampView(); apply();
+    request();
+  }
+  // on lift: the speed over the last 100 ms of the drag; a careful slow drag just stops
+  function flick(d, e) {
+    const t = when(e), s = d.trail.filter((q) => t - q[0] <= WINDOW);
+    if (s.length < 2) return;
+    const a = s[0], b = s[s.length - 1], dt = b[0] - a[0];
+    if (dt < 8) return;
+    const vx = (b[1] - a[1]) / dt, vy = (b[2] - a[2]) / dt;
+    if (Math.hypot(vx, vy) < FLICK) return;
+    glide = { vx, vy, t: now() }; request();
   }
 
   desk.addEventListener('pointerdown', (e) => {
+    stopGlide(); settle();                                                 // any touch, pen or click holds the stack where it is
     if (e.pointerType === 'pen' || e.pointerType === 'mouse') {           // the S Pen and the mouse draw
       if (e.pointerType === 'pen') penSeen = performance.now();
       if (e.button > 0 || inkId !== null || !ink) return;
@@ -202,7 +262,7 @@ export function initPage(els) {
     try { desk.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
     pinned = null;
     if (touches.size >= 2) startPinch();
-    else drag = { id: e.pointerId, s0: pt(e), x0: V.x, y0: V.y };
+    else { const p = pt(e); drag = { id: e.pointerId, s0: p, x0: V.x, y0: V.y, trail: [[when(e), p[0], p[1]]] }; }
     e.preventDefault();
   });
   desk.addEventListener('pointermove', (e) => {
@@ -217,15 +277,18 @@ export function initPage(els) {
     touches.set(e.pointerId, pt(e));
     if (pinch && touches.size >= 2) { movePinch(); return; }
     if (drag && drag.id === e.pointerId) {
-      const p = pt(e);
+      const p = pt(e), t = when(e);
       V.x = drag.x0 + p[0] - drag.s0[0]; V.y = drag.y0 + p[1] - drag.s0[1];
-      clampView(); apply();
+      drag.trail.push([t, p[0], p[1]]);
+      while (drag.trail.length > 2 && t - drag.trail[0][0] > WINDOW) drag.trail.shift();
+      request();
     }
   });
   const up = (e) => {
     if (e.pointerId === inkId) { inkId = null; ink.up(e, e.type === 'pointercancel'); return; }
     if (!touches.has(e.pointerId)) return;
     touches.delete(e.pointerId);
+    if (drag && drag.id === e.pointerId && e.type === 'pointerup' && !pinch) { settle(); flick(drag, e); }   // a finger only
     if (touches.size >= 2) startPinch();
     else { pinch = null; drag = null; }
   };
@@ -234,9 +297,10 @@ export function initPage(els) {
   desk.addEventListener('wheel', (e) => {
     if (e.target.closest('#pageList')) return;                             // the page list scrolls itself
     e.preventDefault();
+    stopGlide();
     if (e.ctrlKey) zoomAt(pt(e), Math.exp(-e.deltaY * 0.0025));
-    else { pinned = null; V.x -= e.shiftKey ? e.deltaY : e.deltaX; V.y -= e.shiftKey ? 0 : e.deltaY; clampView(); apply(); }
+    else { pinned = null; clampView(); V.x -= e.shiftKey ? e.deltaY : e.deltaX; V.y -= e.shiftKey ? 0 : e.deltaY; request(); }
   }, { passive: false });
   desk.addEventListener('contextmenu', (e) => e.preventDefault());
-  window.addEventListener('resize', () => { R = null; if (L.tops.length) relayout(); });
+  window.addEventListener('resize', () => { R = null; stopGlide(); if (L.tops.length) relayout(); });
 }
