@@ -130,9 +130,9 @@ try:
         group[0] = "tray"
         open_note(pg, "Ink test")
         sw = pg.evaluate("[...document.querySelectorAll('#tray .colours .sw')].map(s => [s.dataset.colour, s.getAttribute('aria-label')])")
-        check("her 12 colours in her order, with her names", sw == [["#2CB05F", "Green"], ["#0D0DFF", "Blue"], ["#FF0C84", "Pink"], ["#FF7043", "Orange"],
-              ["#A83AFF", "Purple"], ["#FFC107", "Amber"], ["#00BCD5", "Cyan"], ["#FF00FF", "Magenta"],
-              ["#3396FF", "Sky blue"], ["#FF3636", "Red"], ["#000000", "Black"], ["#808080", "Grey"]], sw)
+        check("her 13 colours in her order, with her names", sw == [["#2CB05F", "Green"], ["#37D366", "Light green"], ["#0D0DFF", "Blue"], ["#FF0C84", "Pink"],
+              ["#FF7043", "Orange"], ["#A83AFF", "Purple"], ["#FFC107", "Amber"], ["#00BCD5", "Cyan"], ["#04878F", "Teal"], ["#FF00FF", "Magenta"],
+              ["#FF3636", "Red"], ["#000000", "Black"], ["#808080", "Grey"]], sw)
         st0 = pg.evaluate("window.__pw.tray()")
         check("defaults: pen Black #000000, highlighter Amber #FFC107", st0["pen"]["colour"] == "#000000" and st0["highlighter"]["colour"] == "#FFC107", [st0["pen"], st0["highlighter"]])
         order = pg.evaluate("""[...document.getElementById('tray').querySelectorAll(':scope > *, :scope > .tools > *')]
@@ -488,7 +488,7 @@ try:
         check("the eye toggles password to text and back", a == "password" and c == ["text", "Hide password"] and d == "password", [a, c, d])
         check("the eye sits inside the field", eb["x"] >= lb["x"] and eb["x"] + eb["width"] <= lb["x"] + lb["width"] and eb["y"] >= lb["y"] - 1 and eb["y"] + eb["height"] <= lb["y"] + lb["height"] + 1, [eb, lb])
         group[0] = "pwa and house rules"
-        check("cache is pw-v3e", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v3e"] or "pw-v3e" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v3f", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v3f"] or "pw-v3f" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the new files are in the offline shell", all(f in swt for f in ("./js/ink.js", "./js/store-local.js", "./js/tray.js")))
         pg.evaluate(SEED_JS, False); pg.reload(); ready(pg)

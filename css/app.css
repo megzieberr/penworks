@@ -315,7 +315,7 @@ body.full #noteBar, body.full #counter { display: none; }
 .thumbP .num { font-size: 12.5px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
 .thumbP.cur .num { color: var(--ink); }
 
-/* ---------- the tray: 12 colours, the tools, a gap, undo, redo (top to bottom) ---------- */
+/* ---------- the tray: her 13 colours and the spare slot, the tools, a gap, undo, redo (top to bottom) ---------- */
 #tray {
   background: var(--tray); border-left: 1px solid rgba(38,42,48,.08); display: flex; flex-direction: column;
   align-items: center; padding: 10px 0 10px; gap: 2px; min-height: 0; overflow-y: auto; overflow-x: hidden;
@@ -323,20 +323,38 @@ body.full #noteBar, body.full #counter { display: none; }
 }
 #tray .ib:not(:disabled) { color: var(--graphite); }
 #tray .ib:disabled { color: var(--off); }
-#tray .colours { display: flex; flex-direction: column; align-items: center; gap: 4px; padding-bottom: 8px; }
+#tray .colours {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; padding-bottom: 8px;
+  touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;   /* hold and drag: no scroll, no zoom */
+}
 #tray .sw {
-  width: 26px; height: 26px; border-radius: 50%; border: 0; padding: 0; cursor: pointer; flex: none;
+  position: relative; width: 26px; height: 26px; border-radius: 50%; border: 0; padding: 0; cursor: pointer; flex: none;
   box-shadow: inset 0 0 0 1.5px var(--sw-ring);
 }
-#tray .sw.on { outline: 2px solid var(--graphite); outline-offset: 2px; }
+#tray .sw.on, #tray .spec.on { outline: 2px solid var(--graphite); outline-offset: 2px; }
+#tray .colours.dragging .sw:not(.lift) { transition: transform .15s ease; }   /* the others step aside */
+#tray .sw.lift { z-index: 2; cursor: grabbing; box-shadow: inset 0 0 0 1.5px var(--sw-ring), 0 4px 12px rgba(20,22,26,.35); }
+/* the spare slot: a rainbow ring round the picked colour (white until she picks), set apart under Grey */
+#tray .spec {
+  position: relative; width: 26px; height: 26px; margin-top: 4px; border-radius: 50%; border: 0; padding: 0; cursor: pointer; flex: none;
+  background: conic-gradient(#FF0000, #FFFF00, #00FF00, #00FFFF, #0000FF, #FF00FF, #FF0000);
+}
+#tray .spec .mid { position: absolute; inset: 5px; border-radius: 50%; background: var(--spec, #FFFFFF); box-shadow: 0 0 0 1px rgba(38,42,48,.25); }
 #tray .tools { display: flex; flex-direction: column; align-items: center; gap: 2px; padding-top: 6px; border-top: 1px solid var(--line); }
 #tray .tool { width: 42px; height: 42px; }
 #tray .tool.on { background: var(--ink-soft); color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
 #tray .slot { flex: none; width: 42px; height: 42px; }
 #tray .gap { flex: 1 0 6px; }
-@media (max-height: 760px) {
-  #tray .sw { width: 22px; height: 22px; }
+/* 14 colour slots: up to 860 px high the circles go to 22 px so undo and redo stay on screen (tablet landscape) */
+@media (max-height: 860px) {
+  #tray .sw, #tray .spec { width: 22px; height: 22px; }
+  #tray .spec .mid { inset: 4px; }
   #tray .colours { gap: 3px; }
+}
+@media (max-height: 760px) {
+  #tray .sw, #tray .spec { width: 20px; height: 20px; }
+  #tray .colours { gap: 2px; }
+  #tray .sw.on, #tray .spec.on { outline-offset: 1px; }
   #tray .tool, #tray .slot, #tray > .ib { width: 38px; height: 38px; }
 }
 
@@ -362,6 +380,32 @@ body.full #noteBar, body.full #counter { display: none; }
 }
 .panel .dash .dl svg { width: 40px; height: 8px; display: block; }
 .panel .dash.on { background: var(--ink-soft); color: var(--ink); border-color: var(--ink); }
+
+/* the spectrum picker for the spare slot: a square (saturation across, lightness down), a hue strip, preview, hex, Done */
+.panel.picker { width: auto; padding: 14px; }
+.picker .sq {
+  position: relative; border-radius: 6px; touch-action: none; cursor: crosshair;
+  background-image: linear-gradient(to top, #000000, rgba(0,0,0,0)), linear-gradient(to right, #FFFFFF, rgba(255,255,255,0));
+}
+.picker .hue {
+  position: relative; height: 24px; margin-top: 12px; border-radius: 12px; touch-action: none; cursor: pointer;
+  background: linear-gradient(to right, #FF0000 0%, #FFFF00 16.67%, #00FF00 33.33%, #00FFFF 50%, #0000FF 66.67%, #FF00FF 83.33%, #FF0000 100%);
+}
+.picker .dot {
+  position: absolute; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; border: 2px solid #FFFFFF;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.35), 0 1px 4px rgba(0,0,0,.3); pointer-events: none;
+}
+.picker .hue .dot { top: 50%; width: 24px; height: 24px; margin: -12px 0 0 -12px; }
+.picker .pkrow { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.picker .prev { flex: none; width: 30px; height: 30px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--sw-ring); }
+.picker .hex {
+  flex: 1; min-width: 0; width: 0; height: 40px; border: 1px solid var(--field-line); border-radius: 8px; padding: 0 7px;
+  font: 700 14px var(--body); color: var(--graphite); background: var(--field); text-transform: uppercase; font-variant-numeric: tabular-nums;
+}
+.picker .done {
+  flex: none; height: 40px; padding: 0 12px; border: 0; border-radius: 8px; background: var(--graphite); color: var(--card);
+  font-weight: 700; font-size: 14.5px; cursor: pointer;
+}
 
 /* ---------- popover menu, toast ---------- */
 #menu {
@@ -413,4 +457,5 @@ body.full #noteBar, body.full #counter { display: none; }
 @media (prefers-reduced-motion: reduce) {
   #toast, .chev svg { transition: none; }
   #pageList { animation: none; }
+  #tray .colours.dragging .sw:not(.lift) { transition: none; }
 }
