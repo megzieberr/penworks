@@ -9,6 +9,8 @@
 # (buttons & 2) or the right mouse button; the ?dbg=1 pointer readout.
 # Pen button 2 round (pw-v4c): her tablet sends the button only as one contextmenu per press, so a press near a
 # handle picks it up, the pen's moves carry it, a touch and lift (or a second press, a tool change, Escape, undo) drops it.
+# Desk scroll fix (pw-v4d): #desk is overflow: clip, never a scroll container (her tablet: ink landed a fixed distance
+# above the pen after a button press / long hold until a reopen); the proof test lives in tests/test_scroll.py.
 import sys, subprocess, time, pathlib, re, json, math
 from playwright.sync_api import sync_playwright
 
@@ -1047,7 +1049,7 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v4c", "pw-v4c" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v4d", "pw-v4d" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)

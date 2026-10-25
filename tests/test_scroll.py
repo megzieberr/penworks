@@ -203,6 +203,50 @@ try:
         col = [shot.getpixel((18, yy)) for yy in range(60)]
         first = next((yy for yy, v in enumerate(col) if v < 245), None)
         check("the top strip: the first grid row is 6 mm (22.7 px) down, blank above", first is not None and abs(first - 22.68) <= 1.5, first)
+
+        # ------------------------------------------------------------ the desk never scrolls natively (pw-v4d)
+        # Her tablet bug (25 Oct): after a pen button press or a long hold the view jumped to another page and every
+        # stroke landed a fixed distance above the pen until a reopen. Cause: #desk was overflow: hidden, which is still
+        # a scroll container, so Chrome could scroll it by itself (a focus, scrollIntoView, a long press) and the pen
+        # maths, which only know the transform, were off by exactly that scroll. Now overflow: clip + a reset on pointer down.
+        group[0] = "desk never scrolls"
+        go_page(pg, 1); pg.wait_for_timeout(100)
+        STATE = """() => { const d = document.getElementById('desk'), s = document.getElementById('stack');
+          const dr = d.getBoundingClientRect(), sr = s.getBoundingClientRect();
+          return { st: d.scrollTop, sl: d.scrollLeft, ov: getComputedStyle(d).overflowY, top: sr.top - dr.top, sel: getComputedStyle(d).userSelect }; }"""
+        s0 = pg.evaluate(STATE)
+        check("#desk is overflow: clip (never a scroll container) and user-select none", s0["ov"] == "clip" and s0["sel"] == "none", s0)
+        pg.evaluate("document.getElementById('desk').scrollTop = 300; document.getElementById('desk').scrollLeft = 40")
+        s1 = pg.evaluate(STATE)
+        check("a scripted desk.scrollTop = 300 does nothing (stays 0 0, the stack does not move)", s1["st"] == 0 and s1["sl"] == 0 and abs(s1["top"] - s0["top"]) < 0.01, s1)
+        pg.evaluate("document.getElementById('addBelow').focus()")
+        s2 = pg.evaluate(STATE)
+        check("focusing 'Add a page below' (off screen, bottom of the stack) does not scroll the desk", s2["st"] == 0 and abs(s2["top"] - s0["top"]) < 0.01, s2)
+        pg.evaluate("document.querySelectorAll('.sheet')[5].scrollIntoView()")
+        s3 = pg.evaluate(STATE)
+        check("scrollIntoView of page 6 does not scroll the desk either", s3["st"] == 0 and abs(s3["top"] - s0["top"]) < 0.01, s3)
+        pg.evaluate("document.getElementById('desk').blur(); document.activeElement && document.activeElement.blur()")
+        # and the ink still lands under the pen after all that
+        pg.wait_for_timeout(700)
+        n0 = strokes()
+        per0 = pg.evaluate("(ids) => ids.map((id) => window.__pw.ink.strokesOf(id).length)", ids)
+        pen("mousePressed", 500, 400); pen("mouseMoved", 540, 410); pen("mouseReleased", 580, 420); pg.wait_for_timeout(200)
+        land = pg.evaluate("""([ids, per0]) => {
+          const k = ids.findIndex((id, i) => window.__pw.ink.strokesOf(id).length > per0[i]);   // the page that got the stroke
+          if (k < 0) return null;
+          const s = window.__pw.ink.strokesOf(ids[k]), last = s[s.length - 1];
+          const sh = document.querySelector(`.sheet[data-id="${ids[k]}"]`), r = sh.getBoundingClientRect(), sc = r.width / sh.offsetWidth, p = last.data.points[0];
+          return [r.left + p[0] * sc - 500, r.top + p[1] * sc - 400]; }""", [ids, per0])
+        check("a pen stroke after those triggers lands under the pen (0 px off)", strokes() == n0 + 1 and land is not None and abs(land[0]) < 1 and abs(land[1]) < 1, land)
+        # the readout's view line (?dbg=1): scroll 0 0 and drift 0 0
+        ctx2 = b.new_context(viewport={"width": 1280, "height": 800}, has_touch=True); pg2 = ctx2.new_page()
+        pg2.goto(LOCAL + "&dbg=1"); ready(pg2); pg2.evaluate(SEED); pg2.reload(); ready(pg2)
+        pg2.locator(".nrow").first.click(); pg2.wait_for_selector("#noteView:not([hidden])"); pg2.wait_for_timeout(400)
+        vline = pg2.evaluate("document.getElementById('dbgView').textContent")
+        check("?dbg=1 shows a view line 'scroll 0 0 | view x y zN | drift 0 0'", re.fullmatch(r"scroll 0 0 \| view -?\d+ -?\d+ z\d\.\d\d \| drift -?0 -?0", vline) is not None, vline)
+        check("the view line sits in its own box above the events box, inside the desk", pg2.evaluate("""() => { const v = document.getElementById('dbgView'), e = document.getElementById('dbg');
+          return v.parentNode.id === 'desk' && v.getBoundingClientRect().bottom <= e.getBoundingClientRect().top && getComputedStyle(v).pointerEvents === 'none'; }"""))
+        ctx2.close()
         check("no page errors", not errs, errs)
         b.close()
 finally:

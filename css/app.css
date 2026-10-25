@@ -264,7 +264,11 @@ input.rename {
 #noteName input.rename { height: 34px; font-weight: 700; font-size: 16px; max-width: 420px; }
 #barCount { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 13px; color: var(--muted); min-width: 40px; text-align: center; }
 #noteBody { flex: 1; position: relative; min-height: 0; }
-#desk { position: absolute; inset: 0; overflow: hidden; touch-action: none; background: var(--note-desk); }
+/* overflow: clip, NOT hidden: a hidden box is still a scroll container that Chrome scrolls by itself (a focus, a
+   long press, scrollIntoView), and the pen maths in js/page.js only know the stack's transform, so every stroke then
+   lands a fixed distance from the pen (her tablet, 25 Oct). clip can never scroll; hidden stays for old browsers. */
+#desk { position: absolute; inset: 0; overflow: hidden; overflow: clip; touch-action: none; background: var(--note-desk);
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 #stack { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
 .sheet {
   position: absolute; background: var(--paper); border-radius: 2px;

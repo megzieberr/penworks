@@ -171,6 +171,11 @@ export function scrollToPage(index) {
 // after the desk changes size (full screen, header hidden): keep the current page in place
 export function relayout() { const i = Math.max(0, cur); fit(i); }
 
+// the desk must never scroll natively (css overflow: clip); if a browser scrolled it anyway, the stack would show
+// shifted while the pen maths below still use the transform alone: every stroke off by that scroll. Reset it.
+export function unscroll() { if (desk.scrollTop || desk.scrollLeft) { desk.scrollTop = 0; desk.scrollLeft = 0; } }
+export function deskScroll() { return [desk.scrollTop, desk.scrollLeft]; }
+
 export function current() { return cur; }
 export function view() { if (raf) clampView(); return { ...V }; }
 
@@ -253,7 +258,7 @@ export function initPage(els) {
     return true;
   }
   desk.addEventListener('pointerdown', (e) => {
-    stopGlide(); settle();                                                 // any touch, pen or click holds the stack where it is
+    stopGlide(); settle(); unscroll();                                     // any touch, pen or click holds the stack where it is
     if (e.pointerType === 'pen' || e.pointerType === 'mouse') {           // the S Pen and the mouse draw
       if (e.pointerType === 'pen') penSeen = performance.now();
       if (e.button > 0 && e.button !== 2) return;                         // button 2: the pen button / right mouse (a grab)
@@ -324,6 +329,7 @@ export function initPage(els) {
   // or puts a floating one down (js/ink.js, press). A finger's long press never does either.
   desk.addEventListener('contextmenu', (e) => {
     e.preventDefault();
+    unscroll();
     if (e.pointerType === 'touch' || touches.size || !ink || !ink.press) return;
     R = desk.getBoundingClientRect();
     ink.press(e);
@@ -332,4 +338,5 @@ export function initPage(els) {
     if (ink && ink.drop && e.pointerType !== 'touch' && !desk.contains(e.target)) ink.drop();
   });
   window.addEventListener('resize', () => { R = null; stopGlide(); if (L.tops.length) relayout(); });
+  desk.addEventListener('scroll', () => { unscroll(); R = null; }, { passive: true });   // cannot fire with overflow: clip; a fallback only
 }
