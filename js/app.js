@@ -228,7 +228,7 @@ function openNote(id, index = 0) {
 }
 function closeNote(skipHistory) {
   if (document.body.classList.contains('full')) exitFull();
-  closePanel();
+  closePanel(); ink.clearSelection();
   if (S.openNote) { delete S.hist[S.openNote]; tidyInk(); }    // closing a note ends its undo history
   S.openNote = null; S.listOpen = false; S.renaming = null; remember();
   document.body.classList.remove('noteMode');
@@ -767,7 +767,7 @@ function wire() {
   ink.initInk({ doOp, desk: $('desk') });
   initTray();
   initPage({ desk: $('desk'), stack: $('stack'), addBelow: $('addBelow'),
-             onCurrent: (i) => { S.cur = Math.max(0, i); updateCount(); },
+             onCurrent: (i) => { S.cur = Math.max(0, i); updateCount(); ink.clearSelection(); },   // a new page clears the selection
              onSheets: ink.attach, ink: ink.hook });
   $('loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();

@@ -207,7 +207,7 @@ export function initPage(els) {
   ({ desk, stack, addBelow } = els);
   if (els.onCurrent) onCurrent = els.onCurrent;
   if (els.onSheets) onSheets = els.onSheets;
-  if (els.ink) ink = els.ink;                       // { down(e), move(events), up(e, cancelled) }
+  if (els.ink) ink = els.ink;                       // { down(e), move(events), up(e, cancelled), hover(e) }
   const touches = new Map();
   let pinch = null, drag = null, penSeen = -1e9, inkId = null;
   const now = () => performance.now();
@@ -272,6 +272,7 @@ export function initPage(els) {
       ink.move(all.length ? all : [e]);
       return;
     }
+    if (inkId === null && e.pointerType !== 'touch' && ink && ink.hover) ink.hover(e);   // the pen hovering: shape handles show
     if (e.pointerType === 'pen' || inkId !== null) return;
     if (!touches.has(e.pointerId)) return;
     touches.set(e.pointerId, pt(e));

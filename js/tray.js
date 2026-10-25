@@ -1,10 +1,10 @@
-// PenWorks pen tray (right edge): her 13 colours, a spare spectrum slot, pen, highlighter, stroke eraser, area eraser, two
-// empty slots for restyle and rectangle select (Part B), a gap, undo, redo, and an empty slot for the
-// Tools button (U5). One icon per tool, no labels. The pen and the highlighter each open a small
-// panel when tapped while already selected. Each remembers its own colour, width and dash or opacity.
+// PenWorks pen tray (right edge): her 13 colours, a spare spectrum slot, pen, highlighter, stroke eraser, area eraser,
+// restyle, rectangle select, a gap, undo, redo, and an empty slot for the Tools button (U5). One icon per tool, no
+// labels. The pen and the highlighter each open a small panel when tapped while already selected.
+// Each remembers its own colour, width and dash or opacity.
 // Colours: hold a swatch (350 ms, still) and drag it up or down to put her 13 in her order; the order is
 // kept on the device. Under them a 14th spare slot (rainbow ring) holds any colour picked from the honeycomb.
-import { setTool } from './ink.js';
+import { setTool, setStyles } from './ink.js';
 
 // Megan's own 13 (25 Oct 17:43: Sky blue out, Light green and Teal in), in her order: [hex, name].
 // This stays the DEFAULT order.
@@ -36,9 +36,11 @@ const ICONS = {
   pen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 19.5l1.1-4.4L15.4 5.3a2 2 0 0 1 2.8 0l.5.5a2 2 0 0 1 0 2.8L8.9 18.4z"/><path d="M13.6 7.1l3.3 3.3"/></svg>',
   highlighter: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8.6 13.4l6.9-6.9a2 2 0 0 1 2.8 0l.2.2a2 2 0 0 1 0 2.8l-6.9 6.9z"/><path d="M8.6 13.4L6.2 15.8l2 2 2.4-2.4"/><path d="M6.2 15.8L4 20h4.2"/></svg>',
   eraser: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8.6 19.5L4 14.9a1.6 1.6 0 0 1 0-2.3l7.6-7.6a1.6 1.6 0 0 1 2.3 0l5.6 5.6a1.6 1.6 0 0 1 0 2.3l-7 7z"/><path d="M8.3 8.7l6.4 6.4"/><path d="M12.5 19.5H20"/></svg>',
+  restyle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18.5 4.5a2.1 2.1 0 0 1 0 3L12 14l-3-3 6.5-6.5a2.1 2.1 0 0 1 3 0z"/><path d="M9 11c-2.2 0-3.6 1.4-3.6 3.4 0 1.6-.8 2.6-2 3.1 1.2 1.4 3.3 1.9 5.2 1.4 2.1-.6 3.4-2.3 3.4-4.4z"/></svg>',
+  select: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h3M10 4h4M17 4h3v3M20 10v4M20 17v3h-3M14 20h-4M7 20H4v-3M4 14v-4"/></svg>',
   area: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7.4 15L3.6 11.2a1.3 1.3 0 0 1 0-1.8l5.8-5.8a1.3 1.3 0 0 1 1.8 0l3.8 3.8a1.3 1.3 0 0 1 0 1.8L9.2 15z"/><path d="M6.6 6.4l5 5"/><circle cx="16.8" cy="16.8" r="4.6"/></svg>',
 };
-const TITLES = { pen: 'Pen', highlighter: 'Highlighter', eraser: 'Stroke eraser', area: 'Area eraser' };
+const TITLES = { pen: 'Pen', highlighter: 'Highlighter', eraser: 'Stroke eraser', area: 'Area eraser', restyle: 'Restyle', select: 'Select' };
 
 let st, tray, panel, picker, colours, specBtn, btns = {}, swatches = [];
 
@@ -80,6 +82,7 @@ function keep() {
   try { localStorage.setItem(KEY, JSON.stringify({ tool: st.lastInk, pen: st.pen, highlighter: st.highlighter, order: st.order, spec: st.spec })); } catch (_) { /* ignore */ }
 }
 function push() {
+  setStyles(st.pen, st.highlighter);                             // restyle hands out these
   setTool(st.tool, INK.includes(st.tool) ? st[st.tool] : null);
   paint();
 }
@@ -96,6 +99,7 @@ function paint() {
 }
 
 function useColour(c) {
+  if (st.tool === 'restyle') { st[st.lastInk].colour = c; keep(); push(); return; }   // restyle stays: the colour it hands out changes
   if (!INK.includes(st.tool)) st.tool = st.lastInk;              // after an eraser, a colour hands back the last ink tool
   st[st.tool].colour = c;
   keep(); push();
@@ -352,12 +356,11 @@ export function initTray() {
   colours.append(...swatches, specBtn);
   colours.addEventListener('contextmenu', (e) => e.preventDefault());   // a long press never opens a menu
   const tools = el('div', { class: 'tools' });
-  for (const t of ['pen', 'highlighter', 'eraser', 'area']) {
+  for (const t of ['pen', 'highlighter', 'eraser', 'area', 'restyle', 'select']) {
     btns[t] = el('button', { type: 'button', class: 'ib tool', id: 'tool-' + t, 'data-tool': t, 'aria-label': TITLES[t], title: TITLES[t],
       html: ICONS[t], onclick: () => pickTool(t) });
     tools.append(btns[t]);
   }
-  tools.append(el('div', { class: 'slot', 'data-slot': 'restyle' }), el('div', { class: 'slot', 'data-slot': 'select' }));
   tray.textContent = '';
   tray.append(colours, tools, el('div', { class: 'gap' }), undo, redo, el('div', { class: 'slot', 'data-slot': 'tools' }));
   panel = el('div', { id: 'toolPanel', class: 'panel', hidden: true, role: 'dialog', 'aria-label': 'Tool settings' });

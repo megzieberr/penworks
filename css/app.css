@@ -276,6 +276,17 @@ input.rename {
   position: absolute; left: 0; top: 0; z-index: 4; border-radius: 50%; pointer-events: none;
   border: 1.5px solid rgba(38,42,48,.45); background: rgba(255,255,255,.35); box-shadow: 0 0 0 1px rgba(255,255,255,.6);
 }
+#handleRing {   /* a shape's handle under the hovering pen: a small ring, the same size at every zoom */
+  position: absolute; left: -8px; top: -8px; width: 16px; height: 16px; z-index: 4; border-radius: 50%; pointer-events: none;
+  border: 2px solid #2F4BB8; background: rgba(255,255,255,.6); box-shadow: 0 0 0 1px rgba(255,255,255,.8);
+}
+/* the selection's two chips above its dashed box (on the white paper, so fixed colours in both modes) */
+.selChips { position: absolute; z-index: 3; display: flex; gap: 6px; transform-origin: 0 0; white-space: nowrap; }
+.selChips .chip {
+  height: 34px; padding: 0 14px; border: 0; border-radius: 17px; background: #2F4BB8; color: #FFFFFF; font: inherit;
+  font-weight: 700; font-size: 14px; cursor: pointer; box-shadow: 0 2px 8px rgba(20,22,26,.18); touch-action: manipulation;
+}
+.selChips .chip[data-act="delete"] { background: #FFFFFF; color: #B3261E; box-shadow: inset 0 0 0 1.5px #B3261E, 0 2px 8px rgba(20,22,26,.18); }
 #addBelow {
   position: absolute; left: 50%; transform: translateX(-50%); height: 44px; padding: 0 18px; border: 1px dashed var(--desk-dash);
   border-radius: 8px; background: transparent; color: var(--desk-text); font-weight: 700; font-size: 15px; cursor: pointer; white-space: nowrap;

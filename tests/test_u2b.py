@@ -1,0 +1,521 @@
+# PenWorks U2 B checks (shapes and selection): headless Playwright (Python), same style as tests/test_u2a.py.
+# Run: python tests/test_u2b.py               (local mode only: ?local=1, Supabase is never touched)
+#      add --shots <folder> for small screenshots
+# Every group seeds its own folder > notes > pages into the localStorage twin, draws with the mouse, and reads
+# the stroke records and the SVG layers: hold-to-snap, grabbable handles, restyle, rectangle select, erasers.
+import sys, subprocess, time, pathlib, re, json, math
+from playwright.sync_api import sync_playwright
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+PORT = 8779
+BASE = f"http://127.0.0.1:{PORT}/"
+LOCAL = BASE + "?local=1"
+SHOTS = pathlib.Path(sys.argv[sys.argv.index("--shots") + 1]) if "--shots" in sys.argv else None
+
+res = []
+group = ["?"]
+info_lines = []
+def check(n, ok, info=""):
+    res.append((group[0], n, bool(ok), info))
+
+SEED_JS = """() => {
+  localStorage.clear();
+  const t = '2026-10-25T10:00:00Z', P = (id, n, k) => ({ id, note_id: n, position: k, orientation: 'portrait', background: 'grid', deleted_at: null, created_at: t, updated_at: t });
+  const N = (id, name, u) => ({ id, folder_id: 'f1', name, pinned: false, cover_path: null, deleted_at: null, created_at: t, updated_at: u });
+  localStorage.setItem('penworks.local.v2', JSON.stringify({
+    folders: [{ id: 'f1', parent_id: null, name: 'U2B', colour: null, position: 0, deleted_at: null, created_at: t, updated_at: t }],
+    notes: [N('n1', 'Snap', '2026-10-25T10:06:00Z'), N('n2', 'Handles', '2026-10-25T10:05:00Z'), N('n3', 'Restyle', '2026-10-25T10:04:00Z'),
+            N('n4', 'Select', '2026-10-25T10:03:00Z'), N('n5', 'Erase', '2026-10-25T10:02:00Z')],
+    pages: [P('p1', 'n1', 0), P('p2', 'n2', 0), P('p3', 'n3', 0), P('p4', 'n4', 0), P('p4b', 'n4', 1), P('p5', 'n5', 0)] }));
+}"""
+STROKES_JS = "(id) => window.__pw.ink.strokesOf(id)"
+STORED_JS = "(id) => JSON.parse(localStorage.getItem('pw.strokes.' + id) || 'null')"
+EL_JS = """([i, id]) => { const e = document.querySelector(`#stack .sheet[data-index="${i}"] svg.ink [data-id="${id}"]`);
+  if (!e) return null;
+  const a = (k) => e.getAttribute(k);
+  return { tag: e.tagName, parent: e.parentNode.getAttribute('class'), gp: e.parentNode.parentNode.getAttribute('class'), stroke: a('stroke'),
+    width: a('stroke-width'), dash: a('stroke-dasharray'), fill: a('fill'), type: e.dataset.type, transform: a('transform'),
+    opacity: e.parentNode.getAttribute('opacity'), kids: [...e.children].map(c => c.tagName) }; }"""
+SEL_JS = "() => window.__pw.ink.selection()"
+SELUI_JS = """() => { const g = document.querySelector('svg.ink g.sel'), c = document.querySelector('.selChips');
+  return { g: !!g, box: g ? !!g.querySelector('rect.selbox') : false, dash: g && g.querySelector('rect.selbox') ? g.querySelector('rect.selbox').getAttribute('stroke-dasharray') : null,
+    corners: g ? g.querySelectorAll('circle.selh').length : 0,
+    chips: c ? [...c.querySelectorAll('button')].map(b => b.textContent) : [], chipsShown: c ? c.getBoundingClientRect().height > 0 : false }; }"""
+
+def ready(pg): pg.wait_for_selector("body[data-ready='1']", timeout=20000)
+def idle(pg): pg.evaluate("window.__pw.idle()"); pg.wait_for_timeout(40)
+def strokes(pg, pid): return pg.evaluate(STROKES_JS, pid)
+def stored(pg, pid): return pg.evaluate(STORED_JS, pid)
+def elinfo(pg, i, sid): return pg.evaluate(EL_JS, [i, sid])
+def sel(pg): return pg.evaluate(SEL_JS)
+def selui(pg): return pg.evaluate(SELUI_JS)
+def nrow(pg, name): return pg.locator(".nrow").filter(has=pg.locator(".name", has_text=re.compile("^" + re.escape(name) + "$"))).first
+def back(pg): pg.click("#backBtn"); pg.wait_for_selector("#listView:not([hidden])")
+def open_note(pg, name):
+    if pg.locator("#noteView").is_visible(): return          # a reload reopens the note she was in
+    nrow(pg, name).click(); pg.wait_for_selector("#noteView:not([hidden])"); pg.wait_for_timeout(80)
+def go_page(pg, i):
+    if pg.locator("#pageList").is_hidden(): pg.click("#listBtn")
+    pg.wait_for_selector("#pageList:not([hidden])")
+    pg.locator(f"#plThumbs .thumbP[data-index='{i}']").click(); pg.wait_for_timeout(120)
+def zoom(pg): return float(pg.evaluate("document.getElementById('stack').dataset.zoom"))
+def screen(pg, i, x, y):
+    b = pg.locator(f"#stack .sheet[data-index='{i}']").bounding_box(); z = zoom(pg)
+    return b["x"] + x * z, b["y"] + y * z
+def draw(pg, i, pts, steps=6, hold=0):
+    sx, sy = screen(pg, i, *pts[0])
+    pg.mouse.move(sx, sy); pg.mouse.down()
+    for x, y in pts[1:]:
+        tx, ty = screen(pg, i, x, y); pg.mouse.move(tx, ty, steps=steps)
+    if hold: pg.wait_for_timeout(hold)
+    pg.mouse.up(); pg.wait_for_timeout(40)
+def tap_page(pg, i, x, y):
+    sx, sy = screen(pg, i, x, y); pg.mouse.move(sx, sy); pg.mouse.down(); pg.mouse.up(); pg.wait_for_timeout(40)
+def drag_page(pg, i, a, b, steps=10):
+    sx, sy = screen(pg, i, *a); pg.mouse.move(sx, sy); pg.mouse.down()
+    tx, ty = screen(pg, i, *b); pg.mouse.move(tx, ty, steps=steps); pg.mouse.up(); pg.wait_for_timeout(40)
+def last(pg, pid): s = strokes(pg, pid); return s[-1] if s else None
+def U(pg): return pg.evaluate("window.__pw.S.hist[window.__pw.S.openNote] ? window.__pw.S.hist[window.__pw.S.openNote].u.length : 0")
+def undo(pg): pg.click("#undoBtn"); pg.wait_for_timeout(30)
+def redo(pg): pg.click("#redoBtn"); pg.wait_for_timeout(30)
+def tool(pg, t): pg.click(f"#tool-{t}"); pg.wait_for_timeout(20)
+def near(a, b, tol): return math.hypot(a[0] - b[0], a[1] - b[1]) <= tol
+def wobble(k, amp=2.0): return amp * math.sin(k * 1.7) * math.cos(k * 0.6)
+def fresh(b, url=LOCAL, **kw):
+    ctx = b.new_context(viewport={"width": 1280, "height": 1300}, **kw)   # tall: the whole A4 page on screen
+    pg = ctx.new_page(); errs = []
+    pg.on("pageerror", lambda e: errs.append(str(e)))
+    pg.goto(url); ready(pg)
+    pg.evaluate(SEED_JS); pg.reload(); ready(pg)
+    return ctx, pg, errs
+
+# rough shapes, in page px (zoom 1)
+def rough_line(y=200, x0=100, x1=420): return [(x0 + (x1 - x0) * k / 12, y + wobble(k, 2.5) + k * 0.4) for k in range(13)]
+def rough_square(x0=150, y0=380, s=200):
+    pts = []
+    for (ax, ay), (bx, by) in [((x0, y0), (x0 + s, y0)), ((x0 + s, y0), (x0 + s, y0 + s)), ((x0 + s, y0 + s), (x0, y0 + s)), ((x0, y0 + s), (x0, y0))]:
+        for k in range(8): pts.append((ax + (bx - ax) * k / 8 + wobble(len(pts), 2.2), ay + (by - ay) * k / 8 + wobble(len(pts) + 3, 2.2)))
+    pts.append((x0 + 3, y0 + 2)); return pts
+def rough_circle(cx=560, cy=480, rx=90, ry=None, n=36):
+    ry = ry or rx
+    return [(cx + rx * (1 + wobble(k, 0.04)) * math.cos(2 * math.pi * k / n - math.pi / 2), cy + ry * (1 + wobble(k + 2, 0.04)) * math.sin(2 * math.pi * k / n - math.pi / 2)) for k in range(n + 1)]
+def rough_triangle():
+    A, B, C = (150, 700), (350, 700), (250, 880)
+    pts = []
+    for (ax, ay), (bx, by) in [(A, B), (B, C), (C, A)]:
+        for k in range(8): pts.append((ax + (bx - ax) * k / 8 + wobble(len(pts), 1.8), ay + (by - ay) * k / 8 + wobble(len(pts) + 1, 1.8)))
+    pts.append((A[0] + 2, A[1] + 1)); return pts
+def rough_arrow(y=980, x0=120, x1=420):
+    return [(x0 + (x1 - x0) * k / 8, y + wobble(k, 1.5)) for k in range(9)] + [(x1 - 24, y - 20), (x1, y), (x1 - 24, y + 20)]
+def squiggle(): return [(100 + 20 * k, 1060 + (18 if k % 2 else -18)) for k in range(12)]
+
+srv = subprocess.Popen([sys.executable, "-m", "http.server", str(PORT), "--bind", "127.0.0.1"], cwd=str(ROOT),
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+time.sleep(1.2)
+shots = 0
+try:
+    with sync_playwright() as pw:
+        b = pw.chromium.launch()
+        ctx, pg, errs = fresh(b)
+
+        # ------------------------------------------------------------ the tray: the two new tools
+        group[0] = "tray"
+        open_note(pg, "Snap")
+        order = pg.evaluate("""[...document.getElementById('tray').querySelectorAll(':scope > *, :scope > .tools > *')]
+          .map(e => e.dataset.tool || e.dataset.slot || e.id || e.className)""")
+        check("order: colours, pen, highlighter, stroke eraser, area eraser, restyle, select, gap, undo, redo, Tools slot",
+              order == ["colours", "tools", "pen", "highlighter", "eraser", "area", "restyle", "select", "gap", "undoBtn", "redoBtn", "tools"], order)
+        tb = pg.evaluate("""['restyle', 'select'].map(t => { const e = document.getElementById('tool-' + t), r = e.getBoundingClientRect();
+          return [e.tagName, e.className, e.title, e.getAttribute('aria-label'), Math.round(r.width), Math.round(r.height), !!e.querySelector('svg'), e.textContent.trim()]; })""")
+        pen_r = pg.evaluate("(() => { const r = document.getElementById('tool-pen').getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; })()")
+        check("restyle and select are real tool buttons: icon only, a title each, the pen's size",
+              all(t[0] == "BUTTON" and "tool" in t[1] and t[2] and t[3] and [t[4], t[5]] == pen_r and t[6] and t[7] == "" for t in tb), [tb, pen_r])
+        check("their titles: Restyle, Select", [t[2] for t in tb] == ["Restyle", "Select"], tb)
+        check("only the Tools slot is still an empty slot", pg.evaluate("[...document.querySelectorAll('#tray .slot')].map(s => s.dataset.slot + ':' + s.children.length)") == ["tools:0"])
+        tool(pg, "restyle")
+        on = pg.evaluate("[...document.querySelectorAll('#tray .tool.on')].map(e => e.dataset.tool)")
+        tint = pg.evaluate("getComputedStyle(document.getElementById('tool-restyle')).backgroundColor")
+        pen_tint = pg.evaluate("(() => { document.getElementById('tool-pen').click(); return getComputedStyle(document.getElementById('tool-pen')).backgroundColor; })()")
+        check("restyle selected shows the same soft tint as the pen", on == ["restyle"] and tint == pen_tint and tint != "rgba(0, 0, 0, 0)", [on, tint, pen_tint])
+        check("tray still fits (no tray scroll)", pg.evaluate("(() => { const t = document.getElementById('tray'); return t.scrollHeight <= t.clientHeight; })()"))
+        check("HOLD_MS default is 500", pg.evaluate("import('./js/ink.js').then(m => m.HOLD_MS)") == 500)
+
+        # ------------------------------------------------------------ hold-to-snap
+        group[0] = "snap"
+        tool(pg, "pen")
+        u0 = U(pg)
+        L0 = rough_line()
+        draw(pg, 1, L0, hold=650)
+        r = last(pg, "p1")
+        check("a nearly straight stroke held 600+ ms becomes shape/line", r and r["kind"] == "shape" and r["data"]["type"] == "line", r and [r["kind"], r["data"]])
+        if r and r["kind"] == "shape":
+            d = r["data"]
+            check("the line's ends sit near the stroke's ends", near((d["x1"], d["y1"]), L0[0], 6) and near((d["x2"], d["y2"]), L0[-1], 6), [d, L0[0], L0[-1]])
+            check("same colour, width and dash as the pen", r["style"] == {"colour": "#000000", "width": 2.5, "dash": "solid", "opacity": 1}, r["style"])
+            e = elinfo(pg, 1, r["id"])
+            check("drawn as an SVG <line> inside g.pen", e and e["tag"] == "line" and e["parent"] == "pen" and e["stroke"] == "#000000" and e["width"] == "2.5" and e["fill"] == "none", e)
+            check("one stroke on the page (the freehand is gone)", len(strokes(pg, "p1")) == 1)
+            pg.wait_for_timeout(200)
+            check("after the 150 ms fade only the shape is in the layer", pg.evaluate("document.querySelectorAll('#stack .sheet[data-index=\"1\"] svg.ink g.pen > *').length") == 1)
+        check("a snap is ONE undo step", U(pg) == u0 + 1, [u0, U(pg)])
+        undo(pg)
+        check("undo takes the shape away", len(strokes(pg, "p1")) == 0)
+        redo(pg)
+        check("redo brings it back", len(strokes(pg, "p1")) == 1 and last(pg, "p1")["kind"] == "shape")
+
+        draw(pg, 1, rough_square(), steps=3, hold=650)
+        r = last(pg, "p1")
+        check("a rough square held: shape/rect with 4 points", r["kind"] == "shape" and r["data"]["type"] == "rect" and len(r["data"]["points"]) == 4, [r["kind"], r["data"]])
+        if r["data"].get("type") == "rect":
+            P = r["data"]["points"]
+            check("the square is straightened (sides upright) and near its corners", P[0][1] == P[1][1] and P[1][0] == P[2][0] and P[2][1] == P[3][1] and P[3][0] == P[0][0]
+                  and near(P[0], (150, 380), 8) and near(P[2], (350, 580), 8), P)
+            check("drawn as an SVG <polygon>", elinfo(pg, 1, r["id"])["tag"] == "polygon")
+        draw(pg, 1, rough_circle(), steps=2, hold=650)
+        r = last(pg, "p1")
+        check("a rough circle held: circle", r["kind"] == "shape" and r["data"]["type"] == "circle", [r["kind"], r["data"]])
+        if r["data"].get("type") == "circle":
+            check("centre and radius close", near((r["data"]["cx"], r["data"]["cy"]), (560, 480), 6) and abs(r["data"]["r"] - 90) <= 8, r["data"])
+            check("drawn as an SVG <circle>", elinfo(pg, 1, r["id"])["tag"] == "circle")
+        draw(pg, 1, rough_circle(560, 760, 130, 65), steps=2, hold=650)
+        r = last(pg, "p1")
+        check("a long oval held: ellipse", r["kind"] == "shape" and r["data"]["type"] == "ellipse", [r["kind"], r["data"]])
+        draw(pg, 1, rough_triangle(), steps=3, hold=650)
+        r = last(pg, "p1")
+        check("a rough triangle held: triangle with 3 points", r["kind"] == "shape" and r["data"]["type"] == "triangle" and len(r["data"]["points"]) == 3, [r["kind"], r["data"]])
+        draw(pg, 1, rough_arrow(), steps=3, hold=650)
+        r = last(pg, "p1")
+        check("a line with a V at the end held: arrow", r["kind"] == "shape" and r["data"]["type"] == "arrow", [r["kind"], r["data"]])
+        if r["data"].get("type") == "arrow":
+            check("the arrow runs from the start to the V's tip", near((r["data"]["x1"], r["data"]["y1"]), (120, 980), 6) and near((r["data"]["x2"], r["data"]["y2"]), (420, 980), 6), r["data"])
+            e = elinfo(pg, 1, r["id"])
+            check("an arrow is a <g> with its line and an open head", e["tag"] == "g" and e["kids"] == ["line", "path"], e)
+        n = len(strokes(pg, "p1"))
+        draw(pg, 1, squiggle(), steps=3, hold=650)
+        r = last(pg, "p1")
+        check("a squiggle held: stays pen", len(strokes(pg, "p1")) == n + 1 and r["kind"] == "pen", r["kind"])
+        draw(pg, 1, [(450, 1080), (700, 1082)], steps=8, hold=0)
+        r = last(pg, "p1")
+        check("a straight stroke lifted at once: stays pen", r["kind"] == "pen", r["kind"])
+        draw(pg, 1, [(450, 1040), (700, 1042)], steps=8, hold=250)
+        check("a straight stroke held only 250 ms: stays pen", last(pg, "p1")["kind"] == "pen")
+        draw(pg, 1, [(30, 60), (40, 62)], steps=4, hold=650)
+        check("a short stroke (under 30 px) held: stays pen", last(pg, "p1")["kind"] == "pen")
+        tool(pg, "highlighter")
+        draw(pg, 1, [(450, 120), (720, 124)], steps=8, hold=650)
+        check("a highlighter stroke held: never snaps", last(pg, "p1")["kind"] == "highlighter")
+        tool(pg, "pen"); pg.click("#tool-pen")
+        pg.locator("#toolPanel .dash[data-dash='dashed']").click(); pg.mouse.click(400, 10)
+        draw(pg, 1, [(450, 300), (600, 302), (720, 303)], steps=6, hold=650)
+        r = last(pg, "p1")
+        e = elinfo(pg, 1, r["id"])
+        check("a dashed pen line snaps dashed (dasharray on the <line>)", r["kind"] == "shape" and r["style"]["dash"] == "dashed" and e["dash"], [r["style"], e])
+        pg.click("#tool-pen"); pg.locator("#toolPanel .dash[data-dash='solid']").click(); pg.mouse.click(400, 10)
+        idle(pg)
+        kinds = [(s["kind"], s["data"].get("type")) for s in stored(pg, "p1")]
+        pg.reload(); ready(pg); open_note(pg, "Snap")
+        k2 = [(s["kind"], s["data"].get("type")) for s in strokes(pg, "p1")]
+        tags = pg.evaluate("[...document.querySelectorAll('#stack .sheet[data-index=\"1\"] svg.ink g.pen > [data-type]')].map(e => e.dataset.type)")
+        check("reload keeps every shape and redraws it", k2 == kinds and sorted(tags) == sorted(t for k, t in kinds if k == "shape"), [kinds, tags])
+        if SHOTS and shots < 3:
+            SHOTS.mkdir(parents=True, exist_ok=True); pg.screenshot(path=str(SHOTS / "u2b-snap.png")); shots += 1
+        # the classifier on harder hand shapes (straight from ink.js, no drawing)
+        def cls(pts): r = pg.evaluate("(p) => import('./js/ink.js').then(m => m.classify(p))", [list(q) for q in pts]); return r and r["type"]
+        def turn(pts, a, c=(300, 300)):
+            ca, sa = math.cos(a), math.sin(a)
+            return [(c[0] + (x - c[0]) * ca - (y - c[1]) * sa, c[1] + (x - c[0]) * sa + (y - c[1]) * ca) for x, y in pts]
+        sq = rough_square(200, 200, 200)
+        tsq = turn(sq, math.radians(35))
+        check("a square turned 35 degrees: rect", cls(tsq) == "rect", cls(tsq))
+        r = pg.evaluate("(p) => import('./js/ink.js').then(m => m.classify(p))", [list(q) for q in tsq])
+        check("... stored as its 4 turned corners (not straightened)", r and len(r["points"]) == 4 and r["points"][0][1] != r["points"][1][1], r)
+        over = sq[:-1] + [(200 + 10 * k, 200 + wobble(k)) for k in range(1, 5)]
+        check("a square closed with an overshoot past the start: rect", cls(over) == "rect", cls(over))
+        ccw = [(300 + 70 * math.cos(-2 * math.pi * k / 30), 300 + 70 * math.sin(-2 * math.pi * k / 30)) for k in range(31)]
+        check("a circle started at 3 o'clock, drawn the other way: circle", cls(ccw) == "circle", cls(ccw))
+        check("an L stays freehand", cls([(100, 100), (100, 160), (100, 220), (140, 220), (180, 220)]) is None)
+        check("a tick (V) stays freehand", cls([(100, 200), (120, 220), (140, 240), (180, 180), (220, 120)]) is None)
+        check("a zigzag stays freehand", cls(squiggle()) is None)
+        check("a half circle (arc) stays freehand", cls([(300 + 80 * math.cos(math.pi * k / 20), 300 - 80 * math.sin(math.pi * k / 20)) for k in range(21)]) is None)
+        bow = [(100 + 15 * k, 300 + 6 * math.sin(math.pi * k / 20)) for k in range(21)]
+        check("a line with a slight bow (2% of its length): line", cls(bow) == "line", cls(bow))
+
+        ctx.close()
+
+        # the hold override
+        ctx, pg, errs2 = fresh(b, LOCAL + "&hold=1500")
+        check("?hold=1500 sets HOLD_MS", pg.evaluate("import('./js/ink.js').then(m => m.HOLD_MS)") == 1500)
+        open_note(pg, "Snap")
+        draw(pg, 1, rough_line(), hold=650)
+        check("with ?hold=1500 a 650 ms hold stays pen", last(pg, "p1")["kind"] == "pen")
+        draw(pg, 1, rough_line(400), hold=1650)
+        check("and a 1650 ms hold snaps", last(pg, "p1")["kind"] == "shape")
+        errs += errs2
+        ctx.close()
+
+        # ------------------------------------------------------------ grabbable handles
+        group[0] = "handles"
+        ctx, pg, e3 = fresh(b); errs += e3
+        open_note(pg, "Handles")
+        draw(pg, 1, rough_line(300, 150, 450), hold=650)
+        ln = last(pg, "p2")
+        check("a line to grab", ln["kind"] == "shape" and ln["data"]["type"] == "line", ln["data"])
+        d0 = dict(ln["data"]); u0 = U(pg)
+        hx, hy = screen(pg, 1, d0["x2"], d0["y2"])
+        pg.mouse.move(hx + 300, hy + 200); pg.wait_for_timeout(20)
+        far = pg.evaluate("(() => { const r = document.getElementById('handleRing'); return !!r && !r.hidden; })()")
+        pg.mouse.move(hx + 6, hy + 4); pg.wait_for_timeout(20)
+        ring = pg.evaluate("(() => { const r = document.getElementById('handleRing'); if (!r || r.hidden) return null; const b = r.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; })()")
+        check("handles are invisible until the pen is near", not far)
+        check("within 12 px a small ring shows on the handle", ring and near(ring, (hx, hy), 2), [ring, hx, hy])
+        pg.mouse.move(hx + 40, hy + 40); pg.wait_for_timeout(20)
+        check("the ring hides when the pen moves away", pg.evaluate("document.getElementById('handleRing').hidden"))
+        drag_page(pg, 1, (d0["x2"] + 5, d0["y2"] + 3), (d0["x2"] + 105, d0["y2"] + 3))
+        d1 = last(pg, "p2")["data"]
+        check("dragging the end 100 px moves x2 by 100, y2 stays", abs(d1["x2"] - (d0["x2"] + 100)) <= 1.5 and abs(d1["y2"] - d0["y2"]) <= 1.5 and d1["x1"] == d0["x1"] and d1["y1"] == d0["y1"], [d0, d1])
+        check("no new stroke drawn by the grab", len(strokes(pg, "p2")) == 1)
+        check("one undo step per drag", U(pg) == u0 + 1)
+        check("the <line> follows", elinfo(pg, 1, ln["id"]) and abs(float(pg.evaluate(f"document.querySelector('[data-id=\"{ln['id']}\"]').getAttribute('x2')")) - d1["x2"]) < 0.2)
+        undo(pg)
+        check("undo puts the end back", last(pg, "p2")["data"] == d0, [last(pg, "p2")["data"], d0])
+        redo(pg)
+        check("redo moves it again", last(pg, "p2")["data"] == d1)
+        draw(pg, 1, [(200, 280), (260, 330), (330, 290)], steps=5)
+        check("pen-down on the shape's middle (no handle) draws as normal", len(strokes(pg, "p2")) == 2 and last(pg, "p2")["kind"] == "pen")
+        draw(pg, 1, rough_circle(500, 650, 80), steps=2, hold=650)
+        c0 = last(pg, "p2")["data"]
+        drag_page(pg, 1, (c0["cx"] + c0["r"], c0["cy"]), (c0["cx"] + c0["r"] + 40, c0["cy"]))
+        c1 = last(pg, "p2")["data"]
+        check("a circle's E handle changes its radius (centre stays)", c1["type"] == "circle" and abs(c1["r"] - (c0["r"] + 40)) <= 1.5 and c1["cx"] == c0["cx"] and c1["cy"] == c0["cy"], [c0, c1])
+        draw(pg, 1, rough_square(150, 800, 160), steps=3, hold=650)
+        q0 = last(pg, "p2")
+        check("a rough square to grab", q0["kind"] == "shape" and q0["data"]["type"] == "rect", [q0["kind"], q0["data"]])
+        q0 = q0["data"].get("points") or [[0, 0]] * 4
+        drag_page(pg, 1, tuple(q0[2]), (q0[2][0] + 50, q0[2][1] + 30))
+        q1 = last(pg, "p2")["data"]["points"]
+        check("a rect's corner: the rect grows and stays upright, the opposite corner holds",
+              q1[0] == q0[0] and abs(q1[2][0] - (q0[2][0] + 50)) <= 1.5 and abs(q1[2][1] - (q0[2][1] + 30)) <= 1.5 and q1[1][0] == q1[2][0] and q1[3][1] == q1[2][1] and q1[1][1] == q1[0][1], [q0, q1])
+        tool(pg, "highlighter")
+        n = len(strokes(pg, "p2"))
+        drag_page(pg, 1, (c1["cx"], c1["cy"] - c1["r"]), (c1["cx"] + 60, c1["cy"] - c1["r"] - 40))
+        check("the highlighter never grabs: it draws", len(strokes(pg, "p2")) == n + 1 and last(pg, "p2")["kind"] == "highlighter")
+        ctx.close()
+
+        # ------------------------------------------------------------ restyle
+        group[0] = "restyle"
+        ctx, pg, e4 = fresh(b); errs += e4
+        open_note(pg, "Restyle")
+        draw(pg, 1, [(100, 200), (250, 210), (400, 200)])
+        draw(pg, 1, [(100, 300), (250, 310), (400, 300)])
+        draw(pg, 1, [(100, 400), (250, 410), (400, 400)])
+        A, B, C = [s["id"] for s in strokes(pg, "p3")]
+        old = strokes(pg, "p3")[0]["style"]
+        pg.click("#tray .sw[data-colour='#FF3636']")
+        pg.click("#tool-pen")                                  # already selected: the panel opens
+        for _ in range(7): pg.locator("#toolPanel [aria-label='Width bigger']").click()
+        pg.locator("#toolPanel .dash[data-dash='dashed']").click()
+        pg.mouse.click(400, 10)
+        st = pg.evaluate("window.__pw.tray()")["pen"]
+        check("the pen is set to red, width 6, dashed", st == {"colour": "#FF3636", "width": 6, "dash": "dashed"}, st)
+        tool(pg, "restyle")
+        u0 = U(pg)
+        tap_page(pg, 1, 250, 211)
+        s = {x["id"]: x for x in strokes(pg, "p3")}
+        check("a tap on a stroke: it takes red, 6, dashed", s[A]["style"] == {"colour": "#FF3636", "width": 6, "dash": "dashed", "opacity": 1}, s[A]["style"])
+        check("the others are untouched", s[B]["style"] == old and s[C]["style"] == old)
+        e = elinfo(pg, 1, A)
+        check("its path shows it (stroke, width, dasharray)", e["stroke"] == "#FF3636" and e["width"] == "6" and e["dash"] == "18 18", e)
+        check("the points did not change", s[A]["data"]["points"][0] == [100, 200])
+        check("one undo step per tap", U(pg) == u0 + 1)
+        undo(pg)
+        check("undo restores the old style", {x["id"]: x for x in strokes(pg, "p3")}[A]["style"] == old)
+        redo(pg)
+        check("redo restyles again", {x["id"]: x for x in strokes(pg, "p3")}[A]["style"]["colour"] == "#FF3636")
+        u1 = U(pg)
+        tap_page(pg, 1, 250, 211)
+        check("restyling an already restyled stroke adds no step", U(pg) == u1)
+        tap_page(pg, 1, 600, 800)
+        check("a tap on empty paper adds no step", U(pg) == u1)
+        pg.click("#tray .sw[data-colour='#2CB05F']")
+        on = pg.evaluate("[...document.querySelectorAll('#tray .tool.on')].map(e => e.dataset.tool)")
+        check("a colour tap with restyle on: restyle stays, the pen's colour changes", on == ["restyle"] and pg.evaluate("window.__pw.tray()")["pen"]["colour"] == "#2CB05F", on)
+        drag_page(pg, 1, (250, 280), (250, 430), steps=12)
+        s = {x["id"]: x for x in strokes(pg, "p3")}
+        check("a drag across two strokes restyles both", s[B]["style"]["colour"] == "#2CB05F" and s[C]["style"]["colour"] == "#2CB05F" and s[A]["style"]["colour"] == "#FF3636")
+        check("... in one undo step", U(pg) == u1 + 1)
+        undo(pg)
+        s = {x["id"]: x for x in strokes(pg, "p3")}
+        check("one undo puts both back", s[B]["style"] == old and s[C]["style"] == old)
+        # a highlighter stroke takes the highlighter's settings and moves to its opacity group
+        tool(pg, "highlighter")
+        draw(pg, 1, [(100, 600), (400, 604)])
+        H = last(pg, "p3")["id"]
+        pg.click("#tool-highlighter")
+        pg.locator("#toolPanel [aria-label='Opacity bigger']").click(); pg.locator("#toolPanel [aria-label='Opacity bigger']").click()
+        pg.mouse.click(400, 10)
+        pg.click("#tray .sw[data-colour='#0D0DFF']")
+        tool(pg, "restyle")
+        tap_page(pg, 1, 250, 602)
+        h = {x["id"]: x for x in strokes(pg, "p3")}[H]
+        e = elinfo(pg, 1, H)
+        check("a highlighter stroke takes the highlighter's colour, width and opacity", h["style"] == {"colour": "#0D0DFF", "width": 18, "dash": "solid", "opacity": 0.6}, h["style"])
+        check("... and sits in the 0.6 .hlo group with no own opacity", e["parent"] == "hlo" and e["gp"] == "hl" and e["opacity"] == "0.6", e)
+        check("the empty 0.4 group went", pg.evaluate("document.querySelectorAll('#stack .sheet[data-index=\"1\"] svg.ink g.hlo[data-opacity=\"0.4\"]').length") == 0)
+        undo(pg)
+        check("undo puts it back in the 0.4 group", elinfo(pg, 1, H)["opacity"] == "0.4")
+        tool(pg, "pen")
+        draw(pg, 1, rough_circle(560, 850, 70), steps=2, hold=650)
+        S_ = last(pg, "p3")
+        tool(pg, "restyle")
+        tap_page(pg, 1, 560 + 70, 850)
+        s2 = {x["id"]: x for x in strokes(pg, "p3")}[S_["id"]]
+        check("a shape restyles too (pen settings)", S_["kind"] == "shape" and s2["style"]["colour"] == "#2CB05F" and s2["style"]["width"] == 6 and s2["style"]["dash"] == "dashed", s2["style"])
+        check("... and stays the same shape", s2["data"] == S_["data"] and elinfo(pg, 1, S_["id"])["tag"] == "circle")
+        ctx.close()
+
+        # ------------------------------------------------------------ rectangle select
+        group[0] = "select"
+        ctx, pg, e5 = fresh(b); errs += e5
+        open_note(pg, "Select")
+        draw(pg, 1, [(150, 200), (250, 220), (350, 200)])
+        draw(pg, 1, [(150, 280), (250, 300), (350, 280)])
+        draw(pg, 1, [(150, 600), (250, 620), (350, 600)])
+        A, B, C = [s["id"] for s in strokes(pg, "p4")]
+        P0 = {s["id"]: s["data"]["points"] for s in strokes(pg, "p4")}
+        tool(pg, "select")
+        u0 = U(pg)
+        drag_page(pg, 1, (120, 170), (380, 330))
+        sl = sel(pg)
+        check("a box around two of three: those two are selected", sl and sorted(sl["ids"]) == sorted([A, B]), sl)
+        ui = selui(pg)
+        check("a dashed blue box with four corner handles", ui["box"] and ui["dash"] and ui["corners"] == 4, ui)
+        check("two chips above it: Copy and Delete", ui["chips"] == ["Copy", "Delete"] and ui["chipsShown"], ui)
+        cb = pg.locator(".selChips").bounding_box(); bb = pg.locator("svg.ink g.sel rect.selbox").bounding_box()
+        check("the chips sit above the box", cb["y"] + cb["height"] <= bb["y"] + 1, [cb, bb])
+        check("selecting is not an undo step", U(pg) == u0)
+        if SHOTS and shots < 3:
+            pg.screenshot(path=str(SHOTS / "u2b-select.png")); shots += 1
+        drag_page(pg, 1, (250, 250), (300, 300))
+        S1 = {s["id"]: s["data"]["points"] for s in strokes(pg, "p4")}
+        mv = lambda pts, dx, dy: [[round(x + dx, 1), round(y + dy, 1)] for x, y in pts]
+        check("drag inside 50 px: the two move by 50, 50", S1[A] == mv(P0[A], 50, 50) and S1[B] == mv(P0[B], 50, 50), [S1[A][:2], P0[A][:2]])
+        check("the third does not move", S1[C] == P0[C])
+        check("one undo step for the move", U(pg) == u0 + 1)
+        check("the selection stays on the moved strokes", sorted(sel(pg)["ids"]) == sorted([A, B]))
+        check("no transform left on the paths", elinfo(pg, 1, A)["transform"] is None)
+        undo(pg)
+        check("undo puts them back", {s["id"]: s["data"]["points"] for s in strokes(pg, "p4")} == P0)
+        sb = sel(pg)
+        check("the box follows the undo", sb and abs(sb["box"][0] - (150 - 1.25)) < 0.5, sb)
+        redo(pg)
+        check("redo moves them again", {s["id"]: s["data"]["points"] for s in strokes(pg, "p4")} == S1)
+        u1 = U(pg)
+        pg.locator(".selChips .chip[data-act='copy']").click(); pg.wait_for_timeout(30)
+        all_ = strokes(pg, "p4")
+        copies = [s for s in all_ if s["id"] not in (A, B, C)]
+        check("Copy adds two more", len(all_) == 5 and len(copies) == 2)
+        cp = {tuple(s["data"]["points"][0]) for s in copies}
+        check("the copies sit 24 px down and right", cp == {tuple(mv([S1[A][0]], 24, 24)[0]), tuple(mv([S1[B][0]], 24, 24)[0])}, cp)
+        check("the copy becomes the selection", sorted(sel(pg)["ids"]) == sorted(s["id"] for s in copies))
+        check("Copy is one undo step", U(pg) == u1 + 1)
+        pg.locator(".selChips .chip[data-act='delete']").click(); pg.wait_for_timeout(30)
+        check("Delete removes the selection (the copies)", sorted(s["id"] for s in strokes(pg, "p4")) == sorted([A, B, C]))
+        check("Delete clears the selection and its chips", sel(pg) is None and not selui(pg)["g"] and not selui(pg)["chips"])
+        check("Delete is one undo step", U(pg) == u1 + 2)
+        undo(pg)
+        check("undo Delete: the copies are back", len(strokes(pg, "p4")) == 5)
+        undo(pg)
+        check("undo Copy: back to three", len(strokes(pg, "p4")) == 3)
+        redo(pg); redo(pg)
+        check("redo Copy and redo Delete", len(strokes(pg, "p4")) == 3 and U(pg) == u1 + 2)
+        # resize: scale about the opposite corner, aspect kept
+        drag_page(pg, 1, (120, 570), (380, 650))
+        check("box around the third only", sel(pg)["ids"] == [C])
+        bx = sel(pg)["box"]
+        q = pg.evaluate("(() => { const c = [...document.querySelectorAll('svg.ink g.sel circle.selh')].map(e => [+e.getAttribute('cx'), +e.getAttribute('cy')]); return c; })()")
+        c2 = q[2]
+        drag_page(pg, 1, (c2[0], c2[1]), (c2[0] + 100, c2[1] + 20), steps=12)
+        rc = {s["id"]: s for s in strokes(pg, "p4")}[C]
+        b0 = [min(p[0] for p in P0[C]), min(p[1] for p in P0[C]), max(p[0] for p in P0[C]), max(p[1] for p in P0[C])]
+        b1 = [min(p[0] for p in rc["data"]["points"]), min(p[1] for p in rc["data"]["points"]), max(p[0] for p in rc["data"]["points"]), max(p[1] for p in rc["data"]["points"])]
+        sx = (b1[2] - b1[0]) / (b0[2] - b0[0]); sy = (b1[3] - b1[1]) / (b0[3] - b0[1])
+        check("a corner drag scales the stroke up", sx > 1.2, [sx, b0, b1])
+        check("the aspect is kept", abs(sx - sy) < 0.03, [sx, sy])
+        check("the opposite (top-left) corner holds", abs(b1[0] - b0[0]) < 3 and abs(b1[1] - b0[1]) < 3, [b0, b1])
+        check("the ink width scales with it", abs(rc["style"]["width"] - 2.5 * sx) < 0.1, rc["style"])
+        undo(pg)
+        check("undo puts its size back", {s["id"]: s for s in strokes(pg, "p4")}[C]["data"]["points"] == P0[C])
+        # half inside
+        tap_page(pg, 1, 700, 1000)
+        check("a tap outside clears the selection", sel(pg) is None and not selui(pg)["g"])
+        drag_page(pg, 1, (140, 170), (290, 250))      # A spans x 150..350 (+50 moved): 200..400, so this box holds a quarter of it
+        check("a stroke less than half inside is not selected", sel(pg) is None or A not in sel(pg)["ids"], sel(pg))
+        drag_page(pg, 1, (190, 170), (330, 330))      # A after the move: x 200..400; 190..330 holds 65% of it
+        sl = sel(pg)
+        check("a stroke at least half inside is selected", sl and A in sl["ids"], sl)
+        tool(pg, "pen")
+        check("a tool change clears the selection", sel(pg) is None and not selui(pg)["g"])
+        tool(pg, "select")
+        drag_page(pg, 1, (120, 170), (420, 360))
+        check("selected again", sel(pg) is not None)
+        go_page(pg, 2)
+        check("a page change clears the selection", sel(pg) is None and not selui(pg)["g"], pg.evaluate("window.__pw.current()"))
+        go_page(pg, 1)
+        if pg.locator("#pageList").is_visible(): pg.click("#plClose")
+        drag_page(pg, 1, (120, 170), (420, 360))
+        z0 = zoom(pg)
+        r0 = float(pg.evaluate("document.querySelector('svg.ink g.sel circle.selh').getAttribute('r')"))
+        pg.mouse.move(640, 400); pg.keyboard.down("Control"); pg.mouse.wheel(0, -200); pg.keyboard.up("Control"); pg.wait_for_timeout(120)
+        z1 = zoom(pg)
+        r1_ = float(pg.evaluate("document.querySelector('svg.ink g.sel circle.selh') ? document.querySelector('svg.ink g.sel circle.selh').getAttribute('r') : 0"))
+        check("zooming keeps the corner handles the same size on screen", z1 != z0 and abs(r1_ * z1 - r0 * z0) < 0.2, [z0, z1, r0, r1_])
+        tool(pg, "pen")
+        check("the layer has only hl and pen again after the selection", pg.evaluate("[...document.querySelector('#stack .sheet[data-index=\"1\"] svg.ink').children].map(c => c.getAttribute('class')).join()") == "hl,pen")
+        ctx.close()
+
+        # ------------------------------------------------------------ erasers on shapes
+        group[0] = "erasers"
+        ctx, pg, e6 = fresh(b); errs += e6
+        open_note(pg, "Erase")
+        draw(pg, 1, rough_circle(300, 300, 90), steps=2, hold=650)
+        draw(pg, 1, rough_line(600, 100, 500), hold=650)
+        kinds = [(s["kind"], s["data"].get("type")) for s in strokes(pg, "p5")]
+        check("a circle and a line to erase", kinds == [("shape", "circle"), ("shape", "line")], kinds)
+        u0 = U(pg)
+        tool(pg, "area")
+        drag_page(pg, 1, (300 + 90, 280), (300 + 90, 320), steps=4)
+        kinds = [(s["kind"], s["data"].get("type")) for s in strokes(pg, "p5")]
+        check("the area eraser over the circle removes the whole circle (no pieces)", kinds == [("shape", "line")], kinds)
+        check("one undo step", U(pg) == u0 + 1)
+        undo(pg)
+        check("undo brings the circle back whole", [(s["kind"], s["data"].get("type")) for s in strokes(pg, "p5")] == [("shape", "circle"), ("shape", "line")])
+        tool(pg, "eraser")
+        tap_page(pg, 1, 300, 600 + 2)
+        check("the stroke eraser removes the line whole", [(s["kind"], s["data"].get("type")) for s in strokes(pg, "p5")] == [("shape", "circle")])
+        ctx.close()
+
+        # ------------------------------------------------------------ house rules
+        group[0] = "pwa and house rules"
+        ctx, pg, e7 = fresh(b); errs += e7
+        check("cache is pw-v4", "pw-v4" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./css/app.css", "./sw.js"])
+        check("no em-dashes in the code", chr(0x2014) not in srcs)
+        check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)
+        check("no page errors", not errs, errs)
+        ctx.close()
+        b.close()
+finally:
+    srv.terminate()
+
+groups = []
+for g, n, ok, info in res:
+    if g not in groups: groups.append(g)
+    if not ok: print(f"FAIL [{g}] {n}  -> {str(info)[:400]}")
+print()
+for line_ in info_lines: print(line_)
+print()
+for g in groups:
+    rs = [r for r in res if r[0] == g]
+    print(f"{g}: {sum(r[2] for r in rs)}/{len(rs)} passed")
+print(f"\nTOTAL {sum(r[2] for r in res)}/{len(res)} passed")
+sys.exit(0 if all(r[2] for r in res) else 1)
