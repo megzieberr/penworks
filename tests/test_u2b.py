@@ -46,7 +46,11 @@
 # Select all (pw-v4p): the finger hold menu has two items, Select all (disabled "Nothing to select" on an empty page)
 # then Paste; Select all selects every record on that page, select tool on, no undo step. The clipboard group's menu
 # checks now expect two items (and tap Paste by its label). The "select all (pw-v4p)" group.
-import sys, subprocess, time, pathlib, re, json, math
+# Parabola snap (pw-v4s): an open curve with one turn whose arms straighten, held still, snaps to { type: 'parabola', x1, y1,
+# cx, cy, x2, y2 } (a quadratic Bezier, an SVG path M Q); an even curve (a semicircle, a 120 degree arc) stays an arc, an S
+# stays freehand; three handles (start, M, end); move, resize, turn, the area eraser, restyle, Copy / Paste and Duplicate
+# keep it a parabola; the ?dbg=1 line shows both fits. The "parabola snap (pw-v4s)" group (rough_parabola below).
+import sys, subprocess, time, pathlib, re, json, math, random
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -158,6 +162,15 @@ def squiggle(): return [(100 + 20 * k, 1060 + (18 if k % 2 else -18)) for k in r
 # nudged up to amp px each way
 def rough_arc(cx, cy, r, a0, a1, n=24, amp=1.5):
     return [(cx + r * math.cos(math.radians(a0 + (a1 - a0) * k / n)) + wobble(k, amp), cy + r * math.sin(math.radians(a0 + (a1 - a0) * k / n)) + wobble(k + 3, amp)) for k in range(n + 1)]
+# a hand parabola (pw-v4s): y = vy + a (x - vx)^2 for x from vx - half_width to vx + half_width (side=True: x and y swapped,
+# x = vx + a (y - vy)^2), every point nudged up to jitter px each way (seeded, so every run draws the same stroke)
+def rough_parabola(vx, vy, a, half_width, n=40, jitter=1.5, side=False, seed=7):
+    rnd = random.Random(seed); out = []
+    for k in range(n + 1):
+        u = -half_width + 2 * half_width * k / n; w = a * u * u
+        jx, jy = rnd.uniform(-jitter, jitter), rnd.uniform(-jitter, jitter)
+        out.append((vx + w + jx, vy + u + jy) if side else (vx + u + jx, vy + w + jy))
+    return out
 
 # real pen input: Chromium's own input pipeline (CDP Input.dispatchMouseEvent with pointerType 'pen'), so the
 # browser hit-tests, fires pointerdown / pointermove / pointerup with pointerType 'pen' and page.js sees a pen
@@ -2158,10 +2171,232 @@ try:
         check("no page errors in the select all group", not e26, e26)
         ctx.close()
 
+        # ------------------------------------------------------------ pw-v4s: hold-to-snap makes a parabola
+        group[0] = "parabola snap (pw-v4s)"
+        ctx, pg, ep1 = fresh(b); errs += ep1
+        open_note(pg, "Snap")
+        tool(pg, "pen")
+        PARK = ("x1", "y1", "cx", "cy", "x2", "y2")
+        def qmid(d): return ((d["x1"] + 2 * d["cx"] + d["x2"]) / 4, (d["y1"] + 2 * d["cy"] + d["y2"]) / 4)   # M, the curve at t = 0.5
+        def kinds(pid): return [(s["kind"], s["data"].get("type")) for s in strokes(pg, pid)]
+        def lastfit(): return pg.evaluate("window.__pw.ink.lastStroke()")
+        def snap_case(name, pts, vertex):
+            u0 = U(pg)
+            draw(pg, 1, pts, hold=650)
+            k = kinds("p1"); r = last(pg, "p1")
+            check(f"{name}: the page has one ('shape', 'parabola'), no arc", k == [("shape", "parabola")], k)
+            if r and r["data"].get("type") == "parabola":
+                d = r["data"]
+                check(f"{name}: its ends within 6 px of the drawn ends", near((d["x1"], d["y1"]), pts[0], 6) and near((d["x2"], d["y2"]), pts[-1], 6), [d, pts[0], pts[-1]])
+                check(f"{name}: its midpoint M within 8 px of the true vertex", near(qmid(d), vertex, 8), [qmid(d), vertex])
+                L = lastfit() or {}
+                f = L.get("fit") or {}
+                check(f"{name}: lastStroke() says parabola, its fit under 0.6 of the arc's", L.get("classify") == "parabola" and f.get("p") is not None
+                      and (f.get("a") is None or f["p"] < 0.6 * f["a"]), L.get("fit"))
+            check(f"{name}: one undo step", U(pg) == u0 + 1, [u0, U(pg)])
+            undo(pg)
+            return r
+        # 1. a = 0.004, half width 150 (the vertex at the top on the page, the arms going down)
+        P1 = rough_parabola(400, 300, 0.004, 150)
+        r = snap_case("a rough parabola (a = 0.004, half width 150)", P1, (400, 300))
+        if r and r["data"].get("type") == "parabola":
+            d = r["data"]
+            check("stored as { type, x1, y1, cx, cy, x2, y2 }, to 0.1 px", sorted(d) == sorted(("type",) + PARK) and all(round(d[k], 1) == d[k] for k in PARK), d)
+            check("same colour, width and dash as the pen", r["style"] == {"colour": "#000000", "width": 2.5, "dash": "solid", "opacity": 1}, r["style"])
+            check("classify on the same points: parabola", cls(P1) == "parabola", cls(P1))
+        # 2. the other way, and narrow
+        snap_case("the same the other way (a = -0.004)", rough_parabola(400, 500, -0.004, 150, seed=8), (400, 500))
+        snap_case("a narrow one (a = 0.012, half width 150)", rough_parabola(400, 300, 0.012, 150, seed=9), (400, 300))
+        # 4. sideways: x = vx + a (y - vy)^2
+        snap_case("a sideways parabola (x = vx + a (y - vy)^2)", rough_parabola(300, 500, 0.004, 150, side=True, seed=10), (300, 500))
+        # 3. even curvature stays an arc
+        for name, pts in [("a rough semicircle (radius 90, 180 degrees)", rough_arc(400, 400, 90, 180, 360, n=30)),
+                          ("a rough 120 degree arc (radius 90)", rough_arc(400, 400, 90, 210, 330))]:
+            draw(pg, 1, pts, hold=650)
+            k = kinds("p1")
+            check(f"{name}: STILL an arc, not a parabola", k == [("shape", "arc")], k)
+            check(f"{name}: classify agrees", cls(pts) == "arc", cls(pts))
+            undo(pg)
+        # 5. an S wiggle (two bends): freehand
+        rs = random.Random(11)
+        Sw = [(100 + 300 * k / 40 + rs.uniform(-1.5, 1.5), 500 + 60 * math.sin(2 * math.pi * k / 40) + rs.uniform(-1.5, 1.5)) for k in range(41)]
+        draw(pg, 1, Sw, hold=650)
+        check("an S wiggle held: freehand, no snap", kinds("p1") == [("pen", None)], kinds("p1"))
+        check("classify: the S wiggle is not a shape", cls(Sw) is None, cls(Sw))
+        undo(pg)
+        # the kept one: how it is drawn, and a reload
+        draw(pg, 1, P1, hold=650)
+        r = last(pg, "p1")
+        e = elinfo(pg, 1, r["id"]) if r else None
+        ai = arcinfo(r["id"]) if r else None
+        check("drawn as an SVG <path> in g.pen, stroke only, data-type parabola", e and e["tag"] == "path" and e["type"] == "parabola" and e["parent"] == "pen" and e["fill"] == "none", e)
+        if r and ai and r["data"].get("type") == "parabola":
+            d = r["data"]
+            def js1(v): v = round(v, 1); return str(int(v)) if v == int(v) else repr(v)
+            want = f"M{js1(d['x1'])} {js1(d['y1'])}Q{js1(d['cx'])} {js1(d['cy'])} {js1(d['x2'])} {js1(d['y2'])}"
+            check("its d is M x1 y1 Q cx cy x2 y2", ai["d"] == want, [ai["d"], want])
+            check("the drawn path runs through M and both ends", on_stroke(r["id"], *qmid(d)) and on_stroke(r["id"], d["x1"], d["y1"]) and on_stroke(r["id"], d["x2"], d["y2"]))
+            ol = pg.evaluate("(id) => import('./js/ink.js').then(m => m.outline(m.strokesOf('p1').find(r => r.id === id)))", r["id"])
+            check("outline: 48 points along the curve, from the start to the end", len(ol) == 48 and near(ol[0], (d["x1"], d["y1"]), 0.01) and near(ol[-1], (d["x2"], d["y2"]), 0.01), [len(ol), ol[:1], ol[-1:]])
+        pg.wait_for_timeout(200)
+        check("after the fade only the parabola is in the layer", pg.evaluate("document.querySelectorAll('#stack .sheet[data-index=\"1\"] svg.ink g.pen > *').length") == 1)
+        before = ai and ai["d"]
+        idle(pg); pg.reload(); ready(pg); open_note(pg, "Snap")
+        check("after a reload the parabola is redrawn the same", r and (arcinfo(r["id"]) or {}).get("d") == before, [before, r and arcinfo(r["id"])])
+        # a highlighter parabola is allowed (a highlighter-born shape)
+        tool(pg, "highlighter")
+        draw(pg, 1, rough_parabola(400, 700, 0.004, 150, seed=12), hold=650)
+        h = last(pg, "p1")
+        check("a highlighter parabola held: shape/parabola with the highlighter's look", h and h["kind"] == "shape" and h["data"].get("type") == "parabola"
+              and h["style"] == {"colour": "#FFC107", "width": 18, "dash": "solid", "opacity": 0.4}, h and [h["kind"], h["data"], h["style"]])
+        e = elinfo(pg, 1, h["id"]) if h else None
+        check("... a <path> in its g.hlo (0.4) group under g.hl", e and e["tag"] == "path" and e["parent"] == "hlo" and e["gp"] == "hl" and e["opacity"] == "0.4", e)
+        tool(pg, "pen")
+        ctx.close()
+
+        # the ?dbg=1 readout shows both fit numbers
+        ctx, pg, ep2 = fresh(b, url=LOCAL + "&dbg=1"); errs += ep2
+        open_note(pg, "Snap")
+        pg.wait_for_selector("#dbg", state="attached", timeout=5000)
+        tool(pg, "pen")
+        draw(pg, 1, rough_parabola(400, 300, 0.004, 150), hold=650)
+        pg.wait_for_timeout(300)
+        lastln = pg.evaluate("document.getElementById('dbg').textContent").split("\n")[-1]
+        m = re.fullmatch(r"last: \d+ pts, \d+(\.\d)? px, mouse, classify: parabola \(p (\d+\.\d) / a (\d+\.\d)\), snapped", lastln)
+        check("?dbg=1: the last-stroke line reads 'classify: parabola (p X.X / a Y.Y), snapped'", m is not None, lastln)
+        if m: check("... and p is under 0.6 of a", float(m.group(2)) < 0.6 * float(m.group(3)), lastln)
+        ctx.close()
+
+        # 6. handles: three; the middle drags M, an end moves alone
+        ctx, pg, ep3 = fresh(b); errs += ep3
+        open_note(pg, "Handles")
+        pen = Pen(ctx, pg)
+        draw(pg, 1, rough_parabola(400, 400, 0.004, 150), hold=650)
+        a = last(pg, "p2")
+        check("a parabola to grab", a and a["kind"] == "shape" and a["data"].get("type") == "parabola", a and a["data"])
+        if a and a["data"].get("type") == "parabola":
+            d0 = dict(a["data"]); u0 = U(pg); M0 = qmid(d0)
+            hs = pg.evaluate("(id) => import('./js/ink.js').then(m => m.handles(m.strokesOf('p2').find(r => r.id === id)))", a["id"])
+            check("handles gives 3: start, M, end", len(hs) == 3 and near(hs[0], (d0["x1"], d0["y1"]), 1e-6) and near(hs[1], M0, 1e-6) and near(hs[2], (d0["x2"], d0["y2"]), 1e-6), [hs, M0])
+            pen.stroke([screen(pg, 1, *M0), screen(pg, 1, M0[0], M0[1] + 30)])
+            d1 = last(pg, "p2")["data"]
+            check("the middle handle dragged 30 px down: M follows within 1 px", d1.get("type") == "parabola" and near(qmid(d1), (M0[0], M0[1] + 30), 1), [qmid(d1), M0])
+            check("... the ends stay", all(d1[k] == d0[k] for k in ("x1", "y1", "x2", "y2")), [d0, d1])
+            check("... no stroke drawn, one undo step, and the path runs through the new M", len(strokes(pg, "p2")) == 1 and U(pg) == u0 + 1 and on_stroke(a["id"], *qmid(d1)), [len(strokes(pg, "p2")), U(pg), u0])
+            undo(pg)
+            check("undo puts the curve back", last(pg, "p2")["data"] == d0, [last(pg, "p2")["data"], d0])
+            redo(pg)
+            pen.stroke([screen(pg, 1, d1["x2"], d1["y2"]), screen(pg, 1, d1["x2"] + 30, d1["y2"] + 20)])
+            d2 = last(pg, "p2")["data"]
+            check("dragging an end: only that end moves (the start and the control point stay)",
+                  abs(d2["x2"] - (d1["x2"] + 30)) <= 1.5 and abs(d2["y2"] - (d1["y2"] + 20)) <= 1.5 and all(d2[k] == d1[k] for k in ("x1", "y1", "cx", "cy")), [d1, d2])
+            check("... and the path goes through the new end", on_stroke(a["id"], d2["x2"], d2["y2"]))
+        ctx.close()
+
+        # 6. move, resize and turn with the select tool map the three points
+        ctx, pg, ep4 = fresh(b); errs += ep4
+        open_note(pg, "Select")
+        PB = {"type": "parabola", "x1": 250, "y1": 390, "cx": 400, "cy": 210, "x2": 550, "y2": 390}   # y = 300 + 0.004 (x - 400)^2, M = (400, 300)
+        def put_par(pid, rid="pb", style=None):
+            pg.evaluate(PUT_JS, [pid, [{"id": rid, "page_id": pid, "seq": int(time.time() * 1000), "kind": "shape",
+                                         "style": style or {"colour": "#000000", "width": 2.5, "dash": "solid", "opacity": 1}, "data": dict(PB)}]])
+        def pts3(d): return [(d["x1"], d["y1"]), (d["cx"], d["cy"]), (d["x2"], d["y2"])]
+        put_par("p4")
+        tool(pg, "select")
+        select_box((230, 190), (570, 410))
+        check("the parabola is selected", sel(pg) and sel(pg)["ids"] == ["pb"], sel(pg))
+        u0 = U(pg)
+        drag_page(pg, 1, (400, 300), (450, 340))
+        d1 = by_id()["pb"]["data"]
+        check("a move keeps it a parabola and moves all three points by (50, 40)", d1["type"] == "parabola"
+              and all(abs(d1[k] - (PB[k] + (50 if "x" in k else 40))) <= 0.11 for k in PARK), [PB, d1])
+        check("... one undo step, the path follows", U(pg) == u0 + 1 and on_stroke("pb", *qmid(d1)), [U(pg), u0])
+        undo(pg)
+        check("undo puts it back", by_id()["pb"]["data"] == PB, by_id()["pb"]["data"])
+        select_box((230, 190), (570, 410))
+        q = pg.evaluate(CORN_JS); o, c2 = q[0], q[2]
+        drag_page(pg, 1, (c2[0], c2[1]), (o[0] + 2 * (c2[0] - o[0]), o[1] + 2 * (c2[1] - o[1])), steps=12)
+        d2 = by_id()["pb"]["data"]
+        P, Q = pts3(PB), pts3(d2)
+        s_ = math.hypot(Q[2][0] - Q[0][0], Q[2][1] - Q[0][1]) / math.hypot(P[2][0] - P[0][0], P[2][1] - P[0][1])
+        similar = all(abs((Q[i][j] - Q[0][j]) - s_ * (P[i][j] - P[0][j])) <= 0.3 for i in (1, 2) for j in (0, 1))
+        check("a resize to twice the size keeps it a parabola and scales all three points (one scale, about one point)",
+              d2["type"] == "parabola" and abs(s_ - 2) < 0.08 and similar, [s_, PB, d2])
+        undo(pg)
+        select_box((230, 190), (570, 410))
+        RINGP_JS = """() => { const c = document.querySelector('svg.ink g.sel circle.selrot'); return c ? [+c.getAttribute('cx'), +c.getAttribute('cy')] : null; }"""
+        def pturn(deg):                    # the ring dragged through deg degrees about the box centre (as turn_sel, with its own ring read)
+            c_ = box_centre(); r_ = pg.evaluate(RINGP_JS)
+            a_ = math.atan2(r_[1] - c_[1], r_[0] - c_[0]) + math.radians(deg); R_ = math.hypot(r_[0] - c_[0], r_[1] - c_[1]) * 1.4
+            drag_page(pg, 1, (r_[0], r_[1]), (c_[0] + R_ * math.cos(a_), c_[1] + R_ * math.sin(a_)), steps=12); return c_
+        c = pturn(40)
+        d3 = by_id()["pb"]["data"]; exp = [rot_about(p_, c, 40) for p_ in pts3(PB)]
+        check("a turn of 40 degrees keeps it a parabola and turns all three points about the box centre (1 px)",
+              d3["type"] == "parabola" and all(near(p_, e_, 1) for p_, e_ in zip(pts3(d3), exp)), [pts3(d3), exp])
+        check("... and the drawn path still runs through its turned M", on_stroke("pb", *qmid(d3)))
+        ctx.close()
+
+        # 7. the area eraser across one arm: two pen pieces; undo brings the parabola back
+        ctx, pg, ep5 = fresh(b); errs += ep5
+        open_note(pg, "Erase")
+        put_par("p5")
+        r0 = strokes(pg, "p5")[0]
+        u0 = U(pg)
+        tool(pg, "area")
+        drag_page(pg, 1, (325, 295), (325, 350), steps=10)                # across the left arm at x 325 (y 322.5 there)
+        k = kinds("p5")
+        check("the area eraser across one arm: the parabola becomes two pen pieces", k == [("pen", None), ("pen", None)], k)
+        s1 = strokes(pg, "p5")
+        check("... both pieces keep its page, seq and style, one undo step", all(s["page_id"] == "p5" and s["seq"] == r0["seq"] and s["style"] == r0["style"] for s in s1) and U(pg) == u0 + 1, [U(pg), u0])
+        if len(s1) == 2:
+            ends = sorted([s1[0]["data"]["points"][0], s1[0]["data"]["points"][-1], s1[1]["data"]["points"][0], s1[1]["data"]["points"][-1]])
+            check("... the pieces keep the parabola's two ends", any(near(p_, (250, 390), 0.2) for p_ in ends) and any(near(p_, (550, 390), 0.2) for p_ in ends), ends)
+        undo(pg)
+        s2 = strokes(pg, "p5")
+        check("undo: the parabola is back, the same id and data, drawn as its path",
+              len(s2) == 1 and s2[0]["id"] == "pb" and s2[0]["data"] == PB and (elinfo(pg, 1, "pb") or {}).get("type") == "parabola", [kinds("p5")])
+        ctx.close()
+
+        # 8. restyle, Copy / Paste and Duplicate: still a parabola with the right style
+        ctx, pg, ep6 = fresh(b, has_touch=True); errs += ep6
+        open_note(pg, "Select")
+        cdp_p = ctx.new_cdp_session(pg)
+        def ptouch(kind, pts=()): cdp_p.send("Input.dispatchTouchEvent", {"type": kind, "touchPoints": [{"x": x, "y": y, "id": k} for k, (x, y) in enumerate(pts)]})
+        put_par("p4")
+        pg.click("#tray .sw[data-colour='#FF3636']")
+        tool(pg, "restyle")
+        u0 = U(pg)
+        tap_page(pg, 1, 400, 300)                                         # on M
+        r1_ = by_id()["pb"]
+        check("restyle on it: still a parabola with the same points, now red", r1_["data"] == PB and r1_["style"]["colour"] == "#FF3636" and U(pg) == u0 + 1, [r1_["style"], U(pg), u0])
+        red = r1_["style"]
+        tool(pg, "select")
+        select_box((230, 190), (570, 410))
+        pg.locator(".selChips .chip[data-act='copy']").click(); pg.wait_for_timeout(40)
+        x_, y_ = screen(pg, 1, 400, 800); ptouch("touchStart", [(x_, y_)]); pg.wait_for_timeout(600); ptouch("touchEnd"); pg.wait_for_timeout(60)
+        pg.locator("#menu button").filter(has_text=re.compile("^Paste$")).click(); pg.wait_for_timeout(60)
+        now_ = by_id(); pasted = [v for k_, v in now_.items() if k_ != "pb"]
+        pd = pasted[0]["data"] if len(pasted) == 1 else {}
+        def rel(d): return (d["cx"] - d["x1"], d["cy"] - d["y1"], d["x2"] - d["x1"], d["y2"] - d["y1"])
+        def same_shape(d, e_): return bool(d and e_) and all(abs(u_ - v_) <= 0.11 for u_, v_ in zip(rel(d), rel(e_)))
+        check("Copy then Paste: one new record, a parabola of the same shape, red like the original",
+              len(pasted) == 1 and pasted[0]["kind"] == "shape" and pd.get("type") == "parabola" and same_shape(pd, PB) and pasted[0]["style"] == red, [pasted])
+        sel_now = sel(pg)
+        if len(pasted) == 1 and sel_now and sel_now["ids"] == [pasted[0]["id"]]:
+            pg.locator(".selChips .chip[data-act='duplicate']").click(); pg.wait_for_timeout(40)
+            now2 = by_id(); dups = [v for k_, v in now2.items() if k_ not in now_]
+            dd = dups[0]["data"] if len(dups) == 1 else {}
+            check("Duplicate: one more parabola, every point moved by (+24, +24), the same red style",
+                  len(dups) == 1 and dd.get("type") == "parabola" and all(abs(dd[k_] - (pd[k_] + 24)) < 1e-6 for k_ in PARK) and dups[0]["style"] == red, [dups, pd])
+        else:
+            check("the pasted parabola is selected (for Duplicate)", False, sel_now)
+        check("no page errors in the parabola groups", not (ep1 or ep2 or ep3 or ep4 or ep5 or ep6), [ep1, ep2, ep3, ep4, ep5, ep6])
+        ctx.close()
+
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v4r", "pw-v4r" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v4s", "pw-v4s" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)

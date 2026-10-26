@@ -39,6 +39,11 @@
 // Duplicate chip (pw-v4o): a + chip between Copy and Delete puts a copy of the selection 24 px right and down (kept inside
 // the page), selected, as one undo step; the clipboard is not touched.
 // Select all (pw-v4p): the finger hold menu has Select all above Paste; it selects every stroke on the page under the finger.
+// Parabola snap (pw-v4s): an open curve with one turn whose arms straighten, held still, snaps into a parabola, data
+// { type: 'parabola', x1, y1, cx, cy, x2, y2 }: a quadratic Bezier (start, control, end; drawn M x1 y1 Q cx cy x2 y2), which
+// stays a parabola under every move, resize and turn. Its three handles are the ends and the curve's middle (t = 0.5). The
+// fit runs after the line and before the arc, and wins only when it is under 0.6 of the arc's own fit (an even curve stays
+// an arc); lastStroke().fit holds both numbers for ?dbg=1.
 
 import * as store from './store-local.js';
 import { pageAt, pagePoint, view, pageSize } from './page.js';
@@ -64,7 +69,8 @@ const ST = { pen: { colour: '#000000', width: 2.5, dash: 'solid' }, highlighter:
 let doOp = (op) => op.redo();
 let onChange = null;             // optional: told the page id after every stroke change (apply), the page list's thumbs
 let G = null;                    // the gesture in progress
-let LAST = null;                 // the last finished pen or highlighter stroke, raw: { points, pointerType, z, n, len, classify, snapped, at }
+let LAST = null;                 // the last finished pen or highlighter stroke, raw: { points, pointerType, z, n, len, classify, snapped, at, fit? }
+let FIT = null;                  // the last classify's parabola fit when it returned a parabola: { p, a } (its residual, the arc's), else null
 let ring = null, hring = null, deskEl = null, deskBox = null;
 let SEL = null;                  // the selection: { page, ids, g, chips, deg, z }
 let CLIP = null;                 // the selection clipboard: { recs (deep copies, by seq), box (their selBox) }
@@ -115,7 +121,7 @@ export function strokesOf(pageId) { return data(pageId).strokes.slice(); }
 export function copyStrokes(pageId) { return JSON.parse(JSON.stringify(data(pageId).strokes)); }
 
 // a shape's outline as a polyline (hit tests now; Part B draws shapes with SVG primitives); n: how many points a
-// circle, ellipse or arc gets (48 for the hit tests, more when it turns into ink)
+// circle, ellipse, arc or parabola gets (48 for the hit tests, more when it turns into ink)
 export function outline(rec, n = 48) {
   const d = rec.data || {};
   if (d.type === 'line' || d.type === 'arrow') return [[d.x1, d.y1], [d.x2, d.y2]];
@@ -134,7 +140,17 @@ export function outline(rec, n = 48) {
     out.push([d.x2, d.y2]);
     return out;
   }
+  if (d.type === 'parabola') {                                     // n points along the curve, t = 0 to 1
+    const out = [];
+    for (let k = 0; k < n; k++) out.push(qbez(d, k / (n - 1)));
+    return out;
+  }
   return [];
+}
+// a parabola's point at t (0 = the start, 1 = the end): the quadratic Bezier (1-t)^2 P0 + 2t(1-t) C + t^2 P2
+function qbez(d, t) {
+  const u = 1 - t;
+  return [u * u * d.x1 + 2 * u * t * d.cx + t * t * d.x2, u * u * d.y1 + 2 * u * t * d.cy + t * t * d.y2];
 }
 // an arc's circle, through its start, middle and end: { ox, oy, r, t1 (the start's angle), sweep (signed, radians:
 // plus is the way angles grow on the page, SVG's sweep flag 1) }; null when the three sit in a line (the middle
@@ -176,6 +192,7 @@ function shapeToInk(rec) {
   if (d.type === 'circle') len = 2 * Math.PI * d.r;
   else if (d.type === 'ellipse') { const a = d.rx, b = d.ry; len = Math.PI * (3 * (a + b) - Math.sqrt((3 * a + b) * (a + 3 * b))); }
   else if (d.type === 'arc') { const g = arcGeom(d); len = g ? g.r * Math.abs(g.sweep) : 0; }
+  else if (d.type === 'parabola') len = polyLen(outline(rec, 96));
   const o = outline(rec, Math.max(48, Math.ceil(len / INK_STEP)));
   if (o.length < 2) return [];
   const closed = d.type === 'rect' || d.type === 'triangle' || d.type === 'circle' || d.type === 'ellipse';
@@ -240,9 +257,9 @@ function styleEl(el, rec) {
   if (s.dash === 'dashed') el.setAttribute('stroke-dasharray', dashOf(w));
   else el.removeAttribute('stroke-dasharray');
 }
-// shapes are SVG primitives: line, polygon (rect, triangle), circle, ellipse, path (arc); an arrow is a <g> of its
+// shapes are SVG primitives: line, polygon (rect, triangle), circle, ellipse, path (arc, parabola); an arrow is a <g> of its
 // line and an open head (the head never dashed, so every arrow ends the same way)
-const SHAPE_TAG = { line: 'line', arrow: 'g', rect: 'polygon', triangle: 'polygon', circle: 'circle', ellipse: 'ellipse', arc: 'path' };
+const SHAPE_TAG = { line: 'line', arrow: 'g', rect: 'polygon', triangle: 'polygon', circle: 'circle', ellipse: 'ellipse', arc: 'path', parabola: 'path' };
 function arrowHeadPts(d, w) {                                    // [one barb's end, the tip, the other barb's end]
   const dx = d.x2 - d.x1, dy = d.y2 - d.y1, L = Math.hypot(dx, dy) || 1, ux = dx / L, uy = dy / L;
   const len = Math.min(L * 0.45, Math.max(14, w * 4)), a = 28 * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
@@ -269,6 +286,10 @@ function setGeom(el, rec) {
     el.setAttribute('d', g
       ? 'M' + p(d.x1, d.y1) + 'A' + f1(g.r) + ' ' + f1(g.r) + ' 0 ' + (Math.abs(g.sweep) > Math.PI ? 1 : 0) + ' ' + (g.sweep > 0 ? 1 : 0) + ' ' + p(d.x2, d.y2)
       : 'M' + p(d.x1, d.y1) + 'L' + p(d.xm, d.ym) + 'L' + p(d.x2, d.y2));
+  }
+  else if (d.type === 'parabola') {                                // M start Q control end
+    const p = (x, y) => f1(x) + ' ' + f1(y);
+    el.setAttribute('d', 'M' + p(d.x1, d.y1) + 'Q' + p(d.cx, d.cy) + ' ' + p(d.x2, d.y2));
   }
 }
 function makeEl(rec) {
@@ -539,12 +560,9 @@ function strays(pts, v) {
   return Math.sqrt(worst);
 }
 const rp = (q) => [r1(q[0]), r1(q[1])];
-// arc: an open stroke that sits on one circle. The Kasa fit (least squares on x^2 + y^2 + a x + b y + c = 0, the
-// points centred on their mean first so the sums stay small): every point within 6% of the size from the circle,
-// the radius at most 3 x the size, the end further than 10% of the size from the start, and 25 to 330 degrees swept
-// the way the stroke travels (the raw point half way along its length, against the chord, gives that way)
-function arcOf(raw, A, Z, size) {
-  if (dist(A, Z) <= 0.1 * size) return null;                       // closed: the closed test's
+// the Kasa circle fit (least squares on x^2 + y^2 + a x + b y + c = 0, the points centred on their mean first so the
+// sums stay small): { ox, oy, r, res (the largest distance of a point from the circle) }; null when there is no circle
+function kasa(raw) {
   const n = raw.length;
   let mx = 0, my = 0;
   for (const q of raw) { mx += q[0]; my += q[1]; }
@@ -565,8 +583,19 @@ function arcOf(raw, A, Z, size) {
   const ox = mx - a / 2, oy = my - b / 2, r2 = (a * a + b * b) / 4 - c;
   if (!(r2 > 0)) return null;
   const r = Math.sqrt(r2);
+  let res = 0;
+  for (const q of raw) res = Math.max(res, Math.abs(Math.hypot(q[0] - ox, q[1] - oy) - r));
+  return { ox, oy, r, res };
+}
+// arc: an open stroke that sits on one circle (the Kasa fit above, k): every point within 6% of the size from the
+// circle, the radius at most 3 x the size, the end further than 10% of the size from the start, and 25 to 330 degrees
+// swept the way the stroke travels (the raw point half way along its length, against the chord, gives that way)
+function arcOf(raw, A, Z, size, k = kasa(raw)) {
+  if (dist(A, Z) <= 0.1 * size) return null;                       // closed: the closed test's
+  if (!k) return null;
+  const n = raw.length, { ox, oy, r } = k;
   if (r > 3 * size) return null;                                   // flatter: a line or freehand
-  for (const q of raw) if (Math.abs(Math.hypot(q[0] - ox, q[1] - oy) - r) > 0.06 * size) return null;
+  if (k.res > 0.06 * size) return null;                            // every point within 6% of the size from the circle
   const half = polyLen(raw) / 2;
   let walked = 0, mid = raw[n - 1];
   for (let i = 1; i < n; i++) { walked += dist(raw[i - 1], raw[i]); if (walked >= half) { mid = raw[i]; break; } }
@@ -579,8 +608,83 @@ function arcOf(raw, A, Z, size) {
   const [x1, y1] = on(t1), [xm, ym] = on(t1 + sweep / 2), [x2, y2] = on(t2);
   return { type: 'arc', x1, y1, xm, ym, x2, y2 };
 }
-// in this order: arrow, line, arc, then closed: triangle, rect, circle or ellipse; null = stays freehand
+// parabola (pw-v4s): an open stroke on one quadratic Bezier from its first raw point to its last. It works on the stroke
+// as drawn: its raw points and the line between them, every 3 px (so a sparse 5 point tick cannot slip a curve between
+// its points). The control point C by closed-form least squares (B0 = (1-t)^2, B1 = 2t(1-t), B2 = t^2: C = sum(B1 (p - B0 P0 - B2 P2)) / sum(B1^2)),
+// first on chord-length t, then refined: each point's t moves to its nearest point on the curve and C is solved
+// again (up to 12 rounds; chord-length t alone runs too fast along the steep arms and leaves the fit 2 to 15 x worse
+// than the curve really is); every point within 5% of the size from the curve (the curve as 96 points,
+// distance to its polyline); one turn only (rdp's points change their turning direction at most once, turns
+// under 5 degrees not counted); and it must beat the arc: its residual under 0.6 x the circle fit's (k.res), so an
+// even curve stays an arc. { shape, p, a } (p, a: the two residuals, px) or null
+function parabolaOf(stroke, A, Z, size, k) {
+  if (dist(A, Z) <= 0.1 * size) return null;                       // closed: the closed test's
+  const raw = densify(stroke, INK_STEP), n = raw.length, cum = [0];
+  for (let i = 1; i < n; i++) cum.push(cum[i - 1] + dist(raw[i - 1], raw[i]));
+  const L = cum[n - 1];
+  if (!(L > 0)) return null;
+  const ts = cum.map((c) => c / L), d = { x1: A[0], y1: A[1], cx: 0, cy: 0, x2: Z[0], y2: Z[1] };
+  const solve = () => {                                            // C for the current ts; false when it has none
+    let sx = 0, sy = 0, den = 0;
+    for (let i = 0; i < n; i++) {
+      const t = ts[i], u = 1 - t, b0 = u * u, b1 = 2 * t * u, b2 = t * t;
+      sx += b1 * (raw[i][0] - b0 * A[0] - b2 * Z[0]); sy += b1 * (raw[i][1] - b0 * A[1] - b2 * Z[1]); den += b1 * b1;
+    }
+    if (!(den > 0)) return false;
+    d.cx = sx / den; d.cy = sy / den;
+    return true;
+  };
+  if (!solve()) return null;
+  let curve = [];
+  const sample = () => { curve = []; for (let j = 0; j < 96; j++) curve.push(qbez(d, j / 95)); };
+  for (let round = 0; round < 12; round++) {                       // each t to its nearest point on the curve, C again
+    sample();
+    const ddx = 2 * (d.x2 - 2 * d.cx + d.x1), ddy = 2 * (d.y2 - 2 * d.cy + d.y1);   // B'' (the same at every t)
+    for (let i = 1; i < n - 1; i++) {
+      const q = raw[i];
+      let bj = 0, bd = Infinity;
+      for (let j = 0; j < 96; j++) { const e = (curve[j][0] - q[0]) ** 2 + (curve[j][1] - q[1]) ** 2; if (e < bd) { bd = e; bj = j; } }
+      let t = bj / 95;
+      for (let it = 0; it < 3; it++) {                             // Newton on (B(t) - q) . B'(t) = 0
+        const b = qbez(d, t), dx = 2 * (1 - t) * (d.cx - d.x1) + 2 * t * (d.x2 - d.cx), dy = 2 * (1 - t) * (d.cy - d.y1) + 2 * t * (d.y2 - d.cy);
+        const f = (b[0] - q[0]) * dx + (b[1] - q[1]) * dy, fp = dx * dx + dy * dy + (b[0] - q[0]) * ddx + (b[1] - q[1]) * ddy;
+        if (!(fp > 0)) break;
+        t = Math.min(1, Math.max(0, t - f / fp));
+      }
+      ts[i] = t;
+    }
+    const ox = d.cx, oy = d.cy;
+    if (!solve()) return null;
+    if (Math.hypot(d.cx - ox, d.cy - oy) < 0.01) break;
+  }
+  sample();
+  let worst = 0;
+  for (const q of raw) {
+    let m = Infinity;
+    for (let j = 1; j < curve.length; j++) m = Math.min(m, segDist2(q[0], q[1], curve[j - 1], curve[j]));
+    worst = Math.max(worst, m);
+  }
+  const p = Math.sqrt(worst);
+  if (p > 0.05 * size) return null;
+  const v = rdp(raw, Math.max(0.75, 0.02 * size));                 // one turn: the sign of the turns flips at most once
+  let sign = 0, flips = 0;
+  for (let i = 1; i < v.length - 1; i++) {
+    const ax = v[i][0] - v[i - 1][0], ay = v[i][1] - v[i - 1][1], bx = v[i + 1][0] - v[i][0], by = v[i + 1][1] - v[i][1];
+    const cr = ax * by - ay * bx;
+    if (Math.abs(Math.atan2(cr, ax * bx + ay * by)) < 5 * Math.PI / 180) continue;
+    const sg = Math.sign(cr);
+    if (sign && sg !== sign) flips++;
+    sign = sg;
+  }
+  if (flips > 1) return null;
+  const a = k ? k.res : Infinity;
+  if (!(p < 0.6 * a)) return null;                                 // the arc fits about as well: the arc branch has it
+  return { shape: { type: 'parabola', x1: r1(A[0]), y1: r1(A[1]), cx: r1(d.cx), cy: r1(d.cy), x2: r1(Z[0]), y2: r1(Z[1]) }, p, a };
+}
+// in this order: arrow, line, parabola, arc, then closed: triangle, rect, circle or ellipse; null = stays freehand.
+// A parabola leaves its two fit numbers in FIT (lastStroke().fit); every other answer leaves FIT null
 export function classify(raw) {
+  FIT = null;
   if (!raw || raw.length < 3 || polyLen(raw) < SNAP_MIN) return null;
   const b = bbox(raw), W = b[2] - b[0], H = b[3] - b[1], size = Math.hypot(W, H);
   if (size < 10) return null;
@@ -606,8 +710,11 @@ export function classify(raw) {
   }
   // line: every point close to the chord
   if (straight(raw, A, Z, 0.06)) return { type: 'line', x1: r1(A[0]), y1: r1(A[1]), x2: r1(Z[0]), y2: r1(Z[1]) };
+  // parabola: open, one turn, and a better fit than the arc's (parabolaOf above)
+  const k = kasa(raw), par = parabolaOf(raw, A, Z, size, k);
+  if (par) { FIT = { p: r1(par.p), a: Number.isFinite(par.a) ? r1(par.a) : null }; return par.shape; }
   // arc: open, and on one circle (arcOf above)
-  const arc = arcOf(raw, A, Z, size);
+  const arc = arcOf(raw, A, Z, size, k);
   if (arc) return arc;
   // closed: the end (or, for an overshoot, the point nearest the start in the last 30%) within 10% of the size
   let ci = raw.length - 1, cd = Infinity;
@@ -650,6 +757,7 @@ export function handles(rec) {
     return [[d.cx, d.cy - ry], [d.cx + rx, d.cy], [d.cx, d.cy + ry], [d.cx - rx, d.cy]].map((q) => turn(q, c, tu));   // N, E, S, W
   }
   if (d.type === 'arc') return [[d.x1, d.y1], [d.xm, d.ym], [d.x2, d.y2]];                  // start, middle, end
+  if (d.type === 'parabola') return [[d.x1, d.y1], qbez(d, 0.5), [d.x2, d.y2]];           // start, the curve's middle M, end
   return [];
 }
 // the handle nearest (x, y) on page `id`, within reach: { rec, h, at }
@@ -680,6 +788,9 @@ function dragHandle(rec, h, x, y) {
   } else if (d.type === 'arc') {                                   // only that point moves: the arc is the circle through the three
     const k = ['1', 'm', '2'][h];
     d['x' + k] = r1(x); d['y' + k] = r1(y);
+  } else if (d.type === 'parabola') {                              // an end moves alone (the control holds); the middle M' sets
+    if (h === 1) { d.cx = r1(2 * x - (d.x1 + d.x2) / 2); d.cy = r1(2 * y - (d.y1 + d.y2) / 2); }   // C = 2 M' - (P0 + P2) / 2
+    else if (h === 0) { d.x1 = r1(x); d.y1 = r1(y); } else { d.x2 = r1(x); d.y2 = r1(y); }
   }
   return { ...rec, data: d };
 }
@@ -714,6 +825,9 @@ function xform(rec, f, s, rot) {
   else if (d.type === 'arc') {
     const a = P([d.x1, d.y1]), m = P([d.xm, d.ym]), z = P([d.x2, d.y2]);
     nd = { ...d, x1: a[0], y1: a[1], xm: m[0], ym: m[1], x2: z[0], y2: z[1] };
+  } else if (d.type === 'parabola') {                              // a Bezier maps through its three points
+    const a = P([d.x1, d.y1]), c = P([d.cx, d.cy]), z = P([d.x2, d.y2]);
+    nd = { ...d, x1: a[0], y1: a[1], cx: c[0], cy: c[1], x2: z[0], y2: z[1] };
   } else if (d.type === 'circle') { const c = P([d.cx, d.cy]); nd = { ...d, cx: c[0], cy: c[1], r: r1(d.r * s) }; }
   else if (d.type === 'ellipse') {
     const c = P([d.cx, d.cy]);
@@ -1216,6 +1330,7 @@ function up(e, cancelled) {
     const points = (g.raw || g.rec.data.points).map((p) => [p[0], p[1]]), c = classify(points);   // a snapped stroke keeps its freehand points in g.raw
     LAST = { points, pointerType: g.pt || 'mouse', z: g.z, n: points.length, len: Math.round(polyLen(points) * 10) / 10,
       classify: c ? c.type : null, snapped: g.kind === 'snapped', at: Date.now() };
+    if (FIT) LAST.fit = { ...FIT };                                 // a parabola: its fit and the arc's (pw-v4s)
     g.rec.seq = Date.now();
     data(g.page).els.set(g.rec.id, g.el);
     doOp(changeOp([{ page: g.page, removed: [], added: [g.rec] }]));   // a snap is one step: the shape

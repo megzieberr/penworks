@@ -10,6 +10,8 @@
 // <snapped | freehand>" (or "last: none"), read from ink.lastStroke(); a "Copy last stroke" button (#dbgCopy) above #dbgView
 // puts that stroke's raw points on the clipboard as JSON (a read-only textarea #dbgText when the clipboard is refused), so a
 // real pen stroke can be pasted back for the arrow fix. The button stops its own pointerdown: it never starts a stroke.
+// Parabola fit (pw-v4s): a parabola's classify word carries its fit and the arc's, "classify: parabola (p 2.1 / a 6.3)"
+// (lastStroke().fit, px).
 import { view, deskScroll } from './page.js';
 
 const KEEP = 4;                                   // the last event and the three before it
@@ -41,7 +43,7 @@ export function startDbg(desk, ink) {
   const vbox = document.createElement('pre'); vbox.id = 'dbgView'; desk.appendChild(vbox);
   const stack = desk.querySelector('#stack');
   const last = () => (ink && ink.lastStroke ? ink.lastStroke() : null);
-  const lastLine = () => { const L = last(); return L ? `last: ${L.n} pts, ${L.len} px, ${L.pointerType}, classify: ${L.classify || 'none'}, ${L.snapped ? 'snapped' : 'freehand'}` : 'last: none'; };
+  const lastLine = () => { const L = last(); return L ? `last: ${L.n} pts, ${L.len} px, ${L.pointerType}, classify: ${L.classify || 'none'}${L.fit ? ` (p ${L.fit.p.toFixed(1)} / a ${L.fit.a == null ? '-' : L.fit.a.toFixed(1)})` : ''}, ${L.snapped ? 'snapped' : 'freehand'}` : 'last: none'; };
   const btn = document.createElement('button'); btn.id = 'dbgCopy'; btn.type = 'button'; desk.appendChild(btn);
   let flash = false, flashT = 0, events = '';                  // flash: the button shows its own text for 2 s after a tap
   const paint = () => {
