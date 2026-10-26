@@ -2017,7 +2017,7 @@ try:
         cb_ = dbox(cn) if cn else None
         check("the duplicate of a corner box stays inside the page (right edge <= page width, bottom edge <= page height)",
               len(cn) == 1 and cb_[2] <= W + 1e-6 and cb_[3] <= H + 1e-6 and cb_[0] >= 0 and cb_[1] >= 0, cb_)
-        check("... pulled back on both axes (the plain +24 would leave the page), selected", len(cn) == 1 and moved(pre["dc1"]["data"]["points"], cn[0]["data"]["points"], 0) and selids() == [cn[0]["id"]], [cn and cn[0]["data"]["points"]])
+        check("... moved 24 px up and left instead (the plain +24 would leave the page; a copy never lands on itself), selected", len(cn) == 1 and moved(pre["dc1"]["data"]["points"], cn[0]["data"]["points"], -24) and selids() == [cn[0]["id"]], [cn and cn[0]["data"]["points"]])
         undo(pg)
 
         # 6: three chips stay inside the viewport near the right edge and near the page top (the ring flip case)

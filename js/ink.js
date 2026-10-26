@@ -853,7 +853,9 @@ function duplicateSel() {
   const page = SEL.page, d = data(page), recs = selRecs().sort(bySeq);
   if (!recs.length) return;
   const b = selBox(recs);
-  addCopies(page, recs, keepIn(b[0], b[2], DUP_STEP, d.w, DUP_STEP), keepIn(b[1], b[3], DUP_STEP, d.h, DUP_STEP));
+  // right and down, or where that is pulled back (the box sits at the edge) the other way, so the copy never lands on itself
+  const step = (lo, hi, W) => { const v = keepIn(lo, hi, DUP_STEP, W, DUP_STEP), u = keepIn(lo, hi, -DUP_STEP, W, -DUP_STEP); return Math.abs(v) >= Math.abs(u) ? v : u; };
+  addCopies(page, recs, step(b[0], b[2], d.w), step(b[1], b[3], d.h));
 }
 // a finger held still on the desk (page.js): over a page, a small menu with Paste (disabled with nothing copied)
 function holdMenu(cx, cy) {
