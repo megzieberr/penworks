@@ -32,6 +32,8 @@
 // Area eraser cuts shapes (pw-v4l): a shape the area eraser's ring touches turns into plain ink (shapeToInk: pen or
 // highlighter records sampled every 3 px along its outline) and the ring cuts that ink like a stroke; one bite out of
 // a closed shape leaves one open piece. The stroke eraser still removes a shape whole.
+// Overlap tie-break (pw-v4m): a select tap where highlighter-layer and pen-layer records overlap picks from the layer
+// of the last ink tool (T.lastInk); with no overlap across the layers it picks the topmost record, whatever is there.
 
 import * as store from './store-local.js';
 import { pageAt, pagePoint, view, pageSize } from './page.js';
@@ -51,7 +53,7 @@ const SEL_BLUE = '#2F4BB8';      // the selection box (the paper is white in bot
 
 const P = new Map();             // page id -> { strokes (by seq), byId, svg, hl, pen, hlo (opacity -> group), els (id -> path), w, h }
 const boxes = new WeakMap();     // record -> [x0, y0, x1, y1], its points' bounding box
-const T = { tool: 'pen', style: { colour: '#000000', width: 2.5, dash: 'solid', opacity: 1 } };
+const T = { tool: 'pen', lastInk: 'pen', style: { colour: '#000000', width: 2.5, dash: 'solid', opacity: 1 } };
 // what restyle hands out: its own colour, and the pen's and the highlighter's current settings (the tray keeps these up to date)
 const ST = { pen: { colour: '#000000', width: 2.5, dash: 'solid' }, highlighter: { colour: '#FFC107', width: 18, opacity: 0.4 }, restyle: null };
 let doOp = (op) => op.redo();
@@ -86,6 +88,7 @@ export function initInk(o) {
 export function setTool(tool, style) {
   if (tool !== T.tool) { clearSelection(); hideHandle(); }
   T.tool = tool; if (style) T.style = { ...style };
+  if (tool === 'pen' || tool === 'highlighter') T.lastInk = tool;   // the overlap tie-break (topAt) follows it
 }
 export function setStyles(pen, highlighter, restyle) { ST.pen = { ...pen }; ST.highlighter = { ...highlighter }; ST.restyle = restyle ? { ...restyle } : null; }
 export function tool() { return { tool: T.tool, style: { ...T.style } }; }
@@ -868,11 +871,17 @@ function inBox(id, b) {
   }
   return out;
 }
-// the stroke a tap lands on: walk the page from the top of the stack down (highest seq first), the first within reach
+// the stroke a tap lands on: every record within reach; when the hits hold both a highlighter-layer and a pen-layer
+// record, only the layer of the last ink tool counts (pw-v4m); the topmost of what counts (highest seq) wins
 function topAt(id, x, y, reach) {
-  const all = data(id).strokes;
-  for (let i = all.length - 1; i >= 0; i--) if (near(all[i], x, y, reach)) return all[i].id;
-  return null;
+  const all = data(id).strokes, hits = [];
+  for (let i = all.length - 1; i >= 0; i--) if (near(all[i], x, y, reach)) hits.push(all[i]);   // top of the stack first
+  if (!hits.length) return null;
+  if (hits.some(inHl) && hits.some((r) => !inHl(r))) {
+    const wantHl = T.lastInk === 'highlighter';
+    return hits.find((r) => inHl(r) === wantHl).id;
+  }
+  return hits[0].id;
 }
 // a finger tap (page.js: a touch that lifted within 6 px of where it landed): outside the selection's box it clears
 function fingerTap(cx, cy) {

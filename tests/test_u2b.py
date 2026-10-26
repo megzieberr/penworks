@@ -37,6 +37,9 @@
 # Area eraser cuts shapes (pw-v4l): a shape the area eraser touches turns into pen or highlighter ink and is cut like a
 # stroke (one bite out of a closed shape leaves one open piece; an arrow becomes shaft and head ink); the stroke eraser
 # still removes a shape whole. The erasers group's "removes the whole circle" check is flipped; the "area eraser cuts shapes (pw-v4l)" group.
+# Overlap tie-break (pw-v4m): a select tap where a highlighter-layer and a pen-layer record overlap picks the one in the
+# layer of the last ink tool (pen or highlighter, restored after a reload); with no overlap across the layers, the
+# topmost record under the tap, whatever it is. The "overlap pick (pw-v4m)" group.
 import sys, subprocess, time, pathlib, re, json, math
 from playwright.sync_api import sync_playwright
 
@@ -1710,6 +1713,62 @@ try:
         check("no page errors in the select polish group", not e22, e22)
         ctx.close()
 
+        # ------------------------------------------------------------ pw-v4m: a tap on an overlap picks the last ink tool's layer
+        group[0] = "overlap pick (pw-v4m)"
+        ctx, pg, e24 = fresh(b); errs += e24
+        open_note(pg, "Select")
+        def selids(): s_ = sel(pg); return s_["ids"] if s_ else None
+        def line_at(y): return [(200 + 25 * k, y) for k in range(13)]          # (200, y) to (500, y), freehand
+        def pick(*ts):
+            for t in ts: tool(pg, t)
+        tool(pg, "pen"); draw(pg, 1, line_at(400))
+        tool(pg, "highlighter"); draw(pg, 1, line_at(400))
+        PEN1, HL1 = [s_["id"] for s_ in strokes(pg, "p4")]
+        r_ = {s_["id"]: s_ for s_ in strokes(pg, "p4")}
+        check("set-up: a pen stroke, then a highlighter stroke over it (the highlighter last-drawn)",
+              r_[PEN1]["kind"] == "pen" and r_[HL1]["kind"] == "highlighter" and r_[HL1]["seq"] > r_[PEN1]["seq"], [r_[PEN1]["kind"], r_[HL1]["kind"]])
+        pick("pen", "select"); u0 = U(pg); tap_page(pg, 1, 350, 400)
+        check("pen, then select: a tap on the overlap selects the PEN stroke", selids() == [PEN1], sel(pg))
+        check("the tap is not an undo step", U(pg) == u0)
+        pick("highlighter", "select"); tap_page(pg, 1, 350, 400)
+        check("highlighter, then select: a tap on the overlap selects the HIGHLIGHTER stroke", selids() == [HL1], sel(pg))
+        tool(pg, "pen"); draw(pg, 1, line_at(700)); PEN2 = last(pg, "p4")["id"]
+        pick("highlighter", "select"); tap_page(pg, 1, 350, 700)
+        check("highlighter last, a tap where only a pen stroke is: that pen stroke", selids() == [PEN2], sel(pg))
+        tool(pg, "highlighter"); draw(pg, 1, line_at(900)); HL2 = last(pg, "p4")["id"]
+        pick("pen", "select"); tap_page(pg, 1, 350, 900)
+        check("pen last, a tap on a lone highlighter stroke: it is selected", selids() == [HL2], sel(pg))
+        tool(pg, "pen"); draw(pg, 1, line_at(600)); PEN3 = last(pg, "p4")["id"]
+        draw(pg, 1, line_at(600)); PEN4 = last(pg, "p4")["id"]
+        pick("highlighter", "select"); tap_page(pg, 1, 350, 600)
+        check("two pen strokes overlapping, highlighter last: the topmost pen stroke (highest seq)", PEN3 != PEN4 and selids() == [PEN4], sel(pg))
+        pick("pen", "select"); tap_page(pg, 1, 350, 600)
+        check("... and with the pen last too", selids() == [PEN4], sel(pg))
+        pick("pen", "select"); tap_page(pg, 1, 700, 1050)
+        check("a tap on empty paper: no selection", sel(pg) is None, sel(pg))
+        check("no page errors so far (overlap pick)", not e24, e24)
+
+        back(pg); open_note(pg, "Snap")
+        tool(pg, "pen"); draw(pg, 1, [(350, 250 + 25 * k) for k in range(13)])     # a vertical pen stroke through the circle's top
+        LN = last(pg, "p1")["id"]
+        tool(pg, "highlighter"); draw(pg, 1, rough_circle(350, 400, 90), steps=3, hold=650)
+        C = last(pg, "p1")
+        check("set-up: a highlighter-born circle (opacity under 1) over the pen stroke",
+              C["kind"] == "shape" and C["data"].get("type") == "circle" and C["style"].get("opacity", 1) < 1 and C["id"] != LN, [C["kind"], C["data"], C["style"]])
+        pick("pen", "select"); tap_page(pg, 1, 350, 310)
+        check("a shape over a pen stroke, pen last: the pen stroke", selids() == [LN], sel(pg))
+        pick("highlighter", "select"); tap_page(pg, 1, 350, 310)
+        check("a shape over a pen stroke, highlighter last: the shape", selids() == [C["id"]], sel(pg))
+        pick("pen", "highlighter"); pg.reload(); ready(pg); open_note(pg, "Snap")
+        check("after a reload the tray shows the highlighter", pg.locator("#tool-highlighter.on").count() == 1)
+        tool(pg, "select"); tap_page(pg, 1, 350, 310)
+        check("after a reload (highlighter picked) a tap on the overlap still picks the highlighter shape", selids() == [C["id"]], sel(pg))
+        pick("pen"); pg.reload(); ready(pg); open_note(pg, "Snap")
+        tool(pg, "select"); tap_page(pg, 1, 350, 310)
+        check("after a reload (pen picked) a tap on the overlap picks the pen stroke", selids() == [LN], sel(pg))
+        check("no page errors in the overlap pick group", not e24, e24)
+        ctx.close()
+
         # ------------------------------------------------------------ pw-v4k: the selection clipboard, hold a finger to paste
         group[0] = "clipboard (pw-v4k)"
         ctx, pg, e23 = fresh(b, has_touch=True); errs += e23
@@ -1866,7 +1925,7 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v4l", "pw-v4l" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v4m", "pw-v4m" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)
