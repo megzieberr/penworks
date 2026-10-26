@@ -1,0 +1,1 @@
+jspdf.umd.min.js: jsPDF 2.5.2 (UMD build, official npm package jspdf), fetched 26 Oct 2026 from https://unpkg.com/jspdf@2.5.2/dist/jspdf.umd.min.js (sha256 85ba2cc3ff858a20fa49fe6e457bec863ea40b55a9f3725e58a940e62f6f61a4, same bytes as jsdelivr).

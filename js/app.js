@@ -4,8 +4,9 @@
 // Ink lives in js/ink.js (strokes), js/store-local.js (kept on the device) and js/tray.js (the pen tray).
 // pw-v4q: the page list's Select (tick mode): tick several pages, then Delete, Copy, Cut or Move them together.
 // pw-v4r: page bookmarks (the page menu's Bookmark, a ribbon tab on the page and its thumb, a Bookmarks filter in the list).
+// pw-v4t: tick mode's Share: name the file first, then share the ticked pages as one PDF or as PNG images.
 import { api } from './api.js';
-import { initPage, showStack, fit, scrollToPage, relayout, current, bookmarkTab, markSheet } from './page.js';
+import { initPage, showStack, fit, scrollToPage, relayout, current, bookmarkTab, markSheet, bgSvg, pageSize } from './page.js';
 import * as ink from './ink.js';
 import * as store from './store-local.js';
 import { initTray, closePanel, trayState, chooseTool } from './tray.js';
@@ -722,6 +723,7 @@ function tickAction(kind) {
     if (kind === 'cut') deletePages(ids); else renderTick();
     toast(pagesWord(n) + (kind === 'cut' ? ' cut' : ' copied'));
   } else if (kind === 'move') { S.tick.moving = true; renderTick(); }
+  else if (kind === 'share') openShare(ids);
 }
 function moveTo(g) {
   const ids = ticked();
@@ -760,11 +762,152 @@ function renderTick() {
     }
     return;
   }
-  for (const [act, label] of [['delete', 'Delete'], ['copy', 'Copy'], ['cut', 'Cut'], ['move', 'Move']]) {
+  for (const [act, label] of [['delete', 'Delete'], ['copy', 'Copy'], ['cut', 'Cut'], ['move', 'Move'], ['share', 'Share']]) {
     const off = !n || (act === 'move' && (n === total || bmOnly));          // moving every page changes nothing; no Move in the filter
     B.append(h('button', { type: 'button', class: 'plAct', 'data-act': act, disabled: off, onclick: () => tickAction(act) }, label));
   }
 }
+// ---------------------------------------------------------------- share the ticked pages (pw-v4t)
+// Share (last in the tick bar) opens a small dialog: a Name box (the note's name, plus " p3" or " p3-5" when the ticked
+// pages are not the whole note, all of it selected) and Share as PDF / Share as images. Cancel, Escape or a tap outside
+// closes it. Every ticked page is drawn off-screen at 2x page px: one SVG (white paper, its paper pattern, both ink
+// layers with the highlighter groups' opacity) through a Blob URL into an <img>, onto a <canvas>, then toBlob. The PDF
+// (vendor/jspdf.umd.min.js, loaded the first time) gets one A4 page per page in note order, in that page's orientation,
+// a JPEG 0.92 at full bleed; images are one PNG per page. navigator.share takes the files when it can (Android: the
+// system share sheet); otherwise, or when it fails with anything but a cancel, every file downloads. Tick mode ends
+// after a share. Her ask (26 Oct): Samsung Notes never lets her name the PDF before it goes.
+const SVGNS = 'http://www.w3.org/2000/svg';
+const SHARE_SCALE = 2;
+const fileName = (t) => String(t).replace(/[^\p{L}\p{N} _\-()[\]]/gu, '').trim() || 'PenWorks';
+// the name box's first text: the note's name, plus the page numbers when not every page of the note is ticked
+function shareName(ids) {
+  const all = pagesOf(S.openNote), nums = ids.map((id) => all.findIndex((p) => p.id === id) + 1).filter((k) => k > 0).sort((a, b) => a - b);
+  const base = (note(S.openNote) || {}).name || 'PenWorks';
+  if (!nums.length || nums.length === all.length) return base;
+  const a = nums[0], b = nums[nums.length - 1];
+  return base + ' p' + (a === b ? a : a + '-' + b);
+}
+// one page as an SVG document at 2x: the viewBox is the page in page px, so the paper and the ink keep their own numbers
+function pageSvgText(p) {
+  const { w, h } = pageSize(p.orientation);
+  const svg = document.createElementNS(SVGNS, 'svg');
+  svg.setAttribute('width', w * SHARE_SCALE); svg.setAttribute('height', h * SHARE_SCALE);
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  const white = document.createElementNS(SVGNS, 'rect');
+  white.setAttribute('width', w); white.setAttribute('height', h); white.setAttribute('fill', '#FFFFFF');
+  svg.append(white);
+  const bg = bgSvg(w, h, p.background);
+  while (bg.firstChild) svg.append(bg.firstChild);
+  const layer = ink.thumbSvg(p.id, p.orientation);                 // the page's ink, built from its records (hl below pen)
+  while (layer.firstChild) svg.append(layer.firstChild);
+  return new XMLSerializer().serializeToString(svg);
+}
+async function renderPage(p, type, quality) {
+  const { w, h } = pageSize(p.orientation), W = w * SHARE_SCALE, H = h * SHARE_SCALE;
+  const url = URL.createObjectURL(new Blob([pageSvgText(p)], { type: 'image/svg+xml' }));
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    g.fillStyle = '#FFFFFF'; g.fillRect(0, 0, W, H);
+    g.drawImage(img, 0, 0, W, H);
+    return await new Promise((ok, no) => c.toBlob((b) => (b ? ok(b) : no(new Error('a page could not be drawn'))), type, quality));
+  } finally { URL.revokeObjectURL(url); }
+}
+let jspdfLoad = null;
+function loadJsPdf() {
+  if (window.jspdf) return Promise.resolve(window.jspdf);
+  return (jspdfLoad ||= new Promise((ok, no) => {
+    const s = document.createElement('script');
+    s.src = './vendor/jspdf.umd.min.js';
+    s.onload = () => (window.jspdf ? ok(window.jspdf) : no(new Error('the PDF maker did not load')));
+    s.onerror = () => { jspdfLoad = null; s.remove(); no(new Error('the PDF maker did not load')); };
+    document.head.append(s);
+  }));
+}
+// the ticked pages as File objects; progress(k, n) before page k of n
+async function shareFiles(ids, kind, name, progress) {
+  const list = ids.map(page).filter(Boolean), n = list.length, blobs = [];
+  for (let k = 0; k < n; k++) {
+    progress(k + 1, n);
+    await new Promise((r) => setTimeout(r, 0));                     // a yield between pages: the screen stays alive
+    blobs.push(await renderPage(list[k], kind === 'pdf' ? 'image/jpeg' : 'image/png', kind === 'pdf' ? 0.92 : undefined));
+  }
+  if (kind === 'images') {
+    return blobs.map((b, k) => new File([b], n === 1 ? name + '.png' : `${name}-${k + 1}.png`, { type: 'image/png' }));
+  }
+  const { jsPDF } = await loadJsPdf();
+  let doc = null;
+  for (let k = 0; k < n; k++) {
+    const o = list[k].orientation === 'landscape' ? 'landscape' : 'portrait';
+    if (!doc) doc = new jsPDF({ orientation: o, unit: 'pt', format: 'a4', compress: true });
+    else doc.addPage('a4', o);
+    const pw = doc.internal.pageSize.getWidth(), ph = doc.internal.pageSize.getHeight();
+    doc.addImage(new Uint8Array(await blobs[k].arrayBuffer()), 'JPEG', 0, 0, pw, ph, undefined, 'NONE');
+  }
+  doc.setProperties({ title: name });
+  return [new File([doc.output('blob')], name + '.pdf', { type: 'application/pdf' })];
+}
+// the share sheet when it takes files, else one download per file (150 ms apart); '' when she cancelled the sheet
+async function deliver(files, name) {
+  let can = false;
+  try { can = typeof navigator.share === 'function' && !!navigator.canShare && navigator.canShare({ files }); } catch (_) { can = false; }
+  if (can) {
+    try { await navigator.share({ files, title: name }); return 'Shared'; }
+    catch (e) { if (e && e.name === 'AbortError') return ''; }      // any other refusal: download instead
+  }
+  for (let k = 0; k < files.length; k++) {
+    if (k) await new Promise((r) => setTimeout(r, 150));
+    const url = URL.createObjectURL(files[k]), a = h('a', { href: url, download: files[k].name });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+  return 'Saved to downloads';
+}
+// the dialog: centred on a veil, the app's card look. While it works its buttons are off (and, past 3 pages, the
+// pressed one counts "Rendering 2 / 12"); Cancel, Escape and a tap outside do nothing until it is done.
+let shareDlg = null;
+function closeShare() { if (shareDlg) { shareDlg.remove(); shareDlg = null; } }
+function openShare(ids) {
+  closeShare(); closeMenu();
+  let busy = false;
+  const inp = h('input', { class: 'dlgName', id: 'shareName', value: shareName(ids), 'aria-label': 'Name', autocomplete: 'off', spellcheck: 'false' });
+  const go = async (kind, btn) => {
+    if (busy) return;
+    busy = true;
+    const name = fileName(inp.value), label = btn.textContent;
+    btns.forEach((b) => { b.disabled = true; }); inp.disabled = true;
+    try {
+      const files = await shareFiles(ids, kind, name, (k, n) => { if (n > 3) btn.textContent = `Rendering ${k} / ${n}`; });
+      btn.textContent = label;
+      const said = await deliver(files, name);
+      closeShare();
+      if (said) { endTick(); toast(said); }
+    } catch (e) {
+      closeShare();
+      toast('Could not share: ' + ((e && e.message) || e));
+    }
+  };
+  const pdfBtn = h('button', { type: 'button', class: 'dlgBtn main', 'data-share': 'pdf', onclick: () => go('pdf', pdfBtn) }, 'Share as PDF');
+  const imgBtn = h('button', { type: 'button', class: 'dlgBtn main', 'data-share': 'images', onclick: () => go('images', imgBtn) }, 'Share as images');
+  const cancel = h('button', { type: 'button', class: 'dlgBtn', 'data-share': 'cancel', onclick: () => { if (!busy) closeShare(); } }, 'Cancel');
+  const btns = [pdfBtn, imgBtn, cancel];
+  const box = h('div', { class: 'dlg', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'shareTitle' },
+    h('b', { class: 'dlgTitle', id: 'shareTitle' }, 'Share ' + pagesWord(ids.length)),
+    h('label', { class: 'dlgLbl', for: 'shareName' }, 'Name'), inp,
+    h('div', { class: 'dlgRow' }, pdfBtn, imgBtn), h('div', { class: 'dlgRow end' }, cancel));
+  shareDlg = h('div', { class: 'dlgVeil', id: 'shareDlg' }, box);
+  shareDlg.addEventListener('pointerdown', (e) => { if (e.target === shareDlg && !busy) closeShare(); });
+  shareDlg.addEventListener('keydown', (e) => {
+    e.stopPropagation();                                            // the app's own keys (Escape ends tick mode) wait
+    if (e.key === 'Escape' && !busy) closeShare();
+  });
+  document.body.append(shareDlg);
+  inp.focus(); inp.select();
+}
+
 // the thumb of a page whose ink changed (ink.js apply: drawing, erasing, undo, redo): rebuild just its svg, once per
 // frame, so a stroke that lands in many pieces rebuilds once
 const thumbDue = new Set();

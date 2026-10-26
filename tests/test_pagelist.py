@@ -13,7 +13,12 @@
 # pw-v4r: page bookmarks. The page menu (the note header's dots) toggles a page's `bookmark` (not an undo step), a ribbon
 # tab shows on the page and its thumb, and the list header's Bookmarks toggle shows only the bookmarked pages. A note
 # 'Marks' with 4 pages, one stroke each (x 110 to 140 names the page). The "bookmarks (pw-v4r)" group.
-import sys, subprocess, time, pathlib, math
+# pw-v4t: tick mode's Share (a name box first, then one PDF or PNG images). Headless Chromium has no share sheet: an init
+# script stubs navigator.canShare / navigator.share (the files land in window.__shared); a second context has no
+# navigator.share and watches the downloads. PDFs are read with PyMuPDF, PNGs by their header and pixels (numpy), never
+# looked at. A note 'Test note' with 4 pages (a stroke each) and 'Twelve' (12 pages) for the timing. The "share (pw-v4t)" group.
+import sys, subprocess, time, pathlib, math, base64, struct
+import fitz, numpy as np
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -265,7 +270,7 @@ try:
         select(); q = ui()
         check("Select: 6 tick boxes, '0 selected', All and Done shown, Select hidden", q["ticks"] == 6 and q["sel"] == "0 selected" and q["selShown"]
               and q["done"] and q["all"] and not q["select"], q)
-        check("the bar: Delete, Copy, Cut, Move, all disabled", pg.evaluate(BAR_JS) == [["Delete", True], ["Copy", True], ["Cut", True], ["Move", True]], pg.evaluate(BAR_JS))
+        check("the bar: Delete, Copy, Cut, Move, Share, all disabled", pg.evaluate(BAR_JS) == [["Delete", True], ["Copy", True], ["Cut", True], ["Move", True], ["Share", True]], pg.evaluate(BAR_JS))
         box = pg.evaluate("""() => { const t = document.querySelector('#plThumbs .thumbP .tick'), b = t.getBoundingClientRect(), s = getComputedStyle(t, '::before');
             return [Math.round(b.width), Math.round(b.height), parseFloat(s.width) + parseFloat(s.borderLeftWidth) + parseFloat(s.borderRightWidth), s.borderRadius]; }""")
         check("a tick box: 28 px round ring, 44 px hit area", box[:3] == [44, 44, 28] and box[3] == "50%", box)
@@ -555,10 +560,219 @@ try:
         # ------------------------------------------------------------ 8. cache
         group[0] = "cache"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v4s" not in keys:
+        if "pw-v4t" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v4s", "pw-v4s" in keys, keys)
+        check("cache is pw-v4t", "pw-v4t" in keys, keys)
+        sw_src = pg.evaluate("fetch('./sw.js').then(r => r.text())")
+        check("sw.js lists vendor/jspdf.umd.min.js", "./vendor/jspdf.umd.min.js" in sw_src)
         ctx.close()
+
+        # ------------------------------------------------------------ 9. share (pw-v4t)
+        group[0] = "share (pw-v4t)"
+        SHARE_SEED_JS = """() => {
+          localStorage.clear();
+          const t = '2026-10-26T10:00:00Z', P = (id, nid, k) => ({ id, note_id: nid, position: k, orientation: 'portrait', background: 'grid',
+            deleted_at: null, created_at: t, updated_at: t });
+          localStorage.setItem('penworks.local.v2', JSON.stringify({
+            folders: [{ id: 'f1', parent_id: null, name: 'Share', colour: null, position: 0, deleted_at: null, created_at: t, updated_at: t }],
+            notes: [{ id: 'n1', folder_id: 'f1', name: 'Test note', pinned: false, cover_path: null, deleted_at: null, created_at: t, updated_at: '2026-10-26T10:02:00Z' },
+                    { id: 'n2', folder_id: 'f1', name: 'Twelve', pinned: false, cover_path: null, deleted_at: null, created_at: t, updated_at: '2026-10-26T10:01:00Z' }],
+            pages: [...[1, 2, 3, 4].map((k) => P('t' + k, 'n1', k - 1)), ...Array.from({ length: 12 }, (_, k) => P('w' + (k + 1), 'n2', k))] }));
+          const st = (pid, k, x, y) => ({ id: pid + '-s' + k, page_id: pid, seq: k + 1, kind: 'pen', style: { colour: '#000000', width: 3, dash: 'solid', opacity: 1 },
+            data: { points: Array.from({ length: 30 }, (_, j) => [x + j * 12, Math.round((y + 20 * Math.sin(j / 3)) * 10) / 10]) } });
+          const hl = { id: 't2-hl', page_id: 't2', seq: 50, kind: 'highlighter', style: { colour: '#FFD400', width: 24, dash: 'solid', opacity: 0.4 },
+            data: { points: [[100, 700], [600, 700]] } };
+          for (let k = 1; k <= 4; k++) localStorage.setItem('pw.strokes.t' + k, JSON.stringify([st('t' + k, 0, 100, 200 + 60 * k), ...(k === 2 ? [hl] : [])]));
+          for (let k = 1; k <= 12; k++) localStorage.setItem('pw.strokes.w' + k, JSON.stringify(Array.from({ length: 60 }, (_, j) => st('w' + k, j, 60 + (j % 3) * 30, 80 + j * 16))));
+        }"""
+        STUB_JS = "navigator.canShare = () => true; navigator.share = async (d) => { window.__shared = d; window.__sharedAt = performance.now(); };"
+        NOSHARE_JS = "navigator.canShare = () => true; Object.defineProperty(navigator, 'share', { value: undefined, configurable: true, writable: true });"
+        SHARED_JS = """async () => { const d = window.__shared; if (!d) return null;
+            const b64 = async (f) => { const u = new Uint8Array(await f.arrayBuffer()); let s = '';
+              for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000)); return btoa(s); };
+            return { title: d.title, files: await Promise.all(d.files.map(async (f) => ({ name: f.name, type: f.type, size: f.size, b64: await b64(f) }))) }; }"""
+        DLG_JS = """() => { const d = document.getElementById('shareDlg'), i = document.getElementById('shareName');
+            if (!d) return { open: false };
+            const r = d.querySelector('.dlg').getBoundingClientRect();
+            return { open: true, value: i.value, selAll: i.selectionStart === 0 && i.selectionEnd === i.value.length && i.value.length > 0,
+              focused: document.activeElement === i, buttons: [...d.querySelectorAll('button')].map(b => b.textContent),
+              centred: Math.abs(r.left + r.width / 2 - innerWidth / 2) < 2 && Math.abs(r.top + r.height / 2 - innerHeight / 2) < 2 }; }"""
+        STATE_JS = """() => ({ strokes: ['t1', 't2', 't3', 't4'].map(id => window.__pw.ink.strokesOf(id).length),
+            undo: (window.__pw.S.hist['n1'] || { u: [] }).u.length, redo: (window.__pw.S.hist['n1'] || { r: [] }).r.length,
+            pages: window.__pw.S.pages.filter(p => p.note_id === 'n1' && !p.deleted_at).sort((a, b) => a.position - b.position).map(p => p.id + p.orientation + p.background) })"""
+        brief = lambda sh: None if not sh else {"title": sh["title"], "files": [[f["name"], f["type"], f["size"]] for f in sh["files"]]}
+        def dark_count(pix):
+            a = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
+            return int((a[:, :, :3].max(axis=2) < 100).sum())
+        def pdf_info(f):
+            doc = fitz.open(stream=base64.b64decode(f["b64"]), filetype="pdf")
+            out = {"pages": doc.page_count, "sizes": [(round(p_.rect.width, 2), round(p_.rect.height, 2)) for p_ in doc],
+                   "dark1": dark_count(doc[0].get_pixmap(dpi=200))}
+            doc.close(); return out
+        def png_info(f):
+            data = base64.b64decode(f["b64"])
+            head = data[:8] == b"\x89PNG\r\n\x1a\n"
+            w_, h_ = struct.unpack(">II", data[16:24])
+            pix = fitz.Pixmap(data)
+            a = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
+            return {"png": head, "size": (w_, h_), "dark": int((a[:, :, :3].max(axis=2) < 100).sum()), "px": a}
+        A4P, A4L = (595.28, 841.89), (841.89, 595.28)
+        near = lambda s_, t_: abs(s_[0] - t_[0]) <= 1 and abs(s_[1] - t_[1]) <= 1
+        def fresh_share(init_js):
+            c = b.new_context(viewport={"width": 1280, "height": 1300}, accept_downloads=True)
+            c.add_init_script(init_js)
+            p = c.new_page(); e = []
+            p.on("pageerror", lambda x: e.append(str(x)))
+            p.goto(LOCAL); ready(p); p.evaluate(SHARE_SEED_JS); p.reload(); ready(p)
+            if p.locator("#noteView").is_visible(): p.click("#backBtn"); p.wait_for_selector("#listView:not([hidden])")
+            p.locator(".frow", has_text="Share").first.click(); p.wait_for_timeout(60)
+            return c, p, e
+        def share_start(p, ticks=(), all_=False):
+            open_list(p)
+            if p.evaluate("window.__pw.tick()") is not None: p.click("#plDone"); p.wait_for_timeout(40)
+            p.click("#plSelect"); p.wait_for_timeout(40)
+            if all_: p.click("#plAll"); p.wait_for_timeout(40)
+            for k in ticks: thumb(p, k).click(); p.wait_for_timeout(30)
+            p.click("#plBar button[data-act='share']"); p.wait_for_selector("#shareDlg")
+        def share_go(p, kind, name=None):
+            if name is not None: p.fill("#shareName", name)
+            p.evaluate("window.__shared = null")
+            t0 = p.evaluate("performance.now()")
+            p.click(f"#shareDlg button[data-share='{kind}']")
+            p.wait_for_function("window.__shared", timeout=30000)
+            ms = p.evaluate("window.__sharedAt") - t0
+            p.wait_for_selector("#shareDlg", state="detached"); p.wait_for_timeout(40)
+            return p.evaluate(SHARED_JS), ms
+
+        c2, p2, e2 = fresh_share(STUB_JS)
+        open_note(p2, "Test note")
+        st0 = p2.evaluate(STATE_JS)
+        check("set-up: 'Test note' with 4 pages, a stroke each (page 2 a highlighter stroke too)", st0["strokes"] == [1, 2, 1, 1] and len(st0["pages"]) == 4, st0)
+        # 1. tick 2 and 3, Share: the dialog
+        open_list(p2); p2.click("#plSelect"); p2.wait_for_timeout(40)
+        fits = p2.evaluate("""() => { const B = document.getElementById('plBar');
+            return [...B.querySelectorAll('.plAct')].every(x => x.scrollWidth <= x.clientWidth) && B.scrollWidth <= B.clientWidth; }""")
+        check("the five bar words fit the list (no button or bar overflows)", fits)
+        share_start(p2, (2, 3)); q = p2.evaluate(DLG_JS)
+        check("tick 2 and 3, Share: a dialog, the name box holds 'Test note p2-3', all of it selected, focused", q.get("value") == "Test note p2-3"
+              and q["selAll"] and q["focused"], q)
+        check("the dialog: Share as PDF, Share as images, Cancel; centred", q.get("buttons") == ["Share as PDF", "Share as images", "Cancel"] and q["centred"], q)
+        p2.keyboard.press("Escape"); p2.wait_for_timeout(40)
+        check("Escape closes it (the ticks stay)", not p2.evaluate(DLG_JS)["open"] and p2.evaluate("window.__pw.tick()") == {"ids": ["t2", "t3"], "moving": False},
+              p2.evaluate("window.__pw.tick()"))
+        p2.click("#plBar button[data-act='share']"); p2.wait_for_selector("#shareDlg"); p2.click("#shareDlg button[data-share='cancel']"); p2.wait_for_timeout(40)
+        ok_cancel = not p2.evaluate(DLG_JS)["open"]
+        p2.click("#plBar button[data-act='share']"); p2.wait_for_selector("#shareDlg"); p2.mouse.click(1270, 1290); p2.wait_for_timeout(40)
+        check("Cancel closes it, and so does a tap outside", ok_cancel and not p2.evaluate(DLG_JS)["open"])
+        # 2. Share as PDF
+        p2.click("#plBar button[data-act='share']"); p2.wait_for_selector("#shareDlg")
+        typed = p2.evaluate("document.getElementById('shareName').value")
+        p2.keyboard.type("Homework week 3"); p2.wait_for_timeout(20)
+        check("typing replaces the selected name", p2.evaluate("document.getElementById('shareName').value") == "Homework week 3", typed)
+        sh, ms = share_go(p2, "pdf")
+        fs = sh["files"] if sh else []
+        check("Share as PDF: one file 'Homework week 3.pdf', application/pdf, over 10 KB, title = the name",
+              len(fs) == 1 and fs[0]["name"] == "Homework week 3.pdf" and fs[0]["type"] == "application/pdf" and fs[0]["size"] > 10240
+              and sh["title"] == "Homework week 3", brief(sh))
+        pi = pdf_info(fs[0]) if fs else {}
+        check("the PDF: 2 pages, both A4 portrait within 1 pt", pi.get("pages") == 2 and all(near(s_, A4P) for s_ in pi["sizes"]), pi)
+        check("PDF page 1 is not blank (over 50 dark pixels at 200 dpi)", pi.get("dark1", 0) > 50, pi.get("dark1"))
+        st1 = p2.evaluate(STATE_JS)
+        check("after the share: tick mode is off, toast 'Shared'", p2.evaluate("window.__pw.tick()") is None
+              and p2.evaluate("document.getElementById('toast').textContent") == "Shared", p2.evaluate("document.getElementById('toast').textContent"))
+        check("nothing on the page changed (strokes, undo and redo counts, pages)", st1 == st0, [st0, st1])
+        # 3. Share as images
+        share_start(p2, (2, 3)); sh, ms = share_go(p2, "images", "Homework week 3")
+        fs = sh["files"] if sh else []
+        check("Share as images: 'Homework week 3-1.png' and '-2.png', image/png",
+              [f["name"] for f in fs] == ["Homework week 3-1.png", "Homework week 3-2.png"] and all(f["type"] == "image/png" for f in fs), brief(sh))
+        pis = [png_info(f) for f in fs]
+        check("each is a 1588 x 2246 PNG (header), not blank", len(pis) == 2 and all(x["png"] and x["size"] == (1588, 2246) and x["dark"] > 50 for x in pis),
+              [(x["png"], x["size"], x["dark"]) for x in pis])
+        if pis:
+            px = [int(v) for v in pis[0]["px"][1400, 700, :3]]; grid = [int(v) for v in pis[0]["px"][100, 0, :3]]
+        else: px, grid = [], []
+        check("page 2's highlighter keeps its opacity: #FFD400 at 0.4 over white is about (255, 238, 153)",
+              len(px) == 3 and abs(px[0] - 255) <= 8 and abs(px[1] - 238) <= 8 and abs(px[2] - 153) <= 8, px)
+        check("the paper pattern is drawn (a grid line at the page's left edge, not white)", len(grid) == 3 and max(grid) < 245 and min(grid) > 180, grid)
+        check("still nothing changed on the page", p2.evaluate(STATE_JS) == st0, p2.evaluate(STATE_JS))
+        # 7. a name of only punctuation, and one with a few banned characters
+        share_start(p2, (1,)); sh, _ = share_go(p2, "pdf", "???")
+        check("the name '???' gives 'PenWorks.pdf'", sh and [f["name"] for f in sh["files"]] == ["PenWorks.pdf"], brief(sh))
+        share_start(p2, (1,)); sh, _ = share_go(p2, "images", " Wiskunde/ê-toets: (V1) [b]? ")
+        check("'Wiskunde/ê-toets: (V1) [b]?' keeps letters, digits, spaces, dashes, brackets: 'Wiskundeê-toets (V1) [b].png'",
+              sh and [f["name"] for f in sh["files"]] == ["Wiskundeê-toets (V1) [b].png"], brief(sh))
+        # a cancelled share sheet says nothing; any other refusal downloads
+        p2.evaluate("() => { navigator.share = async () => { throw new DOMException('cancelled', 'AbortError'); }; }")
+        dls = []; p2.on("download", lambda d: dls.append(d))
+        p2.evaluate("document.getElementById('toast').textContent = 'x'")
+        share_start(p2, (1,)); p2.click("#shareDlg button[data-share='pdf']"); p2.wait_for_selector("#shareDlg", state="detached"); p2.wait_for_timeout(400)
+        check("a cancelled share sheet (AbortError): no toast, no download", p2.evaluate("document.getElementById('toast').textContent") == "x" and not dls,
+              [p2.evaluate("document.getElementById('toast').textContent"), len(dls)])
+        p2.evaluate("() => { navigator.share = async () => { throw new DOMException('no gesture', 'NotAllowedError'); }; }")
+        share_start(p2, (1,))
+        with p2.expect_download() as dl: p2.click("#shareDlg button[data-share='pdf']")
+        p2.wait_for_selector("#shareDlg", state="detached"); p2.wait_for_timeout(60)
+        check("any other refusal (NotAllowedError): the file downloads, toast 'Saved to downloads'", dl.value.suggested_filename == "Test note p1.pdf"
+              and p2.evaluate("document.getElementById('toast').textContent") == "Saved to downloads", [dl.value.suggested_filename])
+        p2.evaluate("() => { navigator.share = async (d) => { window.__shared = d; window.__sharedAt = performance.now(); }; }")
+        # 4. one landscape page
+        go_page(p2, 4); p2.click("#noteMore"); p2.wait_for_timeout(40); menu_click(p2, "Landscape"); menu_click(p2, "Just this page"); idle(p2)
+        check("set-up: page 4 is landscape (page menu)", p2.evaluate("window.__pw.S.pages.find(p => p.id === 't4').orientation") == "landscape")
+        share_start(p2, (4,)); q = p2.evaluate(DLG_JS)
+        check("one page ticked: the name box says 'Test note p4'", q.get("value") == "Test note p4", q)
+        sh, _ = share_go(p2, "pdf")
+        pi = pdf_info(sh["files"][0]) if sh else {}
+        check("its PDF: 1 page, A4 landscape within 1 pt, not blank", sh and sh["files"][0]["name"] == "Test note p4.pdf" and pi.get("pages") == 1
+              and near(pi["sizes"][0], A4L) and pi["dark1"] > 50, [brief(sh), pi])
+        share_start(p2, (4,)); sh, _ = share_go(p2, "images")
+        pis = [png_info(f) for f in sh["files"]] if sh else []
+        check("its image: one 'Test note p4.png', 2246 x 1588", sh and [f["name"] for f in sh["files"]] == ["Test note p4.png"] and pis[0]["size"] == (2246, 1588),
+              [brief(sh), [x["size"] for x in pis]])
+        # 5. all four
+        share_start(p2, all_=True); q = p2.evaluate(DLG_JS)
+        check("All four ticked: the name box says 'Test note' (no page suffix)", q.get("value") == "Test note", q)
+        sh, _ = share_go(p2, "pdf")
+        pi = pdf_info(sh["files"][0]) if sh else {}
+        check("the PDF: 4 pages, 1 to 3 portrait, 4 landscape", sh and sh["files"][0]["name"] == "Test note.pdf" and pi.get("pages") == 4
+              and all(near(s_, A4P) for s_ in pi["sizes"][:3]) and near(pi["sizes"][3], A4L), pi)
+        # 6. twelve pages: progress and time
+        close_list(p2); open_note(p2, "Twelve"); share_start(p2, all_=True)
+        p2.evaluate("""() => { window.__prog = []; const d = document.getElementById('shareDlg'), b = d.querySelector("button[data-share='pdf']");
+            new MutationObserver(() => window.__prog.push([b.textContent, [...d.querySelectorAll('button')].every(x => x.disabled)]))
+              .observe(b, { childList: true, characterData: true, subtree: true }); }""")
+        sh, ms12 = share_go(p2, "pdf", "Twelve pages")
+        prog = p2.evaluate("window.__prog")
+        texts = [t_ for t_, _ in prog]
+        check("12 pages: the button counts 'Rendering 1 / 12' to 'Rendering 12 / 12', every button disabled meanwhile",
+              "Rendering 1 / 12" in texts and "Rendering 12 / 12" in texts and all(d_ for t_, d_ in prog if t_.startswith("Rendering")), texts)
+        pi = pdf_info(sh["files"][0]) if sh else {}
+        check("the 12-page PDF has 12 pages", pi.get("pages") == 12, pi)
+        check("12 A4 pages at 2x render and share in under 6 s", 0 < ms12 < 6000, round(ms12))
+        info_lines.append(f"share: 12 A4 pages (60 strokes each) at 2x to one PDF in {round(ms12)} ms, {round(sh['files'][0]['size'] / 1024) if sh else '?'} KB")
+        share_start(p2, all_=True); sh, msi = share_go(p2, "images", "Twelve pages")
+        info_lines.append(f"share: the same 12 pages as PNGs in {round(msi)} ms")
+        check("no page errors (share)", not e2, e2)
+        c2.close()
+
+        # 6. no navigator.share: downloads
+        c3, p3, e3 = fresh_share(NOSHARE_JS)
+        open_note(p3, "Test note")
+        dl3 = []; p3.on("download", lambda d: dl3.append(d))
+        def wait_dl(n, ms=15000):
+            t0 = time.time()
+            while len(dl3) < n and (time.time() - t0) * 1000 < ms: p3.wait_for_timeout(50)
+        share_start(p3, (2, 3)); p3.fill("#shareName", "Homework week 3"); p3.click("#shareDlg button[data-share='pdf']"); wait_dl(1); p3.wait_for_timeout(300)
+        check("no navigator.share: Share as PDF downloads one file 'Homework week 3.pdf'", [d.suggested_filename for d in dl3] == ["Homework week 3.pdf"],
+              [d.suggested_filename for d in dl3])
+        check("toast 'Saved to downloads', tick mode off", p3.evaluate("document.getElementById('toast').textContent") == "Saved to downloads"
+              and p3.evaluate("window.__pw.tick()") is None, p3.evaluate("document.getElementById('toast').textContent"))
+        dl3.clear()
+        share_start(p3, (2, 3)); p3.fill("#shareName", "Homework week 3"); p3.click("#shareDlg button[data-share='images']"); wait_dl(2); p3.wait_for_timeout(400)
+        check("and Share as images downloads two: '-1.png', '-2.png'", [d.suggested_filename for d in dl3] == ["Homework week 3-1.png", "Homework week 3-2.png"],
+              [d.suggested_filename for d in dl3])
+        check("no page errors (downloads)", not e3, e3)
+        c3.close()
         b.close()
 finally:
     srv.terminate()

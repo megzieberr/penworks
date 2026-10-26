@@ -38,7 +38,8 @@ export function pageSize(orientation) {
   return orientation === 'landscape' ? { w: A4.h, h: A4.w } : { ...A4 };
 }
 
-function bgSvg(w, h, kind) {
+// the paper pattern as its own <svg> (also drawn into a shared page, pw-v4t)
+export function bgSvg(w, h, kind) {
   const svg = document.createElementNS(SVGNS, 'svg');
   svg.setAttribute('width', w); svg.setAttribute('height', h);
   svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
