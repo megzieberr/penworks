@@ -1166,6 +1166,8 @@ try:
         a, b2 = screen(pg, 1, 200, 400), screen(pg, 1, 400, 480)
         pen.stroke([a, b2], steps=12)
         txt = pg.evaluate("document.getElementById('dbg').textContent").split("\n")
+        lastln = txt.pop()                          # pw-v4n: the box ends with the 'last: ...' line; the rest are event lines
+        check("the readout's bottom line is the last-stroke line (pw-v4n)", re.fullmatch(r"last: \d+ pts, \d+(\.\d)? px, pen, classify: \w+, (snapped|freehand)", lastln) is not None, lastln)
         check("a pen stroke still draws with the readout on", len(strokes(pg, "p2")) == n0 + 1)
         check("the readout shows at most 4 lines, the newest first: 'pointerup pen 0 0 0'", len(txt) <= 4 and txt[0] == "pointerup pen 0 0 0", txt)
         check("every line is 'type pointerType button buttons pressure'", all(re.fullmatch(r"(pointer\w+|contextmenu) \w+ -?\d+ \d+ (-|\d+(\.\d\d)?)", t) for t in txt), txt)
@@ -1925,7 +1927,7 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v4m", "pw-v4m" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v4n", "pw-v4n" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)

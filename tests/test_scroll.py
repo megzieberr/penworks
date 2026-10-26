@@ -3,7 +3,8 @@
 # Seeds one note of 8 grid pages into the localStorage twin and drives a finger through CDP touch input,
 # the S Pen through CDP mouse input with pointerType "pen", and a burst of moves through synthetic
 # PointerEvents. The stack's place is read from its transform; an in-page frame recorder logs every frame.
-import sys, subprocess, time, pathlib, re, io
+# pw-v4n: the "dbg last stroke (pw-v4n)" group: ?dbg=1 shows the last stroke's line and a Copy last stroke button (ink.lastStroke()).
+import sys, subprocess, time, pathlib, re, io, json, math
 from playwright.sync_api import sync_playwright
 from PIL import Image
 
@@ -248,6 +249,74 @@ try:
         check("the view line sits in its own box above the events box, inside the desk", pg2.evaluate("""() => { const v = document.getElementById('dbgView'), e = document.getElementById('dbg');
           return v.parentNode.id === 'desk' && v.getBoundingClientRect().bottom <= e.getBoundingClientRect().top && getComputedStyle(v).pointerEvents === 'none'; }"""))
         ctx2.close()
+        # ------------------------------------------------------------ pw-v4n: ?dbg=1 shows and copies the last stroke
+        prev_group = group[0]
+        group[0] = "dbg last stroke (pw-v4n)"
+        ctx3 = b.new_context(viewport={"width": 1280, "height": 800}, has_touch=True)
+        ctx3.grant_permissions(["clipboard-read", "clipboard-write"])
+        pg3 = ctx3.new_page(); errs3 = []
+        pg3.on("pageerror", lambda e: errs3.append(str(e)))
+        pg3.goto(LOCAL + "&dbg=1"); ready(pg3); pg3.evaluate(SEED); pg3.reload(); ready(pg3)
+        pg3.locator(".nrow").first.click(); pg3.wait_for_selector("#noteView:not([hidden])"); pg3.wait_for_timeout(400)
+        n_all = lambda: pg3.evaluate("(ids) => ids.reduce((k, id) => k + window.__pw.ink.strokesOf(id).length, 0)", ids)
+        dbg_text = lambda: pg3.evaluate("document.getElementById('dbg').textContent")
+        btn_text = lambda: pg3.evaluate("document.getElementById('dbgCopy').textContent")
+        check("before any stroke: #dbg shows 'last: none'", "last: none" in dbg_text(), dbg_text())
+        check("before any stroke: #dbgCopy is disabled and says 'No stroke yet'", pg3.evaluate("() => { const b = document.getElementById('dbgCopy'); return !!b && b.disabled && b.textContent === 'No stroke yet'; }"))
+        check("before any stroke: lastStroke() is null", pg3.evaluate("window.__pw.ink.lastStroke()") is None)
+        check("the button sits on the desk above #dbgView, 44 px tall at least, takes pointer events, same left edge", pg3.evaluate("""() => { const b = document.getElementById('dbgCopy'), v = document.getElementById('dbgView'), r = b.getBoundingClientRect();
+          return b.parentNode.id === 'desk' && r.bottom <= v.getBoundingClientRect().top && r.height >= 44 && getComputedStyle(b).pointerEvents === 'auto' && r.left === v.getBoundingClientRect().left; }"""))
+        sh = pg3.locator(".sheet").first.bounding_box()
+        x0, y0 = sh["x"] + sh["width"] * 0.3, sh["y"] + 160
+        # a freehand pen stroke: 20 moves along a wobbly curve, no hold
+        pg3.mouse.move(x0, y0); pg3.mouse.down()
+        for k in range(1, 21): pg3.mouse.move(x0 + k * 9, y0 + 30 * math.sin(k / 3.0) + k * 2)
+        pg3.mouse.up(); pg3.wait_for_timeout(400)
+        L = pg3.evaluate("window.__pw.ink.lastStroke()")
+        info = L and {k: L[k] for k in L if k != "points"}
+        check("a freehand stroke: lastStroke() has n equal to points.length, pointerType 'mouse', not snapped", L is not None and L["n"] == len(L["points"]) and L["n"] >= 10 and L["pointerType"] == "mouse" and L["snapped"] is False, info)
+        check("a freehand stroke: classify is null or a shape type, z and at are numbers, len has one decimal", L is not None and (L["classify"] is None or isinstance(L["classify"], str)) and isinstance(L["z"], (int, float)) and isinstance(L["at"], (int, float)) and abs(L["len"] * 10 - round(L["len"] * 10)) < 1e-6 and L["len"] > 50, info)
+        line = dbg_text().split("\n")[-1]
+        check("a freehand stroke: #dbg shows 'last: <n> pts' and 'freehand'", L is not None and line.startswith(f"last: {L['n']} pts, ") and line.endswith("freehand") and "mouse" in line, line)
+        check("a freehand stroke: the button is enabled and says 'Copy last stroke'", pg3.evaluate("() => { const b = document.getElementById('dbgCopy'); return !b.disabled && b.textContent === 'Copy last stroke'; }"))
+        # a line held still for 650 ms snaps
+        before = n_all()
+        ly = y0 + 300
+        pg3.mouse.move(x0, ly); pg3.mouse.down()
+        for k in range(1, 31): pg3.mouse.move(x0 + k * 10, ly + k * 1.0)
+        pg3.wait_for_timeout(650)
+        pg3.mouse.up(); pg3.wait_for_timeout(400)
+        L2 = pg3.evaluate("window.__pw.ink.lastStroke()")
+        info2 = L2 and {k: L2[k] for k in L2 if k != "points"}
+        check("a held line snaps: one more stroke, snapped true, classify 'line', raw freehand points (more than 2)", n_all() == before + 1 and L2["snapped"] is True and L2["classify"] == "line" and len(L2["points"]) > 2 and L2["n"] == len(L2["points"]), info2)
+        check("a held line: the stored record is a shape without points, so lastStroke holds the raw freehand", pg3.evaluate("(ids) => { const s = ids.flatMap((id) => window.__pw.ink.strokesOf(id)); const t = s[s.length - 1]; return t.kind === 'shape' && !t.data.points; }", ids))
+        line2 = dbg_text().split("\n")[-1]
+        check("a held line: #dbg shows 'classify: line, snapped'", "classify: line, snapped" in line2, line2)
+        # copy: the clipboard holds the same stroke
+        pg3.click("#dbgCopy"); pg3.wait_for_timeout(200)
+        clip = pg3.evaluate("navigator.clipboard.readText()")
+        try: cj = json.loads(clip)
+        except Exception: cj = None
+        check("copy: the clipboard parses as JSON with the same n and points", cj is not None and cj["n"] == L2["n"] and cj["points"] == L2["points"] and cj["snapped"] is True, clip[:80])
+        check("copy: the button reads 'Copied (<n> pts)'", btn_text() == f"Copied ({L2['n']} pts)", btn_text())
+        pg3.wait_for_timeout(2300)
+        check("copy: after 2 s the button reads 'Copy last stroke' again", btn_text() == "Copy last stroke", btn_text())
+        # a pointerdown on the button starts no stroke
+        before = n_all(); at0 = pg3.evaluate("window.__pw.ink.lastStroke().at")
+        bb = pg3.locator("#dbgCopy").bounding_box(); cx, cy = bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2
+        pg3.mouse.move(cx, cy); pg3.mouse.down(); pg3.mouse.move(cx + 12, cy + 3); pg3.mouse.up(); pg3.wait_for_timeout(300)
+        check("a pointerdown and a drag on the button adds no stroke and leaves lastStroke alone", n_all() == before and pg3.evaluate("window.__pw.ink.lastStroke().at") == at0, [n_all(), before])
+        # clipboard refused: the textarea appears
+        pg3.evaluate("Object.defineProperty(navigator, 'clipboard', { value: { writeText: () => Promise.reject(new Error('no')) }, configurable: true })")
+        pg3.click("#dbgCopy"); pg3.wait_for_timeout(200)
+        ta = pg3.evaluate("() => { const t = document.getElementById('dbgText'); return t && { ro: t.readOnly, rows: t.rows, focus: document.activeElement === t, json: t.value, sel: t.selectionEnd - t.selectionStart === t.value.length }; }")
+        check("clipboard refused: a read-only focused selected textarea (6 rows) holds the JSON and the button says 'Select + copy above'", bool(ta) and ta["ro"] and ta["rows"] == 6 and ta["focus"] and ta["sel"] and json.loads(ta["json"])["n"] == L2["n"] and btn_text() == "Select + copy above", ta and {k: ta[k] for k in ta if k != "json"})
+        check("no page errors (dbg group)", not errs3, errs3)
+        ctx3.close()
+        # without ?dbg=1 there is no readout and no button
+        check("without ?dbg=1: no #dbg, no #dbgView, no #dbgCopy", pg.evaluate("() => !document.getElementById('dbg') && !document.getElementById('dbgView') && !document.getElementById('dbgCopy')"))
+        check("without ?dbg=1: ink.lastStroke() is still there (always kept)", pg.evaluate("typeof window.__pw.ink.lastStroke === 'function'"))
+        group[0] = prev_group
         check("no page errors", not errs, errs)
         b.close()
 finally:

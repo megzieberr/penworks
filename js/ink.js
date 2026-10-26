@@ -34,6 +34,8 @@
 // a closed shape leaves one open piece. The stroke eraser still removes a shape whole.
 // Overlap tie-break (pw-v4m): a select tap where highlighter-layer and pen-layer records overlap picks from the layer
 // of the last ink tool (T.lastInk); with no overlap across the layers it picks the topmost record, whatever is there.
+// Last stroke (pw-v4n): LAST remembers the raw points of the last finished pen or highlighter stroke (before any snap) and
+// lastStroke() returns it; ?dbg=1 shows and copies it (js/dbg.js), so a real pen stroke can be caught on the tablet.
 
 import * as store from './store-local.js';
 import { pageAt, pagePoint, view, pageSize } from './page.js';
@@ -59,6 +61,7 @@ const ST = { pen: { colour: '#000000', width: 2.5, dash: 'solid' }, highlighter:
 let doOp = (op) => op.redo();
 let onChange = null;             // optional: told the page id after every stroke change (apply), the page list's thumbs
 let G = null;                    // the gesture in progress
+let LAST = null;                 // the last finished pen or highlighter stroke, raw: { points, pointerType, z, n, len, classify, snapped, at }
 let ring = null, hring = null, deskEl = null, deskBox = null;
 let SEL = null;                  // the selection: { page, ids, g, chips, deg, z }
 let CLIP = null;                 // the selection clipboard: { recs (deep copies, by seq), box (their selBox) }
@@ -103,6 +106,7 @@ function data(id) {
   }
   return d;
 }
+export function lastStroke() { return LAST; }
 export function strokesOf(pageId) { return data(pageId).strokes.slice(); }
 export function copyStrokes(pageId) { return JSON.parse(JSON.stringify(data(pageId).strokes)); }
 
@@ -1022,7 +1026,7 @@ function snapNow() {
     el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: SNAP_ANIM, easing: 'ease-out' });
   } catch (_) { /* no animations: it just swaps */ }
   setTimeout(() => old.remove(), SNAP_ANIM);
-  G = { kind: 'snapped', page: g.page, rec, el, d };
+  G = { kind: 'snapped', page: g.page, rec, el, d, raw: g.rec.data.points.slice(), pt: g.pt, z: g.z };   // raw: the freehand points, kept for lastStroke
 }
 
 function down(e) {
@@ -1051,7 +1055,7 @@ function down(e) {
     const rec = { id: uuid(), page_id: at.id, seq: 0, kind: T.tool, style, data: { points: [[r1(at.x), r1(at.y)]] } };
     const el = makeEl(rec);
     groupFor(d, rec).appendChild(el);                              // newest, so last in its group
-    G = { kind: 'draw', index: at.index, page: at.id, rec, el, holdT: 0, anchor: null };
+    G = { kind: 'draw', index: at.index, page: at.id, rec, el, holdT: 0, anchor: null, pt: e.pointerType || 'mouse', z: view().z };
     armHold(e.clientX, e.clientY);                                 // pen and highlighter both snap when held
     return true;
   }
@@ -1174,6 +1178,9 @@ function up(e, cancelled) {
   if (!g) return;
   if (g.kind === 'draw' || g.kind === 'snapped') {
     clearTimeout(g.holdT);
+    const points = (g.raw || g.rec.data.points).map((p) => [p[0], p[1]]), c = classify(points);   // a snapped stroke keeps its freehand points in g.raw
+    LAST = { points, pointerType: g.pt || 'mouse', z: g.z, n: points.length, len: Math.round(polyLen(points) * 10) / 10,
+      classify: c ? c.type : null, snapped: g.kind === 'snapped', at: Date.now() };
     g.rec.seq = Date.now();
     data(g.page).els.set(g.rec.id, g.el);
     doOp(changeOp([{ page: g.page, removed: [], added: [g.rec] }]));   // a snap is one step: the shape

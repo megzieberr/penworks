@@ -798,7 +798,7 @@ function wire() {
   initPage({ desk: $('desk'), stack: $('stack'), addBelow: $('addBelow'),
              onCurrent: (i) => { S.cur = Math.max(0, i); updateCount(); ink.clearSelection(); },   // a new page: the selection clears
              onSheets: ink.attach, ink: ink.hook });
-  if (new URLSearchParams(location.search).get('dbg') === '1') import('./dbg.js').then((m) => m.startDbg($('desk')));   // the pen readout, ?dbg=1 only
+  if (new URLSearchParams(location.search).get('dbg') === '1') import('./dbg.js').then((m) => m.startDbg($('desk'), ink));   // the pen readout, ?dbg=1 only
   $('loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     $('loginBtn').disabled = true; $('loginMsg').textContent = '';
