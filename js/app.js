@@ -3,9 +3,11 @@
 // undo/redo stack per note (page operations and ink together), full screen, autosave, dark mode.
 // Ink lives in js/ink.js (strokes), js/store-local.js (kept on the device) and js/tray.js (the pen tray).
 // pw-v4q: the page list's Select (tick mode): tick several pages, then Delete, Copy, Cut or Move them together.
+// pw-v4r: page bookmarks (the page menu's Bookmark, a ribbon tab on the page and its thumb, a Bookmarks filter in the list).
 import { api } from './api.js';
-import { initPage, showStack, fit, scrollToPage, relayout, current } from './page.js';
+import { initPage, showStack, fit, scrollToPage, relayout, current, bookmarkTab, markSheet } from './page.js';
 import * as ink from './ink.js';
+import * as store from './store-local.js';
 import { initTray, closePanel, trayState, chooseTool } from './tray.js';
 
 const $ = (id) => document.getElementById(id);
@@ -269,18 +271,20 @@ function renumber(list) {
 }
 function insertPage(snap, i) {
   const list = pagesOf(snap.note_id);
-  const p = { ...snap, position: i, deleted_at: null };
+  const p = { ...snap, position: i, deleted_at: null, bookmark: !!snap.bookmark };
   list.splice(i, 0, p);
   const pairs = [];                                         // the pages below it move down one
   list.forEach((x, k) => { if (x !== p && x.position !== k) { x.position = k; pairs.push([x.id, k]); } });
   if (pairs.length) save(() => api.reorderPages(pairs));
   S.pages.push(p);
   save(() => api.createPage(p));
+  store.keepBookmark(p.id, p.bookmark);                     // undo of a delete brings the bookmark back with the page
   touchNote(p.note_id);
 }
 function removePage(id) {
   const p = page(id), list = pagesOf(p.note_id).filter((x) => x !== p);
   S.pages = S.pages.filter((x) => x !== p);
+  store.keepBookmark(id, false);                            // the op's snapshot still holds it, for undo
   orphans.add(id);
   save(() => api.deletePage(id));
   renumber(list);
@@ -312,7 +316,7 @@ function deletePage(i) {
 // Delete, Paste puts it below the pressed page, Erase page clears its strokes. The page clipboard is a list
 // (pw-v4q): S.clip = [page, page, ...], one entry per page in list order; a single-page Copy makes a list of one.
 // It is not tied to a note, so pages cut in one note paste into another (her ruling, 26 Oct).
-const clipEntry = (p) => ({ orientation: p.orientation, background: p.background, strokes: ink.copyStrokes(p.id) });
+const clipEntry = (p) => ({ orientation: p.orientation, background: p.background, bookmark: !!p.bookmark, strokes: ink.copyStrokes(p.id) });
 function copyPage(i, quiet) {
   const p = pagesOf(S.openNote)[i];
   if (!p) return;
@@ -329,7 +333,7 @@ function pastePage(i) {
   if (!clip.length) return;
   const at = i + 1;
   const adds = clip.map((c) => {
-    const snap = { id: uuid(), note_id: nid, orientation: c.orientation, background: c.background, created_at: nowIso() };
+    const snap = { id: uuid(), note_id: nid, orientation: c.orientation, background: c.background, bookmark: !!c.bookmark, created_at: nowIso() };
     return { snap, recs: c.strokes.map((r) => ({ ...JSON.parse(JSON.stringify(r)), id: uuid(), page_id: snap.id })) };
   });
   doOp({ pages: adds.map((a) => a.snap.id),
@@ -387,6 +391,18 @@ function setPaper(field, value, all) {
   doOp({ redo: () => put(changes.map((c) => [c.id, value])), undo: () => put(changes.map((c) => [c.id, c.old])) });
 }
 
+// a page's bookmark (pw-v4r), on or off from the page menu. Toggling is NOT an undo step (like Samsung Notes: a
+// bookmark marks the page, it does not change what is on it), so undo and redo never touch it.
+function setBookmark(id, on) {
+  const p = page(id);
+  if (!p) return;
+  p.bookmark = on;
+  store.keepBookmark(id, on);
+  markSheet(id, on);
+  if (S.listOpen) renderPageList();
+  toast(on ? 'Bookmarked' : 'Bookmark removed');
+}
+
 // ---------------------------------------------------------------- full screen (the real Fullscreen API, so the Android bar goes)
 async function enterFull() {
   document.body.classList.add('full'); $('exitFs').hidden = false;
@@ -421,7 +437,7 @@ function placeMenu(anchor) {
 }
 function openMenu(anchor, items) {
   const m = $('menu'); m.textContent = '';
-  for (const it of items) {
+  for (const it of items.filter(Boolean)) {
     if (it.head) m.append(h('div', { class: 'hd' }, it.head));
     else m.append(h('button', { type: 'button', class: it.on ? 'on' : '', role: 'menuitem', disabled: !!it.disabled,
       onclick: (e) => { e.stopPropagation(); if (it.disabled) return; if (!it.keep) closeMenu(); it.fn(); } }, it.label));
@@ -486,6 +502,7 @@ function paperMenu(anchor) {
     { label: 'Blank', on: p.background === 'blank', keep: true, fn: () => ask('background', 'blank') },
     { label: 'Grid, 1 cm squares', on: p.background === 'grid', keep: true, fn: () => ask('background', 'grid') },
     { label: 'Lined, 8 mm', on: p.background === 'lined', keep: true, fn: () => ask('background', 'lined') },
+    p.id ? { label: p.bookmark ? 'Remove bookmark' : 'Bookmark', fn: () => setBookmark(p.id, !p.bookmark) } : null,
     { head: 'Note' },
     { label: 'Bin this note', fn: () => binThing('note', S.openNote) }]);
 }
@@ -614,16 +631,33 @@ let stackKey = '';
 function updateCount() {
   const list = S.openNote ? pagesOf(S.openNote) : [], n = list.length, c = Math.min(S.cur, n - 1);
   const txt = n ? `${c + 1} / ${n}` : '';
-  $('counter').textContent = txt; $('barCount').textContent = txt; $('plCount').textContent = txt;
+  $('counter').textContent = txt; $('barCount').textContent = txt;
+  $('plCount').textContent = bmOnly ? list.filter((p) => p.bookmark).length + ' bookmarked' : txt;
   $('prevBtn').disabled = c <= 0; $('nextBtn').disabled = c >= n - 1;
-  document.querySelectorAll('#plThumbs .thumbP').forEach((t, i) => t.classList.toggle('cur', i === c));
+  document.querySelectorAll('#plThumbs .thumbP').forEach((t) => t.classList.toggle('cur', +t.dataset.index === c + 1));
+}
+// the Bookmarks toggle in the list header (pw-v4r): on, the list shows only the bookmarked pages (a tap still jumps,
+// the panel stays open) and the header says "<n> bookmarked". Kept while the app is open, off at start. Tick mode
+// works on the shown pages; hold-and-drag and tick mode's Move are off while it is on (the shown pages are not
+// side by side in the note, so a place between two of them means nothing).
+let bmOnly = false;
+const shownPages = () => { const all = S.openNote ? pagesOf(S.openNote) : []; return bmOnly ? all.filter((p) => p.bookmark) : all; };
+function toggleBookmarks() {
+  bmOnly = !bmOnly;
+  renderPageList();
+  $('plThumbs').scrollTop = 0;
 }
 function renderPageList() {
   const P = $('pageList');
   P.hidden = !S.listOpen;
   if (!S.listOpen) { S.tick = null; return; }                              // closing the panel ends tick mode
   const T = $('plThumbs'); T.textContent = '';
-  pagesOf(S.openNote).forEach((p, i) => {
+  const all = pagesOf(S.openNote), list = shownPages();
+  const B = $('plMarks');
+  B.classList.toggle('on', bmOnly); B.setAttribute('aria-pressed', bmOnly ? 'true' : 'false');
+  if (bmOnly && !list.length) T.append(h('p', { class: 'plEmpty' }, 'No bookmarks yet'));
+  list.forEach((p) => {
+    const i = all.indexOf(p);                                                // the page's place in the note
     const t = h('div', { class: 'thumbP ' + p.orientation, 'data-index': i + 1, 'data-id': p.id, role: 'button', tabindex: '0',
       onclick: () => { if (S.tick) { if (!S.tick.moving) toggleTick(p.id); } else scrollToPage(i); },   // the panel stays open (her ruling, pw-v4i)
       onpointerdown: thumbDown,
@@ -633,6 +667,7 @@ function renderPageList() {
         onclick: (e) => { e.stopPropagation(); thumbMenu(i, e.currentTarget); } }, '⋯'),
       h('button', { class: 'tick', type: 'button', 'aria-label': 'Tick page ' + (i + 1), 'aria-pressed': 'false', html: SVG_TICK,
         onclick: (e) => { e.stopPropagation(); if (S.tick && !S.tick.moving) toggleTick(p.id); } }));
+    if (p.bookmark) t.querySelector('.paper').append(bookmarkTab());           // the same ribbon tab as the page
     t.querySelector('.paper').append(ink.thumbSvg(p.id, p.orientation));   // the page's ink on the paper
     T.append(t);
   });
@@ -650,7 +685,7 @@ function renderPageList() {
 const SVG_TICK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 12.5l3.6 3.6 7.4-8"/></svg>';
 function ticked() {                                                         // the ticked pages, in list order
   if (!S.tick) return [];
-  return pagesOf(S.openNote).filter((p) => S.tick.ids.has(p.id)).map((p) => p.id);
+  return shownPages().filter((p) => S.tick.ids.has(p.id)).map((p) => p.id);
 }
 function startTick() { if (!S.listOpen) return; S.tick = { ids: new Set(), moving: false }; closeMenu(); renderTick(); }
 function endTick() { if (!S.tick) return; S.tick = null; renderTick(); }
@@ -660,7 +695,7 @@ function toggleTick(id) {
   renderTick();
 }
 function tickAll() {
-  const ids = pagesOf(S.openNote).map((p) => p.id), every = ids.length && ids.every((id) => S.tick.ids.has(id));
+  const ids = shownPages().map((p) => p.id), every = ids.length && ids.every((id) => S.tick.ids.has(id));
   S.tick.ids = new Set(every ? [] : ids);
   renderTick();
 }
@@ -682,8 +717,7 @@ function tickAction(kind) {
   if (!n) return;
   if (kind === 'delete') { deletePages(ids); S.tick = { ids: new Set(), moving: false }; renderTick(); toast(pagesWord(n) + ' deleted'); }
   else if (kind === 'copy' || kind === 'cut') {
-    const list = pagesOf(S.openNote);
-    S.clip = list.filter((p) => S.tick.ids.has(p.id)).map(clipEntry);
+    S.clip = shownPages().filter((p) => S.tick.ids.has(p.id)).map(clipEntry);
     S.tick = null;
     if (kind === 'cut') deletePages(ids); else renderTick();
     toast(pagesWord(n) + (kind === 'cut' ? ' cut' : ' copied'));
@@ -701,7 +735,7 @@ function renderTick() {
   const P = $('pageList'), on = !!S.tick && S.listOpen, T = $('plThumbs');
   P.classList.toggle('ticking', on);
   P.classList.toggle('moving', on && S.tick.moving);
-  const ids = on ? new Set(ticked()) : new Set(), n = ids.size, total = S.openNote ? pagesOf(S.openNote).length : 0;
+  const ids = on ? new Set(ticked()) : new Set(), n = ids.size, total = shownPages().length;
   T.querySelectorAll('.moveHere').forEach((el) => el.remove());
   T.querySelectorAll('.thumbP').forEach((t) => {
     const yes = ids.has(t.dataset.id);
@@ -709,7 +743,7 @@ function renderTick() {
     t.querySelector('.tick').setAttribute('aria-pressed', yes ? 'true' : 'false');
   });
   $('plAll').hidden = !on; $('plSel').hidden = !on; $('plDone').hidden = !on;
-  $('plCount').hidden = on; $('plSelect').hidden = on;
+  $('plCount').hidden = on; $('plSelect').hidden = on; $('plMarks').hidden = on;
   const all = on && total > 0 && n === total;
   $('plAll').classList.toggle('on', all); $('plAll').setAttribute('aria-pressed', all ? 'true' : 'false');
   $('plSel').textContent = on ? n + ' selected' : '';
@@ -727,7 +761,7 @@ function renderTick() {
     return;
   }
   for (const [act, label] of [['delete', 'Delete'], ['copy', 'Copy'], ['cut', 'Cut'], ['move', 'Move']]) {
-    const off = !n || (act === 'move' && n === total);                       // moving every page changes nothing
+    const off = !n || (act === 'move' && (n === total || bmOnly));          // moving every page changes nothing; no Move in the filter
     B.append(h('button', { type: 'button', class: 'plAct', 'data-act': act, disabled: off, onclick: () => tickAction(act) }, label));
   }
 }
@@ -758,7 +792,7 @@ function refreshThumb(pageId) {
 const HOLD_MS = 350, HOLD_PX = 6, EDGE = 40;
 let pd = null, eatThumbClick = false;
 function thumbDown(e) {
-  if (e.button !== 0 || pd || S.tick || e.target.closest('button') || pagesOf(S.openNote).length < 2) return;   // one page or tick mode: nothing lifts
+  if (e.button !== 0 || pd || S.tick || bmOnly || e.target.closest('button') || pagesOf(S.openNote).length < 2) return;   // one page, tick mode or the Bookmarks filter: nothing lifts
   pd = { t: e.currentTarget, id: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, lifted: false,
          timer: setTimeout(liftPage, HOLD_MS) };
   addEventListener('pointermove', pageDragMove, { passive: false });
@@ -898,6 +932,7 @@ async function load() {
   try { d = await api.loadAll(); }
   catch (_) { toast('Could not load your notes. Check the connection, then reload.', 8000); return; }
   S.folders = d.folders; S.notes = d.notes; S.pages = d.pages;
+  S.pages.forEach((p) => { p.bookmark = store.bookmarked(p.id); });       // kept on the device until U3 (store-local.js)
   try { S.fold = JSON.parse(localStorage.getItem(PREF + 'fold') || '{}') || {}; } catch (_) { S.fold = {}; }
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(PREF + 'open') || '{}') || {}; } catch (_) { /* ignore */ }
@@ -950,6 +985,7 @@ function wire() {
   $('listBtn').addEventListener('click', () => { S.listOpen = !S.listOpen; renderPageList(); });
   $('plClose').addEventListener('click', () => { S.listOpen = false; renderPageList(); });
   $('plSelect').addEventListener('click', startTick);
+  $('plMarks').addEventListener('click', toggleBookmarks);
   $('plDone').addEventListener('click', endTick);
   $('plAll').addEventListener('click', () => { if (S.tick && !S.tick.moving) tickAll(); });
   // a lifted page: Chrome has not started a scroll (the finger was still for the hold), so cancelling the

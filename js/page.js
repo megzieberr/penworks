@@ -139,6 +139,7 @@ export function showStack(pages) {
     el.dataset.id = p.id; el.dataset.index = String(i + 1);
     el.dataset.orientation = p.orientation; el.dataset.bg = p.background;
     el.appendChild(bgSvg(s.w, s.h, p.background));
+    if (p.bookmark) el.appendChild(bookmarkTab());
     stack.insertBefore(el, addBelow);
     L.tops.push(y); L.ids.push(p.id);
     y += s.h + GAP;
@@ -150,6 +151,25 @@ export function showStack(pages) {
   if (pinned !== null && pinned >= L.tops.length) pinned = L.tops.length - 1;
   stopGlide(); settle(); clampView(); apply();
   onSheets([...stack.querySelectorAll('.sheet')]);
+}
+
+// a page's bookmark (pw-v4r), the Samsung Notes way: a ribbon tab hanging from the page's top edge near the right
+// (16 x 26 page px, 12 px in from the right, its bottom notched into a V), above the ink, never in the pen's way.
+// The page list's thumbs use the same tab, smaller (css). Its colour is fixed: the paper is white in both modes.
+const RIBBON = '<svg viewBox="0 0 16 26" preserveAspectRatio="none" aria-hidden="true"><path d="M0 0H16V26L8 19L0 26Z" fill="#3A4250"/></svg>';
+export function bookmarkTab() {
+  const t = document.createElement('div');
+  t.className = 'bookmarkTab';
+  t.innerHTML = RIBBON;
+  return t;
+}
+// put the tab on (or take it off) the page's sheet without rebuilding the stack
+export function markSheet(pageId, on) {
+  const el = [...stack.querySelectorAll('.sheet')].find((s) => s.dataset.id === pageId);
+  if (!el) return;
+  const t = el.querySelector(':scope > .bookmarkTab');
+  if (on && !t) el.appendChild(bookmarkTab());
+  else if (!on && t) t.remove();
 }
 
 // fit page `index` across the desk (zoom 1 at most) and show it at the top; a wider (landscape) page

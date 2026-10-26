@@ -10,6 +10,9 @@
 # Tick mode (pw-v4q): Select in the list header ticks several pages (a tap toggles, the desk stays put), then Delete,
 # Copy, Cut or Move them together, each one undo step; the page clipboard is a list (Paste puts every page). A note
 # 'Ticks' with 6 pages, one stroke each whose first point's x (110, 120, ... 160) names the page. The "tick mode (pw-v4q)" group.
+# pw-v4r: page bookmarks. The page menu (the note header's dots) toggles a page's `bookmark` (not an undo step), a ribbon
+# tab shows on the page and its thumb, and the list header's Bookmarks toggle shows only the bookmarked pages. A note
+# 'Marks' with 4 pages, one stroke each (x 110 to 140 names the page). The "bookmarks (pw-v4r)" group.
 import sys, subprocess, time, pathlib, math
 from playwright.sync_api import sync_playwright
 
@@ -32,9 +35,10 @@ SEED_JS = """() => {
     folders: [{ id: 'f1', parent_id: null, name: 'Lists', colour: null, position: 0, deleted_at: null, created_at: t, updated_at: t }],
     notes: [{ id: 'n1', folder_id: 'f1', name: 'Thumbs', pinned: false, cover_path: null, deleted_at: null, created_at: t, updated_at: '2026-10-25T10:02:00Z' },
             { id: 'n2', folder_id: 'f1', name: 'Timing', pinned: false, cover_path: null, deleted_at: null, created_at: t, updated_at: '2026-10-25T10:01:00Z' },
-            { id: 'n3', folder_id: 'f1', name: 'Ticks', pinned: false, cover_path: null, deleted_at: null, created_at: t, updated_at: '2026-10-25T10:00:30Z' }],
+            { id: 'n3', folder_id: 'f1', name: 'Ticks', pinned: false, cover_path: null, deleted_at: null, created_at: t, updated_at: '2026-10-25T10:00:30Z' },
+            { id: 'n4', folder_id: 'f1', name: 'Marks', pinned: false, cover_path: null, deleted_at: null, created_at: t, updated_at: '2026-10-25T10:00:10Z' }],
     pages: [...[1, 2, 3, 4].map((k) => pg('a' + k, 'n1', k - 1)), ...[1, 2, 3, 4, 5, 6, 7, 8].map((k) => pg('b' + k, 'n2', k - 1)),
-            ...[1, 2, 3, 4, 5, 6].map((k) => pg('c' + k, 'n3', k - 1))] }));
+            ...[1, 2, 3, 4, 5, 6].map((k) => pg('c' + k, 'n3', k - 1)), ...[1, 2, 3, 4].map((k) => pg('m' + k, 'n4', k - 1))] }));
   let seq = 0;
   const stroke = (pid, k, n) => ({ id: pid + '-s' + k, page_id: pid, seq: ++seq, kind: 'pen',
     style: { colour: '#000000', width: 2.5, dash: 'solid', opacity: 1 },
@@ -44,6 +48,8 @@ SEED_JS = """() => {
   put('a1', 2, 20); put('a3', 3, 20);
   for (let k = 1; k <= 8; k++) put('b' + k, 300, 20);
   for (let k = 1; k <= 6; k++) localStorage.setItem('pw.strokes.c' + k, JSON.stringify([{ id: 'c' + k + '-s', page_id: 'c' + k, seq: 5000 + k, kind: 'pen',
+    style: { colour: '#000000', width: 2.5, dash: 'solid', opacity: 1 }, data: { points: [[100 + 10 * k, 200], [300, 260], [420, 240]] } }]));
+  for (let k = 1; k <= 4; k++) localStorage.setItem('pw.strokes.m' + k, JSON.stringify([{ id: 'm' + k + '-s', page_id: 'm' + k, seq: 6000 + k, kind: 'pen',
     style: { colour: '#000000', width: 2.5, dash: 'solid', opacity: 1 }, data: { points: [[100 + 10 * k, 200], [300, 260], [420, 240]] } }]));
 }"""
 THUMB_JS = """(i) => { const t = document.querySelector(`#plThumbs .thumbP[data-index="${i}"]`);
@@ -90,6 +96,8 @@ def draw(pg, i, pts, steps=6, hold=0):
     pg.mouse.up(); pg.wait_for_timeout(40)
 def go_page(pg, i):
     open_list(pg); thumb(pg, i).click(); pg.wait_for_timeout(120); close_list(pg)
+def menu_items(pg): return [t_.strip() for t_ in pg.locator("#menu button[role='menuitem']").all_inner_texts()]
+def menu_click(pg, label): pg.get_by_role("menuitem", name=label, exact=True).click(); pg.wait_for_timeout(80)
 def wobble(k, amp=2.0): return amp * math.sin(k * 1.7) * math.cos(k * 0.6)
 
 srv = subprocess.Popen([sys.executable, "-m", "http.server", str(PORT), "--bind", "127.0.0.1"], cwd=str(ROOT),
@@ -394,12 +402,162 @@ try:
         check("closing the panel from the desk ends tick mode too", pg.locator("#pageList").is_hidden() and tick() is None)
         check("no page errors (tick mode)", not errs, errs)
 
-        # ------------------------------------------------------------ 7. cache
+        # ------------------------------------------------------------ 7. bookmarks (pw-v4r)
+        group[0] = "bookmarks (pw-v4r)"
+        MK_JS = """() => window.__pw.S.pages.filter(p => p.note_id === 'n4' && !p.deleted_at).sort((a, b) => a.position - b.position)
+            .map(p => { const s = window.__pw.ink.strokesOf(p.id); return [s.length ? s[0].data.points[0][0] : null, p.bookmark === true]; })"""
+        KEYS4_JS = """() => window.__pw.S.pages.filter(p => p.note_id === 'n4' && !p.deleted_at).sort((a, b) => a.position - b.position)
+            .map(p => localStorage.getItem('pw.bookmark.' + p.id) === '1')"""
+        SHEETS_JS = "() => [...document.querySelectorAll('#stack .sheet')].map(s => !!s.querySelector(':scope > .bookmarkTab'))"
+        THUMBS_JS = "() => [...document.querySelectorAll('#plThumbs .thumbP')].map(t => [+t.dataset.index, !!t.querySelector('.paper > .bookmarkTab')])"
+        EMPTY_JS = "() => [...document.querySelectorAll('#plThumbs .plEmpty')].map(e => e.textContent)"
+        mk = lambda: pg.evaluate(MK_JS)
+        U4 = lambda: pg.evaluate("(window.__pw.S.hist['n4'] || { u: [] }).u.length")
+        R4 = lambda: pg.evaluate("(window.__pw.S.hist['n4'] || { r: [] }).r.length")
+        toast_ = lambda: pg.evaluate("document.getElementById('toast').textContent")
+        pressed = lambda: pg.get_attribute("#plMarks", "aria-pressed")
+        def marks_toggle(): pg.click("#plMarks"); pg.wait_for_timeout(60)
+        def page_menu(i):
+            go_page(pg, i); pg.click("#noteMore"); pg.wait_for_timeout(40); return menu_items(pg)
+        close_list(pg)
+        open_note(pg, "Marks")
+        check("set-up: 4 pages, none bookmarked (the record says bookmark: false)", mk() == [[110, False], [120, False], [130, False], [140, False]], mk())
+
+        # 1. page 2's menu: Bookmark, right after the paper items; tap it
+        items = page_menu(2)
+        check("page 2's menu has 'Bookmark' right after the paper items (Lined), before 'Bin this note'",
+              "Bookmark" in items and items.index("Bookmark") == items.index("Lined, 8 mm") + 1 and items.index("Bin this note") == items.index("Bookmark") + 1
+              and "Remove bookmark" not in items, items)
+        u0, r0 = U4(), R4()
+        menu_click(pg, "Bookmark"); idle(pg)
+        check("tap it: toast 'Bookmarked', page 2's record has bookmark: true", toast_() == "Bookmarked" and mk()[1] == [120, True]
+              and [m[1] for m in mk()] == [False, True, False, False], [toast_(), mk()])
+        check("kept on the device (pw.bookmark.m2)", pg.evaluate(KEYS4_JS) == [False, True, False, False], pg.evaluate(KEYS4_JS))
+        check("the sheet shows the tab (page 2 only)", pg.evaluate(SHEETS_JS) == [False, True, False, False], pg.evaluate(SHEETS_JS))
+        check("not an undo step (undo and redo counts unchanged)", U4() == u0 and R4() == r0, [U4() - u0, R4() - r0])
+        tab = pg.evaluate("""() => { const s = document.querySelector('#stack .sheet[data-index="2"]'), t = s.querySelector(':scope > .bookmarkTab'),
+            a = s.getBoundingClientRect(), b = t.getBoundingClientRect(), z = +document.getElementById('stack').dataset.zoom, path = t.querySelector('path'),
+            ink = s.querySelector('svg.ink');
+            return { z, w: b.width / z, h: b.height / z, top: (b.top - a.top) / z, right: (a.right - b.right) / z, pe: getComputedStyle(t).pointerEvents,
+              fill: path && path.getAttribute('fill'), d: path && path.getAttribute('d'), zi: getComputedStyle(t).zIndex,
+              above: !!ink && getComputedStyle(ink).zIndex === 'auto' && +getComputedStyle(t).zIndex > 0 }; }""")
+        check("the tab: 16 x 26 page px, touching the top edge, 12 px in from the right", abs(tab["w"] - 16) < 0.5 and abs(tab["h"] - 26) < 0.5
+              and abs(tab["top"]) < 0.5 and abs(tab["right"] - 12) < 0.5, tab)
+        check("a V-notched ribbon, filled #3A4250, no pointer events, above the ink", tab["fill"] == "#3A4250" and tab["d"] == "M0 0H16V26L8 19L0 26Z"
+              and tab["pe"] == "none" and tab["above"], tab)
+        pg.evaluate("document.documentElement.setAttribute('data-theme', 'dark')")
+        fill_dark = pg.evaluate("getComputedStyle(document.querySelector('#stack .sheet[data-index=\"2\"] .bookmarkTab path')).fill")
+        pg.evaluate("document.documentElement.removeAttribute('data-theme')")
+        check("dark mode: the same colour (the paper is white)", fill_dark == "rgb(58, 66, 80)", fill_dark)
+        pg.click("#noteMore"); pg.wait_for_timeout(40); items = menu_items(pg); pg.keyboard.press("Escape"); pg.wait_for_timeout(30)
+        check("the menu now says 'Remove bookmark' (no 'Bookmark')", "Remove bookmark" in items and "Bookmark" not in items, items)
+
+        # 2. reload
+        pg.reload(); ready(pg)
+        if not pg.locator("#noteView").is_visible(): open_note(pg, "Marks")
+        pg.wait_for_selector("#stack .sheet[data-index='4']"); pg.wait_for_timeout(80)
+        check("reload: page 2 still bookmarked, the tab on its sheet", [m[1] for m in mk()] == [False, True, False, False]
+              and pg.evaluate(SHEETS_JS) == [False, True, False, False], [mk(), pg.evaluate(SHEETS_JS)])
+
+        # 3. the list: thumb 2 carries the tab; the Bookmarks toggle is off
+        open_list(pg)
+        check("the list: thumb 2 carries the tab, the others do not", pg.evaluate(THUMBS_JS) == [[1, False], [2, True], [3, False], [4, False]], pg.evaluate(THUMBS_JS))
+        tt = pg.evaluate("""() => { const t = document.querySelector('#plThumbs .thumbP[data-index="2"] .paper > .bookmarkTab'), b = t.getBoundingClientRect(),
+            p = t.parentElement.getBoundingClientRect(); return [Math.round(b.width), Math.round(b.height), Math.round(b.top - p.top), Math.round(p.right - b.right)]; }""")
+        check("the thumb's tab: about 10 x 16, at the top right", tt[0] == 10 and tt[1] == 16 and abs(tt[2]) <= 1 and 0 <= tt[3] <= 10, tt)
+        check("the Bookmarks toggle: in the header, off (aria-pressed false), labelled", pg.locator("#plMarks").is_visible() and pressed() == "false"
+              and pg.get_attribute("#plMarks", "aria-label") == "Show bookmarked pages only", [pressed(), pg.get_attribute("#plMarks", "aria-label")])
+
+        # 4. toggle on: only page 2; a tap jumps, the panel stays open; toggle off: four
+        thumb(pg, 1).click(); pg.wait_for_timeout(100)
+        marks_toggle()
+        check("toggle on: one thumb (page 2), header '1 bookmarked', aria-pressed true", pg.evaluate(THUMBS_JS) == [[2, True]]
+              and pg.inner_text("#plCount") == "1 bookmarked" and pressed() == "true", [pg.evaluate(THUMBS_JS), pg.inner_text("#plCount"), pressed()])
+        thumb(pg, 2).click(); pg.wait_for_timeout(120)
+        check("tap it: the desk jumps to page 2, the panel stays open", pg.evaluate("window.__pw.current()") == 1 and pg.evaluate(COUNTERS_JS)[1] == "2 / 4"
+              and pg.locator("#pageList").is_visible() and pg.evaluate(CUR_JS) == ["2"], [pg.evaluate("window.__pw.current()"), pg.evaluate(COUNTERS_JS)])
+        x, y = centre(pg, 2); pg.mouse.move(x, y); pg.mouse.down(); pg.wait_for_timeout(450)
+        held = pg.evaluate("window.__pw.pageDrag()"); pg.mouse.up(); pg.wait_for_timeout(80)
+        check("hold-and-drag is off while the filter is on (nothing lifts)", held is None, held)
+        pg.click("#plClose"); pg.wait_for_timeout(60); open_list(pg)
+        check("the toggle is remembered while the app is open (close and reopen the list: still on)", pressed() == "true" and len(pg.evaluate(THUMBS_JS)) == 1, pressed())
+        marks_toggle()
+        check("toggle off: four thumbs, aria-pressed false, '2 / 4'", len(pg.evaluate(THUMBS_JS)) == 4 and pressed() == "false"
+              and pg.inner_text("#plCount") == "2 / 4", [pg.evaluate(THUMBS_JS), pg.inner_text("#plCount")])
+
+        # 5. bookmark page 4; copy it and paste: the copy is bookmarked; move page 2 to the end; delete it and undo
+        close_list(pg)
+        page_menu(4); menu_click(pg, "Bookmark"); idle(pg)
+        check("page 4 bookmarked too", [m[1] for m in mk()] == [False, True, False, True], mk())
+        open_list(pg)
+        thumb(pg, 4).click(button="right"); pg.wait_for_timeout(60); menu_click(pg, "Copy")
+        thumb(pg, 4).click(button="right"); pg.wait_for_timeout(60); menu_click(pg, "Paste"); idle(pg)
+        check("copy page 4, paste: the pasted page is bookmarked (record, device, sheet, thumb)",
+              mk() == [[110, False], [120, True], [130, False], [140, True], [140, True]] and pg.evaluate(KEYS4_JS) == [False, True, False, True, True]
+              and pg.evaluate(SHEETS_JS) == [False, True, False, True, True] and [t_[1] for t_ in pg.evaluate(THUMBS_JS)] == [False, True, False, True, True],
+              [mk(), pg.evaluate(KEYS4_JS), pg.evaluate(SHEETS_JS)])
+        select(); tap(2); act("move"); pg.click("#plThumbs .moveHere[data-gap='4']"); pg.wait_for_timeout(80); idle(pg)
+        check("move page 2 to the end (tick Move): it stays bookmarked", mk() == [[110, False], [130, False], [140, True], [140, True], [120, True]]
+              and pg.evaluate(SHEETS_JS) == [False, False, True, True, True], [mk(), pg.evaluate(SHEETS_JS)])
+        thumb(pg, 5).click(button="right"); pg.wait_for_timeout(60); menu_click(pg, "Delete"); idle(pg)
+        gone = [mk(), pg.evaluate("localStorage.getItem('pw.bookmark.m2')")]
+        check("delete it: gone, its device key too", gone[0] == [[110, False], [130, False], [140, True], [140, True]] and gone[1] is None, gone)
+        undo()
+        check("undo the delete: back at the end, bookmarked (record, device, sheet)", mk() == [[110, False], [130, False], [140, True], [140, True], [120, True]]
+              and pg.evaluate("localStorage.getItem('pw.bookmark.m2')") == "1" and pg.evaluate(SHEETS_JS)[4] is True, [mk(), pg.evaluate(SHEETS_JS)])
+        undo(); undo()
+        check("undo the move and the paste: 4 pages, 2 and 4 still bookmarked (undo never touches a bookmark)",
+              mk() == [[110, False], [120, True], [130, False], [140, True]], mk())
+
+        # 6. remove both bookmarks, toggle on: 'No bookmarks yet'
+        close_list(pg)
+        page_menu(2); menu_click(pg, "Remove bookmark"); idle(pg); t2 = toast_()
+        page_menu(4); menu_click(pg, "Remove bookmark"); idle(pg)
+        check("Remove bookmark (pages 2 and 4): toast 'Bookmark removed', none left, no tabs, no device keys", t2 == "Bookmark removed"
+              and [m[1] for m in mk()] == [False] * 4 and pg.evaluate(SHEETS_JS) == [False] * 4 and pg.evaluate(KEYS4_JS) == [False] * 4, [t2, mk()])
+        open_list(pg); marks_toggle()
+        empty = pg.evaluate(EMPTY_JS)
+        check("toggle on with none: one line 'No bookmarks yet', no thumbs, '0 bookmarked'", empty == ["No bookmarks yet"]
+              and pg.evaluate(THUMBS_JS) == [] and pg.inner_text("#plCount") == "0 bookmarked", [empty, pg.inner_text("#plCount")])
+        marks_toggle()
+
+        # 7. tick mode inside the filter: 2 and 3 bookmarked, toggle on, Select, tick both, Delete, undo
+        close_list(pg)
+        page_menu(2); menu_click(pg, "Bookmark"); idle(pg)
+        page_menu(3); menu_click(pg, "Bookmark"); idle(pg)
+        open_list(pg); marks_toggle()
+        u7 = U4()
+        select()
+        check("Select in the filter: two tick boxes (the shown pages), the toggle hidden", ui()["ticks"] == 2 and pg.locator("#plMarks").is_hidden(), ui())
+        pg.click("#plAll"); pg.wait_for_timeout(30); a_ = ui()["sel"]; pg.click("#plAll"); pg.wait_for_timeout(30)
+        check("All ticks the shown pages only ('2 selected')", a_ == "2 selected", a_)
+        tap(2, 3)
+        check("tick both: '2 selected'; Move is off in the filter", ui()["sel"] == "2 selected" and dict(map(tuple, pg.evaluate(BAR_JS)))["Move"] is True,
+              [ui(), pg.evaluate(BAR_JS)])
+        act("delete")
+        check("Delete: both gone, one undo step, toast '2 pages deleted'", mk() == [[110, False], [140, False]] and U4() == u7 + 1
+              and ui()["toast"] == "2 pages deleted", [mk(), U4() - u7, ui()["toast"]])
+        check("the filtered list now says 'No bookmarks yet'", pg.evaluate(EMPTY_JS) == ["No bookmarks yet"], pg.evaluate(EMPTY_JS))
+        undo()
+        check("undo brings them back bookmarked (record, device, sheets, the filtered list)", mk() == [[110, False], [120, True], [130, True], [140, False]]
+              and pg.evaluate(KEYS4_JS) == [False, True, True, False] and pg.evaluate(SHEETS_JS) == [False, True, True, False]
+              and pg.evaluate(THUMBS_JS) == [[2, True], [3, True]], [mk(), pg.evaluate(THUMBS_JS)])
+        pg.click("#plDone"); pg.wait_for_timeout(40)
+        check("Done: the toggle is back in the header, still on", pg.locator("#plMarks").is_visible() and pressed() == "true", pressed())
+        pg.reload(); ready(pg)
+        if not pg.locator("#noteView").is_visible(): open_note(pg, "Marks")
+        open_list(pg)
+        check("after a reload the toggle starts off (four thumbs), the bookmarks stay", pressed() == "false" and len(pg.evaluate(THUMBS_JS)) == 4
+              and [m[1] for m in mk()] == [False, True, True, False], [pressed(), mk()])
+        close_list(pg)
+        check("no page errors (bookmarks)", not errs, errs)
+
+        # ------------------------------------------------------------ 8. cache
         group[0] = "cache"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v4q" not in keys:
+        if "pw-v4r" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v4q", "pw-v4q" in keys, keys)
+        check("cache is pw-v4r", "pw-v4r" in keys, keys)
         ctx.close()
         b.close()
 finally:

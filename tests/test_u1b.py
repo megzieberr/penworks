@@ -38,7 +38,10 @@ ORDER_JS = """(name) => { const S = window.__pw.S, n = S.notes.find(x => x.name 
   return S.pages.filter(p => p.note_id === n.id && !p.deleted_at).sort((a, b) => a.position - b.position).map(p => p.id); }"""
 STORED_JS = """async (name) => { const d = await window.__pw.api.loadAll(), n = d.notes.find(x => x.name === name && !x.deleted_at);
   return d.pages.filter(p => p.note_id === n.id && !p.deleted_at).sort((a, b) => a.position - b.position).map(p => p.id); }"""
+# pw-v4r: her page bookmark (26 Oct, the newer ruling) is the one exception: the ribbon tab on a bookmarked page (#stack)
+# or its thumb (#plThumbs) and the page list's Bookmarks toggle (#plMarks). Anything else bookmark- or ribbon-named fails.
 NO_RIBBON_JS = """() => [...document.querySelectorAll('*')].filter(e =>
+  !(e.closest('.bookmarkTab') && e.closest('#stack, #plThumbs')) && e.id !== 'plMarks' &&
   /ribbon|bookmark/i.test((typeof e.className === 'string' ? e.className : (e.className && e.className.baseVal) || '') + ' ' + e.id + ' '
     + (e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('title') || ''))).map(e => e.tagName + '#' + e.id)"""
 
@@ -379,7 +382,7 @@ try:
             st = pg.evaluate("(u)=>fetch(u).then(r=>r.status+' '+r.headers.get('content-type'))", ic["src"])
             check("icon " + ic["src"], st.startswith("200 image/png"), st)
         check("service worker registers and is active", pg.evaluate("navigator.serviceWorker.ready.then(r=>!!r.active)"))
-        check("cache is pw-v4q (tick several pages)", pg.evaluate("caches.keys()") == ["pw-v4q"] or "pw-v4q" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v4r (page bookmarks)", pg.evaluate("caches.keys()") == ["pw-v4r"] or "pw-v4r" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
         inst = ctx.new_cdp_session(pg).send("Page.getInstallabilityErrors")
         check("Chrome sees it as installable", not inst.get("installabilityErrors"), inst)
         pg.reload(); ready(pg); pg.wait_for_timeout(500)

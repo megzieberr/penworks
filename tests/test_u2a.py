@@ -72,7 +72,10 @@ LAYER_JS = """([i, pid]) => {
 }"""
 STORED_JS = "(id) => JSON.parse(localStorage.getItem('pw.strokes.' + id) || 'null')"
 PAGES_JS = "() => [...document.querySelectorAll('#stack .sheet')].map(s => s.dataset.id)"
+# pw-v4r: her page bookmark (26 Oct, the newer ruling) is the one exception: the ribbon tab on a bookmarked page (#stack)
+# or its thumb (#plThumbs) and the page list's Bookmarks toggle (#plMarks). Anything else bookmark- or ribbon-named fails.
 NO_RIBBON_JS = """() => [...document.querySelectorAll('*')].filter(e =>
+  !(e.closest('.bookmarkTab') && e.closest('#stack, #plThumbs')) && e.id !== 'plMarks' &&
   /ribbon|bookmark/i.test((typeof e.className === 'string' ? e.className : (e.className && e.className.baseVal) || '') + ' ' + e.id + ' '
     + (e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('title') || ''))).map(e => e.tagName + '#' + e.id)"""
 
@@ -492,7 +495,7 @@ try:
         check("the eye toggles password to text and back", a == "password" and c == ["text", "Hide password"] and d == "password", [a, c, d])
         check("the eye sits inside the field", eb["x"] >= lb["x"] and eb["x"] + eb["width"] <= lb["x"] + lb["width"] and eb["y"] >= lb["y"] - 1 and eb["y"] + eb["height"] <= lb["y"] + lb["height"] + 1, [eb, lb])
         group[0] = "pwa and house rules"
-        check("cache is pw-v4q", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v4q"] or "pw-v4q" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v4r", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v4r"] or "pw-v4r" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the new files are in the offline shell", all(f in swt for f in ("./js/ink.js", "./js/store-local.js", "./js/tray.js")))
         pg.evaluate(SEED_JS, False); pg.reload(); ready(pg)

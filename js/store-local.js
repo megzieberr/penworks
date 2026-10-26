@@ -34,3 +34,19 @@ export function pageIds() {
   } catch (_) { /* ignore */ }
   return out;
 }
+
+// Page bookmarks (pw-v4r): the page record carries `bookmark` (true / false, default false), like its paper and
+// orientation. Until U3 it is kept here, on this device only: pw.bookmark.<page_id> = '1' while the page is
+// bookmarked. U3 maps the `bookmark` field to a pages.bookmark column (boolean, default false) and drops these keys.
+const MARK = 'pw.bookmark.';
+
+export function bookmarked(pageId) {
+  try { return localStorage.getItem(MARK + pageId) === '1'; } catch (_) { return false; }
+}
+
+export function keepBookmark(pageId, on) {
+  try {
+    if (on) localStorage.setItem(MARK + pageId, '1');
+    else localStorage.removeItem(MARK + pageId);
+  } catch (e) { console.warn('Bookmark not kept on this device', e); }
+}

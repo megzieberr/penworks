@@ -368,6 +368,15 @@ body.full #noteBar, body.full #counter { display: none; }
 .thumbP.ticked .tick::before { background: var(--ink); border-color: var(--ink); }
 .thumbP.ticked .tick svg { visibility: visible; }
 .thumbP.ticked .paper { outline: 2px solid var(--ink); outline-offset: 2px; }
+/* page bookmarks (pw-v4r): a ribbon tab hanging from the page's top edge near the right (Samsung Notes), on the sheet
+   (16 x 26 page px, 12 px in) and on a thumb (10 x 16); the Bookmarks toggle in the list header shows only those pages */
+.sheet > .bookmarkTab { position: absolute; top: 0; right: 12px; width: 16px; height: 26px; z-index: 1; pointer-events: none; }
+.thumbP .paper > .bookmarkTab { position: absolute; top: 0; right: 6px; width: 10px; height: 16px; z-index: 1; pointer-events: none; }
+.bookmarkTab svg { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+#plMarks { flex: none; color: var(--muted); }
+#plMarks.on { color: var(--ink); background: var(--hover); }
+#plMarks.on svg path { fill: currentColor; }
+.plEmpty { grid-column: 1 / -1; margin: 18px 4px; color: var(--muted); text-align: center; }
 #pageList.moving .thumbP { cursor: default; }
 #pageList.moving .thumbP.ticked { opacity: .55; }
 #plBar { flex: none; display: flex; align-items: center; gap: 4px; padding: 6px 8px; border-top: 1px solid var(--line); }
