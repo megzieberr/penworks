@@ -15,6 +15,12 @@
 // with emitStroke(type, row): the row is written to (INSERT) or removed from (DELETE) the twin's strokes first, as the
 // other device's push would, then the event goes to every open subscription. A dropped subscription misses the event
 // but the twin keeps the row, so a reconcile catches up.
+// U3e: an insert whose id is there already throws 23505 (the primary key, as the database does); an update that does
+// not find every row patches the rows it found and then throws 'Not every row was saved' (as api.js does when the row
+// count comes back short); refuseNext(n) refuses tree writes (insert, update, remove) as well as stroke pushes; loadAll
+// fails like a fetch while the browser is offline (the device then opens from its tree snapshot, js/treeq.js); and
+// callLog() lists every write that landed, in order, so the tests can see that a note went up before its page and a
+// page before its strokes.
 
 const KEY = 'penworks.local.v2';
 const TABLES = ['folders', 'notes', 'pages'];
@@ -64,17 +70,19 @@ function touchNotes(d, noteIds, now) {
   d.notes.forEach((n) => { if (set.has(n.id)) n.updated_at = now; });
 }
 
-let failNext = 0;   // test hook: make the next n writes fail, to prove the retry toast (and the strokes queue's retry)
+let failNext = 0;   // test hook: make the next n writes fail like a dropped connection, to prove the queues' retries
 function maybeFail() {
   if (failNext > 0) { failNext--; throw new Error('Simulated failed write'); }
 }
 const storage = new Map();   // the snapshots bucket: path -> Blob
 let reads = 0;
 const bus = new EventTarget();   // U3d: the twin's Realtime
-let refuseNext = 0; // test hook: the next n stroke pushes are refused the way RLS refuses them (code 42501)
-function maybeRefuse() {
-  if (refuseNext > 0) { refuseNext--; refuse('new row violates row-level security policy for table "strokes"', '42501'); }
+let refuseNext = 0; // test hook: the next n writes (stroke pushes and tree writes) are refused the way RLS refuses them (code 42501)
+function maybeRefuse(table = 'strokes') {
+  if (refuseNext > 0) { refuseNext--; refuse(`new row violates row-level security policy for table "${table}"`, '42501'); }
 }
+const calls = [];   // U3e test hook: every write that landed, in order: { call, table, ids }
+function logged(call, table, ids) { calls.push({ call, table, ids }); if (calls.length > 5000) calls.splice(0, calls.length - 5000); }
 
 export const localApi = {
   mode: 'local',
@@ -101,15 +109,16 @@ export const localApi = {
   },
 
   async loadAll() {
+    if (navigator.onLine === false) throw new TypeError('Failed to fetch');   // U3e: no connection, no read
     const d = read();
     return { folders: clone(d.folders), notes: clone(d.notes), pages: clone(d.pages) };
   },
 
   async insert(table, row) {
-    check(table); maybeFail();
+    check(table); maybeFail(); maybeRefuse(table);
     const d = read(), now = new Date().toISOString();
     const id = row.id || crypto.randomUUID();
-    if (d[table].some((r) => r.id === id)) refuse('That row is there already.');
+    if (d[table].some((r) => r.id === id)) refuse(`duplicate key value violates unique constraint "${table}_pkey"`, '23505');
     if (table === 'folders') twoLevels(d, id, row.parent_id);
     if (table === 'notes' && row.folder_id && !d.folders.some((f) => f.id === row.folder_id)) refuse('That folder does not exist.');
     if (table === 'pages' && !d.notes.some((n) => n.id === row.note_id)) refuse('That note does not exist.');
@@ -117,14 +126,14 @@ export const localApi = {
     d[table].push(r);
     if (table === 'pages') touchNotes(d, [r.note_id], now);
     write(d);
+    logged('insert', table, [id]);
     return clone(r);
   },
 
   async update(table, ids, patch) {
-    check(table); maybeFail();
+    check(table); maybeFail(); maybeRefuse(table);
     const d = read(), now = new Date().toISOString(), set = new Set(ids);
     const hit = d[table].filter((r) => set.has(r.id));
-    if (hit.length !== set.size) throw new Error('Some rows were not found');
     if (table === 'folders' && 'parent_id' in patch) hit.forEach((r) => twoLevels(d, r.id, patch.parent_id));
     hit.forEach((r) => {
       Object.assign(r, patch);
@@ -132,11 +141,13 @@ export const localApi = {
     });
     if (table === 'pages' && PAGE_EDIT.some((k) => k in patch)) touchNotes(d, hit.map((r) => r.note_id), now);
     write(d);
+    if (hit.length !== set.size) throw new Error('Not every row was saved');   // the rows it found took the patch, as in the database
+    logged('update', table, [...set]);
   },
 
   // hard delete with the database's cascades
   async remove(table, ids) {
-    check(table); maybeFail();
+    check(table); maybeFail(); maybeRefuse(table);
     const d = read(), set = new Set(ids), now = new Date().toISOString();
     if (table === 'folders') {
       d.folders.forEach((f) => { if (set.has(f.parent_id)) set.add(f.id); });
@@ -147,6 +158,7 @@ export const localApi = {
     d[table] = d[table].filter((r) => !set.has(r.id));
     if (table === 'pages' || table === 'notes') dropStrokes(d);
     write(d);
+    logged('remove', table, [...ids]);
   },
 
   // strokes (U3a): every row of these pages, in seq order, in the columns api.js selects
@@ -177,6 +189,7 @@ export const localApi = {
       touchPages(d, rows.map((s) => s.page_id), now);
       write(d);
     }
+    logged('putStrokes', 'strokes', [...new Set(added.map((r) => r.page_id))]);
   },
 
   // ---------------------------------------------------------------- page pictures (U3b)
@@ -255,4 +268,5 @@ export const localApi = {
 
   failNext(n) { failNext = n; },
   refuseNext(n) { refuseNext = n; },
+  callLog() { return clone(calls); },
 };

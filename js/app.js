@@ -11,6 +11,8 @@
 // U3d: the live mirror (js/live.js): a stroke another device writes shows here a second later (remoteRow), the open
 // note catches up after a dropped channel (liveGap), and the tree (folders, notes, pages) is read again when the app
 // comes back to the front after a minute (refreshTree).
+// U3e: tree writes (folders, notes, pages) go up through a persistent queue (js/treeq.js), like her ink: a page or note
+// made without wifi reaches the server when wifi is back, and the device opens offline from its tree snapshot.
 import { api } from './api.js';
 import { initPage, showStack, fit, scrollToPage, relayout, current, bookmarkTab, markSheet, bgSvg, pageSize } from './page.js';
 import * as ink from './ink.js';
@@ -18,6 +20,7 @@ import * as store from './store.js';
 import { initTray, closePanel, trayState, chooseTool, localTray, adopt as adoptTray } from './tray.js';
 import * as pics from './snap.js';
 import * as live from './live.js';
+import * as treeq from './treeq.js';
 
 const $ = (id) => document.getElementById(id);
 const S = { folders: [], notes: [], pages: [], sel: 'loose', openNote: null, cur: 0, fold: {}, renaming: null,
@@ -81,22 +84,19 @@ function toast(msg, ms = 2600) {
   clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), ms);
 }
 
-// ---------------------------------------------------------------- autosave: writes go out in order, one retry
-let chain = Promise.resolve();
-let failed = 0;
+// ---------------------------------------------------------------- autosave: one named api call per change, queued
+// U3e: save('createPage', p) queues api.createPage(p) in the tree queue (js/treeq.js): kept on the device, sent in order,
+// retried until it lands; a network failure is the dot's `waiting`, never a toast. Resolves true when that op landed,
+// false when the database refused it and it was dropped (then one toast, and the next tree refresh shows the server's).
 let writeGen = 0;          // U3d: counts the writes, so a tree read that overlapped one of hers is not merged
-function save(fn) {
+function save(call, ...args) {
   writeGen++;
-  chain = chain.then(async () => {
-    try { await fn(); }
-    catch (_) {
-      toast('Not saved, trying again');
-      await new Promise((r) => setTimeout(r, 1500));
-      try { await fn(); }
-      catch (e2) { failed++; toast('Still not saved. Check the connection, then reload.', 6000); console.warn(e2); }
-    }
-  });
-  return chain;
+  return treeq.push(call, args);
+}
+// the queue dropped a refused change: one toast, and the tree is read again once the queue is empty
+function treeDropped(what) {
+  toast('A change could not be saved: ' + what, 6000);
+  treeWanted = true;
 }
 
 function remember() {
@@ -120,16 +120,16 @@ function createFolder(parentId = null) {
               position: nextPos(S.folders.filter((f) => (f.parent_id || null) === parentId)),
               deleted_at: null, created_at: nowIso(), updated_at: nowIso() };
   S.folders.push(r);
-  save(() => api.createFolder(r));
+  save('createFolder', r);
   if (parentId) { S.fold[parentId] = false; rememberFold(); }
   S.renaming = { kind: 'folder', id: r.id }; render();
 }
 function renameFolder(id, value) {
   const f = folder(id), v = value.trim().slice(0, 120);
   if (!v || v === f.name) return;
-  f.name = v; save(() => api.renameFolder(id, v));
+  f.name = v; save('renameFolder', id, v);
 }
-function recolour(id, c) { const f = folder(id); f.colour = c; save(() => api.recolourFolder(id, c)); render(); }
+function recolour(id, c) { const f = folder(id); f.colour = c; save('recolourFolder', id, c); render(); }
 // where a folder may go: never under a sub-folder, never deeper than two levels
 function folderTargets(f) {
   if (S.folders.some((c) => c.parent_id === f.id)) return [];           // it holds folders: it stays on top
@@ -143,7 +143,7 @@ function moveFolder(id, parentId) {
   if (parentId && (folder(parentId).parent_id || S.folders.some((c) => c.parent_id === id))) { toast('Folders go two levels deep, no further.'); return; }
   f.parent_id = parentId;
   f.position = nextPos(S.folders.filter((x) => (x.parent_id || null) === parentId && x.id !== id));
-  save(() => api.moveFolder(id, parentId, f.position));
+  save('moveFolder', id, parentId, f.position);
   if (parentId) { S.fold[parentId] = false; rememberFold(); }
   render();
 }
@@ -153,7 +153,7 @@ function stepFolder(id, dir) {
   [list[i], list[j]] = [list[j], list[i]];
   const pairs = [];
   list.forEach((x, k) => { if (x.position !== k) { x.position = k; pairs.push([x.id, k]); } });
-  if (pairs.length) save(() => api.reorderFolders(pairs));
+  if (pairs.length) save('reorderFolders', pairs);
   render();
 }
 
@@ -163,24 +163,24 @@ function createNote(fid) {
   const n = { id: uuid(), folder_id: fid || null, name: 'Untitled', pinned: false, cover_path: null, deleted_at: null, created_at: t, updated_at: t };
   const p = { id: uuid(), note_id: n.id, position: 0, orientation: 'portrait', background: 'grid', deleted_at: null, created_at: t, updated_at: t };
   S.notes.push(n); S.pages.push(p);
-  save(() => api.createNote(n));
-  save(() => api.createPage(p));
+  save('createNote', n);
+  save('createPage', p);
   openNote(n.id);
 }
 function renameNote(id, value) {
   const n = note(id), v = value.trim().slice(0, 120);
   if (!v || v === n.name) return;
   n.name = v; n.updated_at = nowIso();                 // a rename counts as an edit (the database agrees)
-  save(() => api.renameNote(id, v));
+  save('renameNote', id, v);
 }
 function moveNote(id, fid) {
   const n = note(id); n.folder_id = fid;               // moving does not count as an edit
-  save(() => api.moveNote(id, fid));
+  save('moveNote', id, fid);
   render();
 }
 function pinNote(id, on) {
   const n = note(id); n.pinned = on;                    // pinning does not count as an edit
-  save(() => api.pinNote(id, on));
+  save('pinNote', id, on);
   render();
 }
 function noteTargets(n) {
@@ -211,7 +211,7 @@ function setDeleted(ids, value) {
 function binThing(kind, id) {
   const T = nowIso(), ids = binIds(kind, id, (r) => !r.deleted_at);
   setDeleted(ids, T);
-  save(() => api.bin(ids, T));
+  save('bin', ids, T);
   if (S.openNote && !liveNote(note(S.openNote))) closeNote(true);
   if (S.sel !== 'loose' && S.sel !== 'bin' && !liveFolder(folder(S.sel))) { S.sel = 'loose'; remember(); }
   toast('Moved to the Bin. It stays there for 30 days.');
@@ -221,7 +221,7 @@ function restoreThing(kind, id) {
   const r = kind === 'note' ? note(id) : folder(id), T = r.deleted_at;
   const ids = binIds(kind, id, (x) => same(x.deleted_at, T));
   setDeleted(ids, null);
-  save(() => api.restore(ids));
+  save('restore', ids);
   toast('Restored.');
   render();
 }
@@ -282,7 +282,7 @@ function touchNote(nid) { const n = note(nid); if (n) n.updated_at = nowIso(); }
 function renumber(list) {
   const pairs = [];
   list.forEach((p, k) => { if (p.position !== k) { p.position = k; pairs.push([p.id, k]); } });
-  if (pairs.length) save(() => api.reorderPages(pairs));
+  if (pairs.length) save('reorderPages', pairs);
   if (list.length) pics.syncCover(list[0].note_id);          // U3b: the cover follows the first page
 }
 function insertPage(snap, i) {
@@ -291,9 +291,9 @@ function insertPage(snap, i) {
   list.splice(i, 0, p);
   const pairs = [];                                         // the pages below it move down one
   list.forEach((x, k) => { if (x !== p && x.position !== k) { x.position = k; pairs.push([x.id, k]); } });
-  if (pairs.length) save(() => api.reorderPages(pairs));
+  if (pairs.length) save('reorderPages', pairs);
   S.pages.push(p);
-  save(() => api.createPage(p));                          // U3c: the row carries the bookmark (undo of a delete, a paste)
+  save('createPage', p);                          // U3c: the row carries the bookmark (undo of a delete, a paste)
   store.change(p.id, [], ink.strokesOf(p.id));              // U3a: undo of a delete: the database cascaded its strokes, send them again
   touchNote(p.note_id);
   pics.syncCover(p.note_id);                                // U3b: a page at the top takes over the cover
@@ -302,7 +302,7 @@ function removePage(id) {
   const p = page(id), list = pagesOf(p.note_id).filter((x) => x !== p);
   S.pages = S.pages.filter((x) => x !== p);                 // the op's snapshot still holds its bookmark, for undo
   orphans.add(id);
-  save(() => api.deletePage(id));
+  save('deletePage', id);
   store.unqueue(id);                                        // U3a: its strokes cascade on the server; queued ops for it can never land
   renumber(list);
   touchNote(p.note_id);
@@ -402,7 +402,7 @@ function setPaper(field, value, all) {
   const put = (pairs) => {
     const groups = new Map();
     pairs.forEach(([id, v]) => { const p = page(id); if (!p) return; p[field] = v; groups.set(v, [...(groups.get(v) || []), id]); pics.changed(id); });   // U3b: a new paper, a new picture
-    groups.forEach((ids, v) => save(() => api.setPages(ids, { [field]: v })));
+    groups.forEach((ids, v) => save('setPages', ids, { [field]: v }));
     touchNote(S.openNote);
     shown(at);
   };
@@ -415,7 +415,7 @@ function setBookmark(id, on) {
   const p = page(id);
   if (!p) return;
   p.bookmark = on;
-  save(() => api.setBookmark(id, on));                      // U3c: the row; not an edit, the note keeps its place
+  save('setBookmark', id, on);                      // U3c: the row; not an edit, the note keeps its place
   markSheet(id, on);
   if (S.listOpen) renderPageList();
   toast(on ? 'Bookmarked' : 'Bookmark removed');
@@ -1148,11 +1148,15 @@ function toggleTheme() {
 async function load() {
   try { await api.purgeBin(30); } catch (_) { /* the bin empties itself next time */ }
   const prof = api.profile().catch(() => null);           // U3c: the tray state, asked for beside the notes
-  let d;
-  try { d = await api.loadAll(); }
-  catch (_) { toast('Could not load your notes. Check the connection, then reload.', 8000); return; }
+  // U3e: the database's tree, kept as this device's snapshot; with no connection, the snapshot. Either way the tree
+  // changes still queued go on top, so the screen shows what she last saw.
+  let d = null, fresh = true;
+  try { d = await api.loadAll(); treeq.keepTree(d); }
+  catch (_) { fresh = false; d = await treeq.lastTree(); }
+  if (!d) { toast('Could not load your notes. Check the connection, then reload.', 8000); return; }
+  d = await treeq.overlay(d);
   S.folders = d.folders; S.notes = d.notes; S.pages = d.pages;
-  lastLoad = Date.now();                                    // U3d: the tree's age (refreshTree)
+  lastLoad = fresh ? Date.now() : 0;                        // U3d: the tree's age (refreshTree); from the snapshot: read it again at the next chance
   S.pages.forEach((p) => { p.bookmark = p.bookmark === true; });         // U3c: the row's column (0004)
   takeOverBookmarks();
   try { S.fold = JSON.parse(localStorage.getItem(PREF + 'fold') || '{}') || {}; } catch (_) { S.fold = {}; }
@@ -1167,7 +1171,8 @@ async function load() {
 
 // U3c, once per device: bookmarks from pw-v4r were kept in localStorage (pw.bookmark.<page_id> = '1'). A page that is
 // still there (live or in the bin) and not yet bookmarked in its row takes the bookmark through the database, and its
-// key goes once the row has it; every other pw.bookmark.* key goes at once. A failed write keeps its key for next time.
+// key goes once the row has it; every other pw.bookmark.* key goes at once. A refused (dropped) write keeps its key for next time;
+// one still queued keeps it until it lands, or until a later start reads the row as bookmarked.
 const OLD_MARK = 'pw.bookmark.';
 let tookOver = { keys: 0, set: 0 };
 function takeOverBookmarks() {
@@ -1184,7 +1189,7 @@ function takeOverBookmarks() {
     if (!on || !p || p.bookmark) { drop(k); continue; }
     p.bookmark = true;
     tookOver.set++;
-    save(async () => { await api.setBookmark(id, true); drop(k); });
+    save('setBookmark', id, true).then((ok) => { if (ok) drop(k); });   // the key goes once THAT op has landed
   }
 }
 
@@ -1228,10 +1233,11 @@ async function enter(user) {
   S.user = user;
   $('login').hidden = true; $('app').hidden = false;
   if (api.mode === 'local') { $('modeNote').textContent = 'local copy'; $('logoutBtn').hidden = true; }
-  store.init({ mode: api.mode, userId: user.id, api, idle: () => chain, onRemote: ink.replace, onState: saveDot, onPushed: pics.pushed });
+  // U3e: the tree queue first; the stroke queue waits for it (a new page's row reaches the database before its strokes)
+  treeq.init({ mode: api.mode, userId: user.id, api, onState: dotFrom('tree'), onDrop: treeDropped });
+  store.init({ mode: api.mode, userId: user.id, api, idle: () => treeq.gate(), onRemote: ink.replace, onState: dotFrom('ink'), onPushed: pics.pushed });
   pics.initSnap({ api, store, ink, owner: () => user.id, pages: () => S.pages, page, note, pagesOf, liveNote, onCover: refreshCard,
-                  render: (p, recs) => renderPage(p, 'image/webp', 0.8, 1, recs),
-                  idle: async () => { await chain; await store.settled(); await chain; } });
+                  render: (p, recs) => renderPage(p, 'image/webp', 0.8, 1, recs), idle: settledBoth });
   await load();
   pics.scan();                                              // U3b rule (b): pages whose picture is older than their ink
   live.initLive({ api, userId: user.id, onRow: remoteRow, onGap: liveGap });   // U3d: after load(), one channel per login
@@ -1264,9 +1270,10 @@ function liveGap() {
 // that read is over a minute old, it is read again and merged: rows new upstream are added, rows gone upstream go,
 // changed rows change in place; then what is on screen redraws, the open note staying open with its scroll and its
 // undo stack. The open note binned or deleted upstream: back to the folder view with one toast. Never while a gesture,
-// tick mode, a menu, a rename, a panel or a dialog is open (5 s later then), nor over a write of hers still going out.
+// tick mode, a menu, a rename, a panel or a dialog is open (5 s later then), nor while a change of hers is still in the
+// tree queue (U3e: then once it is empty), nor offline (nothing to read).
 const TREE_AGE = 60000, TREE_RETRY = 5000, TREE = ['folders', 'notes', 'pages'];
-let lastLoad = 0, treeT = 0, treeBusy = false;
+let lastLoad = 0, treeT = 0, treeBusy = false, treeWanted = false;
 const STAMP = /^\d{4}-\d\d-\d\dT/;
 const sameVal = (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b)
   || (typeof a === 'string' && typeof b === 'string' && STAMP.test(a) && Date.parse(a) === Date.parse(b));
@@ -1277,15 +1284,18 @@ function treeLater() { clearTimeout(treeT); treeT = setTimeout(() => { treeT = 0
 function maybeRefreshTree() { if (S.user && Date.now() - lastLoad > TREE_AGE) refreshTree(); }
 async function refreshTree() {
   if (!S.user || treeBusy) return false;
+  if (navigator.onLine === false) return false;             // nothing to read: the `online` event tries again
+  if (treeq.length()) { treeWanted = true; return false; }   // her own changes reach the database first
   if (treeBlocked()) { treeLater(); return false; }
   treeBusy = true;
   try {
     const gen = writeGen;
-    await chain;                                            // her own writes reach the database first
     let d;
     try { d = await api.loadAll(); } catch (_) { return false; }   // no connection: the next trigger tries again
-    if (gen !== writeGen || treeBlocked()) { treeLater(); return false; }
+    if (gen !== writeGen || treeq.length() || treeBlocked()) { treeLater(); return false; }
     lastLoad = Date.now();
+    treeWanted = false;
+    treeq.keepTree(d);                                      // U3e: the device's snapshot
     await mergeTree(d);
     return true;
   } finally { treeBusy = false; }
@@ -1293,19 +1303,20 @@ async function refreshTree() {
 async function mergeTree(d) {
   const gone = [], fresh = [];
   let changed = false;
+  const mine = new Set(treeq.pending());                    // U3e: rows a queued change of hers touches stay as she has them
   for (const t of TREE) {
     const up = new Map((d[t] || []).map((r) => [r.id, r])), keep = [];
     for (const r of S[t]) {
+      if (mine.has(r.id)) { up.delete(r.id); keep.push(r); continue; }
       const u = up.get(r.id);
-      // a row the database lacks: gone on another device, UNLESS one of her own saves never landed ("Still not
-      // saved"): then it may be hers and unsent, and the refresh keeps it on the screen (Fable, U3d review)
-      if (!u) { if (failed > 0) { keep.push(r); continue; } changed = true; if (t === 'pages') gone.push(r.id); continue; }
+      if (!u) { changed = true; if (t === 'pages') gone.push(r.id); continue; }   // gone upstream
       up.delete(r.id);
       if (t === 'pages') u.bookmark = u.bookmark === true;
       for (const k of Object.keys(u)) if (!sameVal(r[k], u[k])) { r[k] = u[k]; changed = true; }
       keep.push(r);
     }
     for (const u of up.values()) {
+      if (mine.has(u.id)) continue;                         // her queued change deletes it
       if (t === 'pages') { u.bookmark = u.bookmark === true; fresh.push(u.id); }
       keep.push(u); changed = true;
     }
@@ -1332,6 +1343,18 @@ async function mergeTree(d) {
 const DOT_TITLE = { saved: () => 'All saved', saving: () => 'Saving', refused: () => 'A change was refused, see the console',
                     waiting: (n) => `Waiting for a connection, ${n} ${n === 1 ? 'change' : 'changes'} to send` };
 // Two dots, the same state: one in the folder view's footer, one in the note bar (the footer is hidden while she writes).
+// U3e: one dot for both queues (ink and tree): refused if either says so, else saving if either is pushing, else
+// waiting while either holds changes (the count is the sum), else saved.
+const dots = { ink: ['saved', 0], tree: ['saved', 0] };
+const dotFrom = (which) => (state, count) => {
+  dots[which] = [state, count || 0];
+  const all = Object.values(dots), n = all.reduce((k, [, c]) => k + c, 0), has = (x) => all.some(([s]) => s === x);
+  saveDot(has('refused') ? 'refused' : has('saving') ? 'saving' : n > 0 ? 'waiting' : 'saved', n);
+  if (which === 'tree' && state === 'saved' && !count) {
+    store.nudge();                                          // strokes held back behind a tree change go now
+    if (treeWanted) refreshTree();                          // a refresh skipped (or a change dropped) while the queue held changes
+  }
+};
 function saveDot(state, count) {
   if (!DOT_TITLE[state]) return;
   const title = DOT_TITLE[state](count);
@@ -1399,7 +1422,11 @@ function wire() {
     $('lp').value = '';
     enter(res.user || await api.session());
   });
-  $('logoutBtn').addEventListener('click', async () => { live.stopLive(); await chain; await api.signOut(); location.reload(); });
+  $('logoutBtn').addEventListener('click', async () => {
+    live.stopLive();
+    await Promise.race([settledBoth(), new Promise((r) => setTimeout(r, 5000))]);   // what can go up goes; the rest stays on the device
+    await api.signOut(); location.reload();
+  });
   $('gridBack').addEventListener('click', () => { document.body.classList.remove('showGrid'); });
   $('backBtn').addEventListener('click', () => { if (history.state && history.state.note) history.back(); else closeNote(); });
   window.addEventListener('popstate', () => { if (S.openNote) closeNote(true); });
@@ -1445,7 +1472,10 @@ function wire() {
 }
 
 // test hook: the checks wait for writes and clean up their rows through this
-window.__pw = { S, api, idle: async () => { await chain; await store.settled(); await chain; }, failed: () => failed, current, ink, store, tray: trayState,
+// U3e: both queues empty (or stopped: offline); the tree queue goes first, its strokes after it, then any tree change
+// made meanwhile
+async function settledBoth() { await treeq.settled(); await store.settled(); await treeq.settled(); }
+window.__pw = { S, api, idle: settledBoth, failed: () => treeq.dropCount(), current, ink, store, tray: trayState, treeq, mergeTree,
                 snap: pics.snapStats, renderGrid, covers: coverUrl, bookmarksTaken: () => ({ ...tookOver }),
                 trayPending: () => ({ next: !!trayNext, busy: trayBusy, timer: !!trayT }),
                 pageDrag: () => (pd ? { lifted: pd.lifted, from: pd.from, to: pd.to } : null),

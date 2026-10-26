@@ -255,6 +255,7 @@ const liveApi = {
   failNext() { /* local twin only */ },
   refuseNext() { /* local twin only */ },
   emitStroke() { /* local twin only */ },
+  callLog() { return []; },   // local twin only (U3e)
 };
 
 const base = new URLSearchParams(location.search).has('local') ? localApi : liveApi;

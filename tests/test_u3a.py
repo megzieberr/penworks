@@ -207,7 +207,10 @@ try:
         draw(pg, 2, 300); idle(pg)
         check("offline, one more on page 2 waits in the queue", qlen(pg) == 1)
         thumb_menu(pg, 2); menu(pg, "Delete"); close_list(pg); idle(pg)
-        check("Delete page 2: its queued op goes with it (it could never land)", qlen(pg) == 0 and dot(pg)[0] == "saved", [qlen(pg), dot(pg)])
+        # U3e: the page delete itself now waits in the tree queue while offline, so the dot counts only those tree changes
+        tn = pg.evaluate("window.__pw.treeq.length()")
+        check("Delete page 2: its queued op goes with it (it could never land)", qlen(pg) == 0 and tn >= 1
+              and dot(pg)[0] == "waiting" and f"{tn} change" in dot(pg)[1], [qlen(pg), tn, dot(pg)])
         online(pg); idle(pg)
         check("the twin cascaded its strokes", twin(pg, "q2") == [])
         pg.click("#undoBtn"); idle(pg)
@@ -286,9 +289,9 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v5d" not in keys:
+        if "pw-v5e" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v5d", "pw-v5d" in keys, keys)
+        check("cache is pw-v5e", "pw-v5e" in keys, keys)
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the shell lists ./js/store.js, not store-local.js", "./js/store.js" in swt and "store-local" not in swt)
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in

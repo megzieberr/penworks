@@ -311,7 +311,11 @@ try:
         pg.evaluate("window.__pw.api.failNext(1)")
         nrow(pg, "Loose one").locator(".more").click(); menu(pg, "Rename"); type_name(pg, "Loose two")
         pg.wait_for_timeout(400)
-        check("failed write shows the toast", pg.locator("#toast.show").inner_text() == "Not saved, trying again")
+        # U3e: a failed write is the dot's business (waiting, then saving on the retry), never a toast
+        shown = pg.locator("#toast.show").inner_text() if pg.locator("#toast.show").count() else ""
+        dot_state = pg.evaluate("document.getElementById('saveDot').dataset.state")
+        check("a failed write shows no toast and the dot says waiting or saving",
+              "saved" not in shown.lower() and dot_state in ("waiting", "saving"), [shown, dot_state])
         idle(pg); pg.reload(); ready(pg)
         check("the retry saved it", side(pg)["looseNotes"] == ["Loose two"] and pg.evaluate("window.__pw.failed()") == 0)
         check("no page errors (local)", not errs, errs)
@@ -384,7 +388,7 @@ try:
             st = pg.evaluate("(u)=>fetch(u).then(r=>r.status+' '+r.headers.get('content-type'))", ic["src"])
             check("icon " + ic["src"], st.startswith("200 image/png"), st)
         check("service worker registers and is active", pg.evaluate("navigator.serviceWorker.ready.then(r=>!!r.active)"))
-        check("cache is pw-v5d (share pages)", pg.evaluate("caches.keys()") == ["pw-v5d"] or "pw-v5d" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v5e (share pages)", pg.evaluate("caches.keys()") == ["pw-v5e"] or "pw-v5e" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
         inst = ctx.new_cdp_session(pg).send("Page.getInstallabilityErrors")
         check("Chrome sees it as installable", not inst.get("installabilityErrors"), inst)
         pg.reload(); ready(pg); pg.wait_for_timeout(500)

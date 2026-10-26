@@ -13,6 +13,8 @@
 // U3d (js/live.js): a row another device wrote comes in through applyRemote (mirror and cache only, nothing queued: the
 // database has it already); pageOf finds the page a deleted id was on; echo tells a row this device wrote itself (its own
 // push coming back) from someone else's; reconcile is exported for the gap check after a dropped channel.
+// U3e: idle() is the tree queue's gate (js/treeq.js): it throws, like a network error, while tree changes still wait, so
+// a page's strokes never go up before its row; nudge() starts the push again once the tree queue is empty.
 
 const LEGACY = 'pw.strokes.';
 const LOCAL_MARK = 'pw.cache.local';      // local mode only: the twin lives in localStorage, its cache lives with it
@@ -327,6 +329,8 @@ function trigger() {
   if (unchecked.size) reconcile([...unchecked]);
   if (Q.length) pump();
 }
+// U3e: the tree queue just emptied (js/treeq.js): strokes held back behind a tree change go now, not at their next retry
+export function nudge() { trigger(); }
 function kick() {
   if (navigator.onLine === false) { if (!pumping) show('waiting'); return; }
   pump();
