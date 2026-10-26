@@ -55,6 +55,9 @@
 # shape); the pen button (one contextmenu on the desk) flips between Select and the last ink tool through the tray. The
 # "plain pen grabs" and "pen button press" groups are rewritten as "select drags an end (pw-v4v)"; grab_page now grabs with
 # the select tool, rdrag_page is the old right-button drag (whose release now flips the tool).
+# Arrow tip = first corner (pw-v4w): classify takes the arrow's tip from tipIndex (ink.js), the stroke's FIRST sharp corner,
+# not the point farthest from the start; the tail may be up to 1.2 x the shaft. Her real pen strokes live in tests/fixtures
+# (arrow-pen-fail, arrow-pen-ok, curved-arrow-pen; never edited). The "arrow tip = first corner (pw-v4w)" group.
 import sys, subprocess, time, pathlib, re, json, math, random
 from playwright.sync_api import sync_playwright
 
@@ -2561,10 +2564,50 @@ try:
         check("no page errors in the parabola groups", not (ep1 or ep2 or ep3 or ep4 or ep5 or ep6), [ep1, ep2, ep3, ep4, ep5, ep6])
         ctx.close()
 
+        # ------------------------------------------------------------ pw-v4w: the arrow's tip is the stroke's first sharp corner
+        group[0] = "arrow tip = first corner (pw-v4w)"
+        ctx, pg, ea = fresh(b); errs += ea
+        FIX = ROOT / "tests" / "fixtures"
+        def fixture(name): return json.load(open(FIX / name, encoding="utf-8"))["points"]
+        def classify_(pts): return pg.evaluate("(p) => import('./js/ink.js').then(m => m.classify(p))", [list(q) for q in pts])
+        def tip_(pts): return pg.evaluate("(p) => import('./js/ink.js').then(m => m.tipIndex(p))", [list(q) for q in pts])
+        FAIL, OK, CURVED = fixture("arrow-pen-fail.json"), fixture("arrow-pen-ok.json"), fixture("curved-arrow-pen.json")
+        for name, pts, ref in [("arrow-pen-fail", FAIL, (233.4, 317.3)), ("arrow-pen-ok", OK, (390.2, 358.3)), ("curved-arrow-pen", CURVED, (163.9, 95.9))]:
+            ti = tip_(pts)
+            info_lines.append(f"tipIndex {name}: {ti} {pts[ti] if 0 <= ti < len(pts) else None} (reference {ref})")
+            check(f"tipIndex on {name}: within 2 px of the reference corner {ref}", 0 <= ti < len(pts) and near(pts[ti], ref, 2), [ti, pts[ti] if 0 <= ti < len(pts) else None])
+        r = classify_(FAIL)
+        check("her failing pen arrow (overshoot on the return): arrow", bool(r) and r["type"] == "arrow", r)
+        if r and r["type"] == "arrow":
+            check("... its tip within 2 px of (233.4, 317.3), its start within 2 px of (141.5, 371.5)",
+                  near((r["x2"], r["y2"]), (233.4, 317.3), 2) and near((r["x1"], r["y1"]), (141.5, 371.5), 2), r)
+        r = classify_(OK)
+        check("her working pen arrow: still an arrow", bool(r) and r["type"] == "arrow", r)
+        if r and r["type"] == "arrow":
+            check("... its tip within 2 px of (390.2, 358.3)", near((r["x2"], r["y2"]), (390.2, 358.3), 2), r)
+        r = classify_(CURVED)
+        info_lines.append(f"curved-arrow-pen classifies as: {r and r['type']}")
+        check("her curved pen arrow: not an arrow and not a line (round 3 makes it a curved arrow)", not (r and r["type"] in ("arrow", "line")), r)
+        check("tipIndex on a plain straight stroke (mouse, wobbly): -1", tip_(rough_line()) == -1, tip_(rough_line()))
+        dense = [(100 + 0.7 * k, 300 + 0.6 * math.sin(k * 0.3)) for k in range(400)]
+        check("tipIndex on a plain straight stroke (pen-dense points): -1", tip_(dense) == -1, tip_(dense))
+        Vm = [(100, 600), (130, 660), (160, 720), (190, 780), (220, 720), (250, 660), (280, 600)]
+        check("tipIndex on a V drawn with the mouse (sparse points): the corner (index 3)", tip_(Vm) == 3, tip_(Vm))
+        ra = rough_arrow()
+        check("tipIndex on the mouse arrow (tip, wing, back, wing): the tip (index 8)", tip_(ra) == 8, tip_(ra))
+        r = classify_(ra)
+        check("classify on the mouse arrow: arrow from (120, 980) to the tip (420, 980)", bool(r) and r["type"] == "arrow"
+              and near((r["x1"], r["y1"]), (120, 980), 3) and near((r["x2"], r["y2"]), (420, 980), 3), r)
+        loopy = [(100 + 10 * k, 500) for k in range(31)] + [(400 + 20 * math.sin(math.radians(a)), 480 + 20 * math.cos(math.radians(a))) for a in range(15, 361, 15)]
+        r = classify_(loopy)
+        check("a stroke that ends in a soft loop (no corner): not an arrow", tip_(loopy) == -1 and not (r and r["type"] == "arrow"), [tip_(loopy), r])
+        check("no page errors in the arrow tip group", not ea, ea)
+        ctx.close()
+
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v4v", "pw-v4v" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v4w", "pw-v4w" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)

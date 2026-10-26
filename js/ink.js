@@ -47,6 +47,10 @@
 // stays a parabola under every move, resize and turn. Its three handles are the ends and the curve's middle (t = 0.5). The
 // fit runs after the line and before the arc, and wins only when it is under 0.6 of the arc's own fit (an even curve stays
 // an arc); lastStroke().fit holds both numbers for ?dbg=1.
+// Arrow tip = first corner (pw-v4w): the arrow's tip is the FIRST sharp corner of the stroke (tipIndex below), not the point
+// farthest from the start. She rides the pen back along the first wing to the tip; passing the real corner by a hair on that
+// return put the old "farthest point" tip on the return pass, and the snap did nothing. The tail may now be up to 1.2 x the
+// shaft (her draw-back head path is nearly twice a plain V).
 
 import * as store from './store-local.js';
 import { pageAt, pagePoint, view, pageSize } from './page.js';
@@ -685,6 +689,36 @@ function parabolaOf(stroke, A, Z, size, k) {
   if (!(p < 0.6 * a)) return null;                                 // the arc fits about as well: the arc branch has it
   return { shape: { type: 'parabola', x1: r1(A[0]), y1: r1(A[1]), cx: r1(d.cx), cy: r1(d.cy), x2: r1(Z[0]), y2: r1(Z[1]) }, p, a };
 }
+// the arrow's tip (pw-v4w): the index of the FIRST raw point where the pen's direction reverses sharply, or -1.
+// The direction before a point runs from the point at least TIP_REACH px back (walking back along the stroke until the
+// straight distance is that far) to it, the direction after from it to the point at least TIP_REACH px ahead: travel
+// distance, not a point count, since pen points sit 0.3 to 1.2 px apart and mouse points much further. A corner turns
+// more than TIP_TURN degrees. The first SNAP_MIN px of travel (a start wobble) and the last 3 points are never a corner.
+// A corner spans a few samples: qualifying points within TIP_GAP px of travel of each other are one cluster, and the
+// first cluster's point with the largest turn is the tip. Exported for the curved arrow (round 3).
+const TIP_REACH = 3, TIP_TURN = 110, TIP_GAP = 6;
+export function tipIndex(raw) {
+  const n = raw ? raw.length : 0;
+  if (n < 5) return -1;
+  const cum = [0];
+  for (let i = 1; i < n; i++) cum.push(cum[i - 1] + dist(raw[i - 1], raw[i]));
+  let best = -1, bt = 0, lastC = -1;
+  for (let i = 1; i < n - 3; i++) {
+    if (cum[i] < SNAP_MIN) continue;
+    if (lastC >= 0 && cum[i] - lastC > TIP_GAP) break;            // the first cluster is over
+    let j = i - 1, k = i + 1;
+    while (j > 0 && dist(raw[j], raw[i]) < TIP_REACH) j--;
+    while (k < n - 1 && dist(raw[k], raw[i]) < TIP_REACH) k++;
+    if (dist(raw[j], raw[i]) < TIP_REACH || dist(raw[k], raw[i]) < TIP_REACH) continue;
+    const ax = raw[i][0] - raw[j][0], ay = raw[i][1] - raw[j][1], bx = raw[k][0] - raw[i][0], by = raw[k][1] - raw[i][1];
+    const t = Math.abs(Math.atan2(ax * by - ay * bx, ax * bx + ay * by)) * 180 / Math.PI;
+    if (t > TIP_TURN) {
+      if (t > bt) { bt = t; best = i; }
+      lastC = cum[i];
+    }
+  }
+  return best;
+}
 // in this order: arrow, line, parabola, arc, then closed: triangle, rect, circle or ellipse; null = stays freehand.
 // A parabola leaves its two fit numbers in FIT (lastStroke().fit); every other answer leaves FIT null
 export function classify(raw) {
@@ -693,13 +727,12 @@ export function classify(raw) {
   const b = bbox(raw), W = b[2] - b[0], H = b[3] - b[1], size = Math.hypot(W, H);
   if (size < 10) return null;
   const pts = rdp(raw, Math.max(0.75, 0.02 * size)), A = raw[0], Z = raw[raw.length - 1];
-  // arrow: a straight shaft to the tip (the point farthest from the start), then a short tail that comes back
-  // on both sides of the shaft (the V of the head)
-  let ti = 0, shaft = 0;
-  raw.forEach((q, i) => { const dd = dist(A, q); if (dd > shaft) { shaft = dd; ti = i; } });
-  if (ti < raw.length - 1 && shaft >= SNAP_MIN) {
+  // arrow: a straight shaft to the tip (the stroke's first sharp corner, tipIndex above), then a short tail that comes
+  // back on both sides of the shaft (the V of the head)
+  const ti = tipIndex(raw), shaft = ti < 0 ? 0 : dist(A, raw[ti]);
+  if (ti >= 0 && shaft >= SNAP_MIN) {
     const tip = raw[ti], tail = raw.slice(ti), tl = polyLen(tail);
-    if (tl >= 0.08 * shaft && tl <= 0.9 * shaft && straight(raw.slice(0, ti + 1), A, tip, 0.06)) {
+    if (tl >= 0.08 * shaft && tl <= 1.2 * shaft && straight(raw.slice(0, ti + 1), A, tip, 0.06)) {
       const ux = (tip[0] - A[0]) / shaft, uy = (tip[1] - A[1]) / shaft;
       let left = 0, right = 0, backMax = 0;
       for (const q of tail) {
