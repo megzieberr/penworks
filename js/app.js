@@ -8,12 +8,16 @@
 // U3b: page pictures to storage a few seconds after she stops writing (js/snap.js); a note's card shows its first page.
 // U3c: a page's bookmark is the pages.bookmark column (migration 0004); the tray state follows her across devices
 // through profiles.settings (newer wins, by its tray_at stamp).
+// U3d: the live mirror (js/live.js): a stroke another device writes shows here a second later (remoteRow), the open
+// note catches up after a dropped channel (liveGap), and the tree (folders, notes, pages) is read again when the app
+// comes back to the front after a minute (refreshTree).
 import { api } from './api.js';
 import { initPage, showStack, fit, scrollToPage, relayout, current, bookmarkTab, markSheet, bgSvg, pageSize } from './page.js';
 import * as ink from './ink.js';
 import * as store from './store.js';
 import { initTray, closePanel, trayState, chooseTool, localTray, adopt as adoptTray } from './tray.js';
 import * as pics from './snap.js';
+import * as live from './live.js';
 
 const $ = (id) => document.getElementById(id);
 const S = { folders: [], notes: [], pages: [], sel: 'loose', openNote: null, cur: 0, fold: {}, renaming: null,
@@ -80,7 +84,9 @@ function toast(msg, ms = 2600) {
 // ---------------------------------------------------------------- autosave: writes go out in order, one retry
 let chain = Promise.resolve();
 let failed = 0;
+let writeGen = 0;          // U3d: counts the writes, so a tree read that overlapped one of hers is not merged
 function save(fn) {
+  writeGen++;
   chain = chain.then(async () => {
     try { await fn(); }
     catch (_) {
@@ -1146,6 +1152,7 @@ async function load() {
   try { d = await api.loadAll(); }
   catch (_) { toast('Could not load your notes. Check the connection, then reload.', 8000); return; }
   S.folders = d.folders; S.notes = d.notes; S.pages = d.pages;
+  lastLoad = Date.now();                                    // U3d: the tree's age (refreshTree)
   S.pages.forEach((p) => { p.bookmark = p.bookmark === true; });         // U3c: the row's column (0004)
   takeOverBookmarks();
   try { S.fold = JSON.parse(localStorage.getItem(PREF + 'fold') || '{}') || {}; } catch (_) { S.fold = {}; }
@@ -1227,6 +1234,98 @@ async function enter(user) {
                   idle: async () => { await chain; await store.settled(); await chain; } });
   await load();
   pics.scan();                                              // U3b rule (b): pages whose picture is older than their ink
+  live.initLive({ api, userId: user.id, onRow: remoteRow, onGap: liveGap });   // U3d: after load(), one channel per login
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) maybeRefreshTree(); });
+  addEventListener('online', maybeRefreshTree);
+}
+
+// ---------------------------------------------------------------- the live mirror (U3d)
+// A row another device wrote (js/live.js). INSERT: this device's own push coming back, a stroke the mirror holds
+// already, or a page this device's tree does not have yet (the tree refresh brings it, and its ensure the strokes):
+// nothing. Otherwise it goes onto the page through ink.applyRemote (no queue, no undo step, no picture). DELETE carries
+// only the id: the mirror says which page held it; none = nothing.
+const STROKE_KEYS = ['id', 'page_id', 'seq', 'kind', 'style', 'data'];
+function remoteRow(type, row) {
+  if (!row || !row.id || store.echo(row.id)) return;
+  if (type === 'INSERT') {
+    if (store.pageOf(row.id) || !page(row.page_id)) return;
+    ink.applyRemote(row.page_id, [], [Object.fromEntries(STROKE_KEYS.map((k) => [k, row[k]]))]);
+  } else if (type === 'DELETE') {
+    const pid = store.pageOf(row.id);
+    if (pid) ink.applyRemote(pid, [row.id], []);
+  }
+}
+// after a gap (a dropped channel, the app back at the front): the open note's pages against the database
+function liveGap() {
+  if (S.openNote) store.reconcile(pagesOf(S.openNote).map((p) => p.id));
+}
+
+// The tree on this device is read once at load(). When the app comes back to the front (or the connection does) and
+// that read is over a minute old, it is read again and merged: rows new upstream are added, rows gone upstream go,
+// changed rows change in place; then what is on screen redraws, the open note staying open with its scroll and its
+// undo stack. The open note binned or deleted upstream: back to the folder view with one toast. Never while a gesture,
+// tick mode, a menu, a rename, a panel or a dialog is open (5 s later then), nor over a write of hers still going out.
+const TREE_AGE = 60000, TREE_RETRY = 5000, TREE = ['folders', 'notes', 'pages'];
+let lastLoad = 0, treeT = 0, treeBusy = false;
+const STAMP = /^\d{4}-\d\d-\d\dT/;
+const sameVal = (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b)
+  || (typeof a === 'string' && typeof b === 'string' && STAMP.test(a) && Date.parse(a) === Date.parse(b));
+function treeBlocked() {
+  return ink.busy() || !!pd || !!S.tick || !!S.renaming || !$('menu').hidden || !!document.querySelector('[role="dialog"]:not([hidden])');
+}
+function treeLater() { clearTimeout(treeT); treeT = setTimeout(() => { treeT = 0; refreshTree(); }, TREE_RETRY); }
+function maybeRefreshTree() { if (S.user && Date.now() - lastLoad > TREE_AGE) refreshTree(); }
+async function refreshTree() {
+  if (!S.user || treeBusy) return false;
+  if (treeBlocked()) { treeLater(); return false; }
+  treeBusy = true;
+  try {
+    const gen = writeGen;
+    await chain;                                            // her own writes reach the database first
+    let d;
+    try { d = await api.loadAll(); } catch (_) { return false; }   // no connection: the next trigger tries again
+    if (gen !== writeGen || treeBlocked()) { treeLater(); return false; }
+    lastLoad = Date.now();
+    await mergeTree(d);
+    return true;
+  } finally { treeBusy = false; }
+}
+async function mergeTree(d) {
+  const gone = [], fresh = [];
+  let changed = false;
+  for (const t of TREE) {
+    const up = new Map((d[t] || []).map((r) => [r.id, r])), keep = [];
+    for (const r of S[t]) {
+      const u = up.get(r.id);
+      // a row the database lacks: gone on another device, UNLESS one of her own saves never landed ("Still not
+      // saved"): then it may be hers and unsent, and the refresh keeps it on the screen (Fable, U3d review)
+      if (!u) { if (failed > 0) { keep.push(r); continue; } changed = true; if (t === 'pages') gone.push(r.id); continue; }
+      up.delete(r.id);
+      if (t === 'pages') u.bookmark = u.bookmark === true;
+      for (const k of Object.keys(u)) if (!sameVal(r[k], u[k])) { r[k] = u[k]; changed = true; }
+      keep.push(r);
+    }
+    for (const u of up.values()) {
+      if (t === 'pages') { u.bookmark = u.bookmark === true; fresh.push(u.id); }
+      keep.push(u); changed = true;
+    }
+    S[t] = keep;
+  }
+  if (!changed) return;
+  gone.forEach((id) => orphans.add(id));                    // a page gone upstream: its ink goes once no undo step holds it
+  tidyInk();
+  if (S.sel !== 'loose' && S.sel !== 'bin' && !liveFolder(folder(S.sel))) { S.sel = 'loose'; remember(); }
+  if (S.openNote && !liveNote(note(S.openNote))) {
+    closeNote(true);
+    toast('This note was moved to the bin on another device');
+    return;
+  }
+  if (S.openNote) {
+    const here = new Set(pagesOf(S.openNote).map((p) => p.id)), came = fresh.filter((id) => here.has(id));
+    if (came.length) await store.ensure(came);              // their strokes: the cache, then the database
+  }
+  render();
+  if (S.openNote) pagesOf(S.openNote).forEach((p) => markSheet(p.id, p.bookmark));   // the stack key leaves bookmarks out
 }
 
 // the save dot (U3a) beside the dark-mode toggle: grey saved, blue saving, amber waiting, red refused. No text, no toast.
@@ -1259,6 +1358,17 @@ function penButton() {
   chooseTool(t.tool === 'select' ? t.lastInk : 'select');
 }
 
+// ink.js onChange: the page list's thumb, the page picture (U3b, not for a change from another device), and for a
+// change from another device while the grid shows, that note's card (U3d)
+function inkChanged(pageId, how) {
+  if (S.listOpen) refreshThumb(pageId);
+  pics.changed(pageId, how);
+  if (how && how.remote && !S.openNote) {
+    const p = page(pageId);
+    if (p && pagesOf(p.note_id)[0] === p) refreshCard(p.note_id);
+  }
+}
+
 function wire() {
   applyTheme();
   darkQuery.addEventListener('change', applyTheme);
@@ -1270,7 +1380,7 @@ function wire() {
     $('eyeBtn').setAttribute('aria-label', show ? 'Hide password' : 'Show password');
     $('eyeBtn').classList.toggle('on', show);
   });
-  ink.initInk({ doOp, desk: $('desk'), onChange: (pageId) => { if (S.listOpen) refreshThumb(pageId); pics.changed(pageId); },
+  ink.initInk({ doOp, desk: $('desk'), onChange: inkChanged,
                 toast, openMenuAt: (x, y, items) => openMenu({ x, y }, items), selectTool: () => chooseTool('select') });
   // a right mouse press that lands while something is open (the press itself closes it before its contextmenu):
   // remembered here, before the tray's and the menu's own closers run, so that contextmenu does not flip the tool
@@ -1289,7 +1399,7 @@ function wire() {
     $('lp').value = '';
     enter(res.user || await api.session());
   });
-  $('logoutBtn').addEventListener('click', async () => { await chain; await api.signOut(); location.reload(); });
+  $('logoutBtn').addEventListener('click', async () => { live.stopLive(); await chain; await api.signOut(); location.reload(); });
   $('gridBack').addEventListener('click', () => { document.body.classList.remove('showGrid'); });
   $('backBtn').addEventListener('click', () => { if (history.state && history.state.note) history.back(); else closeNote(); });
   window.addEventListener('popstate', () => { if (S.openNote) closeNote(true); });
@@ -1339,7 +1449,9 @@ window.__pw = { S, api, idle: async () => { await chain; await store.settled(); 
                 snap: pics.snapStats, renderGrid, covers: coverUrl, bookmarksTaken: () => ({ ...tookOver }),
                 trayPending: () => ({ next: !!trayNext, busy: trayBusy, timer: !!trayT }),
                 pageDrag: () => (pd ? { lifted: pd.lifted, from: pd.from, to: pd.to } : null),
-                tick: () => (S.tick ? { ids: ticked(), moving: S.tick.moving } : null) };
+                tick: () => (S.tick ? { ids: ticked(), moving: S.tick.moving } : null),
+                live: { state: live.state, stats: live.liveStats, simulateDrop: live.simulateDrop }, refreshTree };
+Object.defineProperty(window.__pw, 'lastLoad', { get: () => lastLoad, set: (v) => { lastLoad = v; } });   // U3d: the tree's age
 
 wire();
 (async () => {

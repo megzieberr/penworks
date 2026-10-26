@@ -4,9 +4,10 @@
 // The first live page's picture is the note's cover (notes.cover_path), which the note grid shows.
 //
 // When a page is DUE:
-//   (a) its ink changed (ink.js onChange: a stroke drawn, erased, undone, or swapped in from the database), and 4 s have
-//       passed since the last change on that page; a push of its strokes landing (store.js onPushed) makes it due too,
-//       still 4 s after its last change;
+//   (a) its ink changed on THIS device (ink.js onChange: a stroke drawn, erased, undone), and 4 s have passed since the
+//       last change on that page; a push of its strokes landing (store.js onPushed) makes it due too, still 4 s after its
+//       last change. U3d: a change that came from the database (a live row from another device, or a reconcile's swap)
+//       is { remote: true } and makes nothing due: the device that wrote it makes the picture;
 //   (b) at startup and on every `online`: any live page whose updated_at is newer than its snapshot_at, or that has no
 //       picture yet and has strokes.
 // Rules: never while a gesture runs (wait for the lift, then 4 s); one render at a time, app-wide; one pending picture
@@ -44,7 +45,8 @@ export function initSnap(o) {
 }
 
 // ---------------------------------------------------------------- what makes a page due
-export function changed(pageId) {
+export function changed(pageId, how) {
+  if (how && how.remote) return;                       // U3d: another device's ink, its own device pictures it
   const t = Date.now();
   lastInk.set(pageId, t);
   due.set(pageId, t + QUIET_MS);

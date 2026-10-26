@@ -26,6 +26,7 @@ const ROWS = 1000;     // the API hands back at most this many rows per request 
 const CHUNK = 100;     // ids per delete and rows per insert, so no request grows too big
 
 let sb = null;
+let leaving = Promise.resolve();   // U3d: a strokes channel being closed, so the next one never joins on top of it
 async function client() {
   if (!sb) {
     const { createClient } = await import(SB_JS);
@@ -221,8 +222,39 @@ const liveApi = {
     return data[0].settings;
   },
 
+  // ---------------------------------------------------------------- the live mirror (U3d, js/live.js)
+  // One Realtime channel `strokes:<uid>`; h = { onRow(type, row), onStatus(status) }, status as supabase-js names it
+  // (SUBSCRIBED, CLOSED, CHANNEL_ERROR, TIMED_OUT). INSERT carries the whole row and is filtered to her rows (RLS limits
+  // the authenticated role to them anyway). DELETE carries only old.id (the default replica identity) and Supabase cannot
+  // filter DELETE events (a filter on owner_id would never match an old row that holds only the id), so that listener has
+  // no filter: an id that is not one of hers matches no stroke on this device and is ignored. The socket carries her
+  // login (setAuth), so RLS sees her. Answers { unsubscribe }.
+  subscribeStrokes(userId, h) {
+    let ch = null, dead = false;
+    (async () => {
+      const c = await client();
+      await leaving;
+      if (dead) return;
+      try { const { data } = await c.auth.getSession(); if (data.session) c.realtime.setAuth(data.session.access_token); }
+      catch (_) { /* the client sets it itself on sign-in */ }
+      if (dead) return;
+      const where = { schema: 'public', table: 'strokes' };
+      ch = c.channel('strokes:' + userId)
+        .on('postgres_changes', { ...where, event: 'INSERT', filter: 'owner_id=eq.' + userId }, (p) => h.onRow('INSERT', p.new))
+        .on('postgres_changes', { ...where, event: 'DELETE' }, (p) => h.onRow('DELETE', p.old))
+        .subscribe((status) => { if (!dead) h.onStatus(status); });
+    })().catch(() => { if (!dead) h.onStatus('CHANNEL_ERROR'); });
+    return {
+      unsubscribe() {
+        dead = true;
+        if (ch && sb) { const gone = ch; ch = null; leaving = sb.removeChannel(gone).catch(() => {}); }
+      },
+    };
+  },
+
   failNext() { /* local twin only */ },
   refuseNext() { /* local twin only */ },
+  emitStroke() { /* local twin only */ },
 };
 
 const base = new URLSearchParams(location.search).has('local') ? localApi : liveApi;

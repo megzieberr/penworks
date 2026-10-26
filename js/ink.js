@@ -58,6 +58,11 @@
 // arc (arcFit, the arc branch's own rules) and the tail passes the arrow's head rules measured against the arc's end tangent.
 // Drawn as a <g> of the arc's path and the head's path (the head never dashed); three handles, the arc's; the area eraser
 // turns it into the arc's ink plus the head's ink. A highlighter curved arrow becomes an arc (no highlighter arrows).
+// Live mirror (U3d): applyRemote(pageId, removeIds, adds) puts a row another device wrote onto the page: apply() with the
+// remote flag, so it goes to store.applyRemote (nothing queued), never joins the undo stack, and onChange is told
+// { remote: true } (no page picture becomes due). A selection on that page clears first; while a gesture runs the rows
+// wait for the lift. replace() (the reconcile's swap) tells onChange { remote: true } too: the database's set is not
+// this device's ink, the device that wrote it makes the picture.
 
 import * as store from './store.js';
 import { pageAt, pagePoint, view, pageSize } from './page.js';
@@ -437,7 +442,7 @@ export function flush() {
 addEventListener('pagehide', flush);
 document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
 
-function apply(pageId, removeIds, adds) {
+function apply(pageId, removeIds, adds, remote = false) {
   const d = data(pageId), gone = [], added = [];
   if (removeIds.length) {
     const rm = new Set(removeIds.filter((id) => d.byId.has(id)));
@@ -458,10 +463,36 @@ function apply(pageId, removeIds, adds) {
       place(d, rec, el, lo);
     }
   }
-  schedule(pageId);
-  store.change(pageId, gone, added);                   // U3a: the exact change joins the queue for the database
+  if (remote) store.applyRemote(pageId, gone, added);  // U3d: mirror and cache only, the database has it already
+  else {
+    schedule(pageId);
+    store.change(pageId, gone, added);                 // U3a: the exact change joins the queue for the database
+  }
   if (SEL && SEL.page === pageId) syncSel();          // an undo, redo or move: the box follows its strokes
-  if (onChange) onChange(pageId);                      // the page list refreshes that page's thumb
+  if (onChange) onChange(pageId, remote ? { remote: true } : undefined);   // the page list refreshes that page's thumb
+}
+
+// U3d: a change another device made (js/live.js). Not on this device's ink yet (the note was never opened here): the
+// mirror takes it when it holds the page, otherwise nothing (the next ensure reads the database). Rows that arrive
+// during a gesture wait for the lift, in order.
+const held = [];
+let heldT = 0;
+export function applyRemote(pageId, removeIds, adds) {
+  if (G || held.length) { held.push([pageId, removeIds, adds]); if (!heldT) heldT = setTimeout(drainHeld, 100); return; }
+  remoteNow(pageId, removeIds, adds);
+}
+function drainHeld() {
+  heldT = 0;
+  if (G) { heldT = setTimeout(drainHeld, 100); return; }
+  while (held.length) remoteNow(...held.shift());
+}
+function remoteNow(pageId, removeIds, adds) {
+  if (!P.has(pageId)) {
+    if (store.applyRemote(pageId, removeIds, adds) && onChange) onChange(pageId, { remote: true });
+    return;
+  }
+  if (SEL && SEL.page === pageId) clearSelection();   // the box must not point at a stroke that is gone
+  apply(pageId, removeIds, adds, true);
 }
 
 // one undo step: [{ page, removed: [records], added: [records] }]
@@ -493,7 +524,7 @@ export function replace(pageId, recs) {
     d.els.clear(); d.hlo = new Map(); d.hl.replaceChildren(); d.pen.replaceChildren();
     for (const rec of strokes) { const el = makeEl(rec); d.els.set(rec.id, el); groupFor(d, rec).appendChild(el); }
   }
-  if (onChange) onChange(pageId);                      // the page list's thumb follows
+  if (onChange) onChange(pageId, { remote: true });    // the page list's thumb follows; no picture (U3d)
 }
 
 // ---------------------------------------------------------------- geometry

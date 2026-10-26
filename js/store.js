@@ -10,6 +10,9 @@
 // into the cache and into the queue (so they reach the database), and the old key goes once the cache holds them.
 // U3b: onPushed(pageId) after each op lands (js/snap.js makes the page's picture), known / pending for it, and the note
 // covers' device cache (coverGet / coverPut / coverDrop).
+// U3d (js/live.js): a row another device wrote comes in through applyRemote (mirror and cache only, nothing queued: the
+// database has it already); pageOf finds the page a deleted id was on; echo tells a row this device wrote itself (its own
+// push coming back) from someone else's; reconcile is exported for the gap check after a dropped channel.
 
 const LEGACY = 'pw.strokes.';
 const LOCAL_MARK = 'pw.cache.local';      // local mode only: the twin lives in localStorage, its cache lives with it
@@ -18,12 +21,14 @@ const BACKOFF = [2000, 5000, 10000, 30000];
 const REFUSE = new Set(['42501', '23514', '23502', '22P02']);
 const FK = '23503', FK_RETRIES = 3;        // a missing page: the first try plus three retries, then refused
 const bySeq = (a, b) => a.seq - b.seq;
+const ECHO_MS = 10000;                     // U3d: an event for an id this device changed this recently is its own push coming back
 
 const mirror = new Map();     // page id -> records (seq order); a page is "known" once it is in here
 const blind = new Set();      // pages load() was asked for before their cache was read (they were handed [])
 const version = new Map();    // page id -> how many changes so far (a reconcile answer older than a change is dropped)
 const recheck = new Set();    // pages a reconcile skipped while the queue held their ops: checked again once it drains
 const unchecked = new Set();  // pages whose reconcile could not reach the database: checked on the next trigger
+const touched = new Map();    // U3d: stroke id -> when this device last added or removed it (store.change)
 let Q = [];                   // the queue, oldest first: { key, page_id, removed, added, t, busy, fk, told }
 let nextKey = 1;
 const cfg = { mode: 'local', api: null, idle: () => Promise.resolve(), onRemote: () => {}, onState: () => {}, onPushed: () => {} };
@@ -177,6 +182,7 @@ export function unqueue(pageId) {
 export function change(pageId, removed, added) {
   if (!removed.length && !added.length) return;
   version.set(pageId, (version.get(pageId) || 0) + 1);
+  touch(removed, added);
   const cur = mirror.get(pageId) || [], rm = new Set(removed), have = new Set();
   const next = cur.filter((r) => !rm.has(r.id));
   next.forEach((r) => have.add(r.id));
@@ -256,7 +262,7 @@ function adopt(pageId) {
 
 // the database's records for these pages against the mirror, by id. A page with ops still queued keeps its local copy
 // (it is checked again once its last op is acknowledged). A page whose set differs takes the database's set.
-async function reconcile(ids) {
+export async function reconcile(ids) {
   if (!ids.length || !cfg.api || !cfg.api.strokesOf) return;
   const at = new Map(ids.map((id) => [id, version.get(id) || 0]));
   let rows;
@@ -278,6 +284,38 @@ async function reconcile(ids) {
     cfg.onRemote(id, next.slice());
   }
   if (again.length) reconcile(again);
+}
+
+// ---------------------------------------------------------------- U3d: rows from another device (js/live.js)
+function touch(removed, added) {
+  const now = Date.now();
+  for (const id of removed) touched.set(id, now);
+  for (const r of added) touched.set(r.id, now);
+  if (touched.size > 2000) for (const [id, t] of touched) if (now - t > ECHO_MS) touched.delete(id);
+}
+// this device's own write coming back: an op still queued names the id, or this device changed it in the last 10 s
+export function echo(id) {
+  const t = touched.get(id);
+  if (t && Date.now() - t < ECHO_MS) return true;
+  return Q.some((op) => op.removed.includes(id) || op.added.some((r) => r.id === id));
+}
+// the page whose records (in the mirror) hold this id, or null
+export function pageOf(id) {
+  for (const [pid, recs] of mirror) if (recs.some((r) => r.id === id)) return pid;
+  return null;
+}
+// a change the database already holds (another device made it): the mirror and the device cache follow, nothing is
+// queued, nothing is pushed, no picture becomes due. A page not in the mirror is left alone (the next ensure reads the
+// database's copy). The version moves on, so a reconcile answer read before this row arrived is asked again.
+export function applyRemote(pageId, removed, added) {
+  if (!mirror.has(pageId) || (!removed.length && !added.length)) return false;
+  version.set(pageId, (version.get(pageId) || 0) + 1);
+  const rm = new Set(removed), next = mirror.get(pageId).filter((r) => !rm.has(r.id)), have = new Set(next.map((r) => r.id));
+  for (const r of added) if (!have.has(r.id)) { next.push(r); have.add(r.id); }
+  next.sort(bySeq);
+  mirror.set(pageId, next); blind.delete(pageId);
+  keepPage(pageId, next);
+  return true;
 }
 
 // ---------------------------------------------------------------- the push

@@ -11,6 +11,10 @@
 // U3c: pages carry `bookmark` (0004); a page update counts as a note edit only when it moves position, orientation or
 // background (PAGE_EDIT), so a bookmark, a snapshot or a binning never moves the note up. `profile` = her profiles
 // row (profile / setSettings), settings {} until the tray first saves.
+// U3d: subscribeStrokes is an in-memory channel (an EventTarget, this tab only). The tests stand in for another device
+// with emitStroke(type, row): the row is written to (INSERT) or removed from (DELETE) the twin's strokes first, as the
+// other device's push would, then the event goes to every open subscription. A dropped subscription misses the event
+// but the twin keeps the row, so a reconcile catches up.
 
 const KEY = 'penworks.local.v2';
 const TABLES = ['folders', 'notes', 'pages'];
@@ -66,6 +70,7 @@ function maybeFail() {
 }
 const storage = new Map();   // the snapshots bucket: path -> Blob
 let reads = 0;
+const bus = new EventTarget();   // U3d: the twin's Realtime
 let refuseNext = 0; // test hook: the next n stroke pushes are refused the way RLS refuses them (code 42501)
 function maybeRefuse() {
   if (refuseNext > 0) { refuseNext--; refuse('new row violates row-level security policy for table "strokes"', '42501'); }
@@ -220,6 +225,32 @@ export const localApi = {
     d.profile.updated_at = new Date().toISOString();
     write(d);
     return clone(d.profile.settings);
+  },
+
+  // ---------------------------------------------------------------- the live mirror (U3d)
+  subscribeStrokes(userId, h) {
+    let dead = false;
+    const on = (e) => { if (!dead) h.onRow(e.detail.type, clone(e.detail.row)); };
+    bus.addEventListener('stroke', on);
+    setTimeout(() => { if (!dead) h.onStatus('SUBSCRIBED'); }, 0);
+    return { unsubscribe() { if (dead) return; dead = true; bus.removeEventListener('stroke', on); } };
+  },
+  // test hook: another device wrote this row (INSERT, the whole row) or deleted it (DELETE, { id }). No page check: the
+  // database would hold the row whatever this device's tree says.
+  emitStroke(type, row) {
+    const d = read(), now = new Date().toISOString();
+    let out;
+    if (type === 'INSERT') {
+      out = { ...Object.fromEntries(STROKE_KEYS.map((k) => [k, clone(row[k])])), owner_id: 'local', created_at: now };
+      if (!d.strokes.some((s) => s.id === row.id)) { d.strokes.push(out); touchPages(d, [row.page_id], now); }
+    } else if (type === 'DELETE') {
+      const hit = d.strokes.filter((s) => s.id === row.id);
+      d.strokes = d.strokes.filter((s) => s.id !== row.id);
+      touchPages(d, hit.map((s) => s.page_id), now);
+      out = { id: row.id };
+    } else throw new Error('INSERT or DELETE');
+    write(d);
+    setTimeout(() => bus.dispatchEvent(new CustomEvent('stroke', { detail: { type, row: out } })), 0);
   },
 
   failNext(n) { failNext = n; },
