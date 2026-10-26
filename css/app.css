@@ -344,6 +344,40 @@ body.full #noteBar, body.full #counter { display: none; }
 #plThumbs.dragging .thumbP:not(.lift) { transition: transform .15s ease; }
 .thumbP.lift { z-index: 3; opacity: .82; cursor: grabbing; }
 .thumbP.lift .paper { box-shadow: 0 10px 26px rgba(20,22,26,.38); }
+/* tick mode (pw-v4q): Select in the header; a round tick box on every thumb (28 px, a 44 px hit area), All / "<n> selected"
+   / Done in the header, Delete / Copy / Cut / Move in a bar at the bottom; Move shows "Move here" bars in the list */
+.plHead { gap: 4px; }
+.plHead .grow { flex: 1; min-width: 0; }
+.plWord { flex: none; height: 36px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; color: var(--ink);
+  font: inherit; font-weight: 700; cursor: pointer; }
+.plWord:hover { background: var(--hover); }
+#plAll { flex: none; width: 44px; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 2px 0; margin-left: -10px;
+  border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+#plAll .box, .thumbP .tick::before { width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--muted); background: var(--card); box-sizing: content-box; }
+#plAll .box { display: block; }
+#plAll.on .box { background: var(--ink); border-color: var(--ink);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6.5 12.5l3.6 3.6 7.4-8'/%3E%3C/svg%3E");
+  background-size: 100% 100%; }
+#plAll.on { color: var(--ink); }
+.thumbP .tick { display: none; position: absolute; top: -8px; right: -8px; width: 44px; height: 44px; padding: 0; border: 0;
+  background: transparent; cursor: pointer; place-items: center; z-index: 2; }
+.thumbP .tick::before { content: ""; grid-area: 1 / 1; box-shadow: 0 1px 3px rgba(20,22,26,.25); }
+.thumbP .tick svg { grid-area: 1 / 1; width: 20px; height: 20px; color: #fff; visibility: hidden; }
+#pageList.ticking .thumbP .tick { display: grid; }
+#pageList.ticking .thumbP .more { display: none; }
+.thumbP.ticked .tick::before { background: var(--ink); border-color: var(--ink); }
+.thumbP.ticked .tick svg { visibility: visible; }
+.thumbP.ticked .paper { outline: 2px solid var(--ink); outline-offset: 2px; }
+#pageList.moving .thumbP { cursor: default; }
+#pageList.moving .thumbP.ticked { opacity: .55; }
+#plBar { flex: none; display: flex; align-items: center; gap: 4px; padding: 6px 8px; border-top: 1px solid var(--line); }
+.plAct { flex: 1; min-height: 44px; border: 0; border-radius: 6px; background: transparent; color: var(--ink); font: inherit; font-weight: 700; cursor: pointer; }
+.plAct:hover:not(:disabled) { background: var(--hover); }
+.plAct:disabled { color: var(--faint); opacity: .6; cursor: default; }
+#plBar .moveLbl { flex: 3; font-size: 13px; font-weight: 700; padding-left: 6px; }
+.moveHere { grid-column: 1 / -1; height: 36px; border: 2px dashed var(--ink); border-radius: 6px; background: transparent; color: var(--ink);
+  font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; display: grid; place-items: center; }
+.moveHere:hover { background: var(--ink-soft); }
 
 /* ---------- the tray: her 13 colours and the spare slot, the tools, a gap, undo, redo (top to bottom) ---------- */
 #tray {

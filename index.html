@@ -90,12 +90,18 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
         </button>
         <aside id="pageList" aria-label="Pages" hidden>
-          <div class="plHead"><b id="plCount"></b>
+          <div class="plHead">
+            <button id="plAll" type="button" aria-label="Tick every page" aria-pressed="false" hidden><span class="box"></span><span class="lbl">All</span></button>
+            <b id="plCount" class="grow"></b>
+            <b id="plSel" class="grow" hidden></b>
+            <button id="plSelect" class="plWord" type="button">Select</button>
+            <button id="plDone" class="plWord" type="button" hidden>Done</button>
             <button id="plClose" class="ib" type="button" aria-label="Close the page list">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
             </button>
           </div>
           <div id="plThumbs"></div>
+          <div id="plBar" hidden></div>
         </aside>
       </div>
     </section>

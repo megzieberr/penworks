@@ -2,6 +2,7 @@
 // each folder, Loose, Bin), the grid of notes, the note view (every page stacked), page list, the one
 // undo/redo stack per note (page operations and ink together), full screen, autosave, dark mode.
 // Ink lives in js/ink.js (strokes), js/store-local.js (kept on the device) and js/tray.js (the pen tray).
+// pw-v4q: the page list's Select (tick mode): tick several pages, then Delete, Copy, Cut or Move them together.
 import { api } from './api.js';
 import { initPage, showStack, fit, scrollToPage, relayout, current } from './page.js';
 import * as ink from './ink.js';
@@ -9,7 +10,7 @@ import { initTray, closePanel, trayState, chooseTool } from './tray.js';
 
 const $ = (id) => document.getElementById(id);
 const S = { folders: [], notes: [], pages: [], sel: 'loose', openNote: null, cur: 0, fold: {}, renaming: null,
-            listOpen: false, hist: {}, clip: {}, user: null };
+            listOpen: false, hist: {}, clip: [], tick: null, user: null };
 const PREF = 'penworks.' + api.mode + '.';
 const DAY = 864e5;
 // Samsung's small folder palette
@@ -230,7 +231,7 @@ function closeNote(skipHistory) {
   if (document.body.classList.contains('full')) exitFull();
   closePanel(); ink.clearSelection();
   if (S.openNote) { delete S.hist[S.openNote]; tidyInk(); }    // closing a note ends its undo history
-  S.openNote = null; S.listOpen = false; S.renaming = null; remember();
+  S.openNote = null; S.listOpen = false; S.tick = null; S.renaming = null; remember();
   document.body.classList.remove('noteMode');
   if (!skipHistory && history.state && history.state.note) history.replaceState(null, '');
   render();
@@ -307,26 +308,63 @@ function deletePage(i) {
   doOp({ pages: [snap.id], redo: () => { removePage(snap.id); shown(Math.min(i, list.length - 2)); },
          undo: () => { insertPage(snap, i); shown(i); } });
 }
-// Samsung's page menu: Copy keeps the page (orientation, paper, strokes) on a clipboard for this note,
-// Cut = Copy then Delete, Paste puts it below the pressed page, Erase page clears its strokes
+// Samsung's page menu: Copy keeps the page (orientation, paper, strokes) on the page clipboard, Cut = Copy then
+// Delete, Paste puts it below the pressed page, Erase page clears its strokes. The page clipboard is a list
+// (pw-v4q): S.clip = [page, page, ...], one entry per page in list order; a single-page Copy makes a list of one.
+// It is not tied to a note, so pages cut in one note paste into another (her ruling, 26 Oct).
+const clipEntry = (p) => ({ orientation: p.orientation, background: p.background, strokes: ink.copyStrokes(p.id) });
 function copyPage(i, quiet) {
   const p = pagesOf(S.openNote)[i];
   if (!p) return;
-  S.clip[S.openNote] = { orientation: p.orientation, background: p.background, strokes: ink.copyStrokes(p.id) };
+  S.clip = [clipEntry(p)];
   if (!quiet) toast('Page copied.');
 }
 function cutPage(i) {
   if (pagesOf(S.openNote).length <= 1) return;
   copyPage(i, true); deletePage(i); toast('Page cut.');
 }
+// every page on the clipboard, in order, directly after page i: one undo step
 function pastePage(i) {
-  const nid = S.openNote, c = S.clip[nid];
-  if (!c) return;
+  const nid = S.openNote, clip = S.clip;
+  if (!clip.length) return;
   const at = i + 1;
-  const snap = { id: uuid(), note_id: nid, orientation: c.orientation, background: c.background, created_at: nowIso() };
-  const recs = c.strokes.map((r) => ({ ...JSON.parse(JSON.stringify(r)), id: uuid(), page_id: snap.id }));
-  doOp({ pages: [snap.id], redo: () => { insertPage(snap, at); ink.put(snap.id, recs); shown(at); },
-         undo: () => { removePage(snap.id); shown(i); } });
+  const adds = clip.map((c) => {
+    const snap = { id: uuid(), note_id: nid, orientation: c.orientation, background: c.background, created_at: nowIso() };
+    return { snap, recs: c.strokes.map((r) => ({ ...JSON.parse(JSON.stringify(r)), id: uuid(), page_id: snap.id })) };
+  });
+  doOp({ pages: adds.map((a) => a.snap.id),
+         redo: () => { adds.forEach((a, k) => { insertPage(a.snap, at + k); ink.put(a.snap.id, a.recs); }); shown(at); },
+         undo: () => { adds.forEach((a) => removePage(a.snap.id)); shown(i); } });
+}
+const pagesWord = (n) => n + (n === 1 ? ' page' : ' pages');
+// tick mode's Delete: the ticked pages go in ONE undo step (undo puts every one back in its place). A note keeps
+// at least one page: when every page goes, one fresh empty page takes their place (in the same undo step).
+function deletePages(ids) {
+  const list = pagesOf(S.openNote), gone = list.map((p, k) => [k, { ...p }]).filter(([, p]) => ids.includes(p.id));
+  if (!gone.length) return 0;
+  const all = gone.length === list.length, first = gone[0][0], model = list[0];
+  const fresh = all ? { id: uuid(), note_id: S.openNote, orientation: model.orientation, background: model.background, created_at: nowIso() } : null;
+  const left = list.length - gone.length;
+  doOp({ pages: [...gone.map(([, p]) => p.id), ...(fresh ? [fresh.id] : [])],
+         redo: () => { gone.forEach(([, p]) => removePage(p.id)); if (fresh) insertPage(fresh, 0); shown(fresh ? 0 : Math.min(first, left - 1)); },
+         undo: () => { if (fresh) removePage(fresh.id); gone.forEach(([k, p]) => insertPage(p, k)); shown(first); } });
+  return gone.length;
+}
+// tick mode's Move: the ticked pages, in their current order, go to gap g of the unticked pages (0 = above the
+// first unticked page, k = below unticked page k). ONE undo step; undo puts the old order back.
+function setOrder(ids) {
+  const list = ids.map(page).filter(Boolean);
+  renumber(list);
+  if (list.length) touchNote(list[0].note_id);
+}
+function movePages(ids, g) {
+  const old = pagesOf(S.openNote).map((p) => p.id), set = new Set(ids);
+  const moving = old.filter((id) => set.has(id)), rest = old.filter((id) => !set.has(id));
+  const next = [...rest.slice(0, g), ...moving, ...rest.slice(g)];
+  if (next.join() === old.join()) return false;
+  const from = old.indexOf(moving[0]);
+  doOp({ redo: () => { setOrder(next); shown(g); }, undo: () => { setOrder(old); shown(from); } });
+  return true;
 }
 function erasePage(i) {
   const p = pagesOf(S.openNote)[i], op = p && ink.erasePageOp(p.id);
@@ -431,7 +469,7 @@ function thumbMenu(i, anchor) {
   const n = pagesOf(S.openNote).length;
   const items = [{ label: 'Add page', fn: () => addPageBelow(i) }, { label: 'Copy', fn: () => copyPage(i) }];
   if (n > 1) items.push({ label: 'Cut', fn: () => cutPage(i) });
-  if (S.clip[S.openNote]) items.push({ label: 'Paste', fn: () => pastePage(i) });
+  if (S.clip.length) items.push({ label: S.clip.length > 1 ? `Paste ${S.clip.length} pages` : 'Paste', fn: () => pastePage(i) });
   if (n > 1) items.push({ label: 'Delete', fn: () => deletePage(i) });
   items.push({ label: 'Erase page', fn: () => erasePage(i) });     // to move a page: hold it and drag (no Move up / down)
   openMenu(anchor, items);
@@ -583,20 +621,115 @@ function updateCount() {
 function renderPageList() {
   const P = $('pageList');
   P.hidden = !S.listOpen;
-  if (!S.listOpen) return;
+  if (!S.listOpen) { S.tick = null; return; }                              // closing the panel ends tick mode
   const T = $('plThumbs'); T.textContent = '';
   pagesOf(S.openNote).forEach((p, i) => {
     const t = h('div', { class: 'thumbP ' + p.orientation, 'data-index': i + 1, 'data-id': p.id, role: 'button', tabindex: '0',
-      onclick: () => scrollToPage(i),                                       // the panel stays open (her ruling, pw-v4i)
+      onclick: () => { if (S.tick) { if (!S.tick.moving) toggleTick(p.id); } else scrollToPage(i); },   // the panel stays open (her ruling, pw-v4i)
       onpointerdown: thumbDown,
-      oncontextmenu: (e) => { e.preventDefault(); if (!pd) thumbMenu(i, t); } },   // right-click; a long press lifts instead
+      oncontextmenu: (e) => { e.preventDefault(); if (!pd && !S.tick) thumbMenu(i, t); } },   // right-click; a long press lifts instead
       paper(p, ' ' + p.orientation), h('span', { class: 'num' }, String(i + 1)),
       h('button', { class: 'more', type: 'button', 'aria-label': 'Page menu',
-        onclick: (e) => { e.stopPropagation(); thumbMenu(i, e.currentTarget); } }, '⋯'));
+        onclick: (e) => { e.stopPropagation(); thumbMenu(i, e.currentTarget); } }, '⋯'),
+      h('button', { class: 'tick', type: 'button', 'aria-label': 'Tick page ' + (i + 1), 'aria-pressed': 'false', html: SVG_TICK,
+        onclick: (e) => { e.stopPropagation(); if (S.tick && !S.tick.moving) toggleTick(p.id); } }));
     t.querySelector('.paper').append(ink.thumbSvg(p.id, p.orientation));   // the page's ink on the paper
     T.append(t);
   });
+  renderTick();
   updateCount();
+}
+
+// ---------------------------------------------------------------- page list tick mode (pw-v4q)
+// Select (in the list header) puts the list in tick mode, S.tick = { ids: Set of page ids, moving }. Every thumb shows
+// a round tick box at its top-right; a thumb tap toggles its tick (the desk does not move); hold-and-drag and the page
+// menu are off. The header shows All (tick every shown page, again to clear them), "<n> selected" and Done; a bar at
+// the bottom has Delete, Copy, Cut and Move (disabled while nothing is ticked). Move swaps the bar for "Move <n> pages:
+// tap where they go" and Cancel and puts a "Move here" bar above the first unticked page and below every unticked
+// page, leaving out any spot where the move would change nothing. Done, the X, Escape and closing the panel end it.
+const SVG_TICK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 12.5l3.6 3.6 7.4-8"/></svg>';
+function ticked() {                                                         // the ticked pages, in list order
+  if (!S.tick) return [];
+  return pagesOf(S.openNote).filter((p) => S.tick.ids.has(p.id)).map((p) => p.id);
+}
+function startTick() { if (!S.listOpen) return; S.tick = { ids: new Set(), moving: false }; closeMenu(); renderTick(); }
+function endTick() { if (!S.tick) return; S.tick = null; renderTick(); }
+function toggleTick(id) {
+  const T = S.tick.ids;
+  if (T.has(id)) T.delete(id); else T.add(id);
+  renderTick();
+}
+function tickAll() {
+  const ids = pagesOf(S.openNote).map((p) => p.id), every = ids.length && ids.every((id) => S.tick.ids.has(id));
+  S.tick.ids = new Set(every ? [] : ids);
+  renderTick();
+}
+// the gaps a Move may use: g = 0 above the first unticked page, g = k below unticked page k; a gap where the move
+// changes nothing is left out
+function moveGaps() {
+  const old = pagesOf(S.openNote).map((p) => p.id), set = S.tick.ids;
+  const moving = old.filter((id) => set.has(id)), rest = old.filter((id) => !set.has(id));
+  const out = [];
+  if (!moving.length || !rest.length) return out;
+  for (let g = 0; g <= rest.length; g++) {
+    const next = [...rest.slice(0, g), ...moving, ...rest.slice(g)];
+    if (next.join() !== old.join()) out.push({ g, before: g < rest.length ? rest[g] : null, after: g ? rest[g - 1] : null });
+  }
+  return out;
+}
+function tickAction(kind) {
+  const ids = ticked(), n = ids.length;
+  if (!n) return;
+  if (kind === 'delete') { deletePages(ids); S.tick = { ids: new Set(), moving: false }; renderTick(); toast(pagesWord(n) + ' deleted'); }
+  else if (kind === 'copy' || kind === 'cut') {
+    const list = pagesOf(S.openNote);
+    S.clip = list.filter((p) => S.tick.ids.has(p.id)).map(clipEntry);
+    S.tick = null;
+    if (kind === 'cut') deletePages(ids); else renderTick();
+    toast(pagesWord(n) + (kind === 'cut' ? ' cut' : ' copied'));
+  } else if (kind === 'move') { S.tick.moving = true; renderTick(); }
+}
+function moveTo(g) {
+  const ids = ticked();
+  S.tick = null;
+  if (!movePages(ids, g)) { renderTick(); return; }
+  const t = document.querySelector(`#plThumbs .thumbP[data-index="${g + 1}"]`);   // the first moved page, in the list
+  if (t && t.scrollIntoView) t.scrollIntoView({ block: 'nearest' });
+}
+// the tick look, the header and the bar (no thumb is rebuilt: a tap stays quick on a heavy note)
+function renderTick() {
+  const P = $('pageList'), on = !!S.tick && S.listOpen, T = $('plThumbs');
+  P.classList.toggle('ticking', on);
+  P.classList.toggle('moving', on && S.tick.moving);
+  const ids = on ? new Set(ticked()) : new Set(), n = ids.size, total = S.openNote ? pagesOf(S.openNote).length : 0;
+  T.querySelectorAll('.moveHere').forEach((el) => el.remove());
+  T.querySelectorAll('.thumbP').forEach((t) => {
+    const yes = ids.has(t.dataset.id);
+    t.classList.toggle('ticked', yes);
+    t.querySelector('.tick').setAttribute('aria-pressed', yes ? 'true' : 'false');
+  });
+  $('plAll').hidden = !on; $('plSel').hidden = !on; $('plDone').hidden = !on;
+  $('plCount').hidden = on; $('plSelect').hidden = on;
+  const all = on && total > 0 && n === total;
+  $('plAll').classList.toggle('on', all); $('plAll').setAttribute('aria-pressed', all ? 'true' : 'false');
+  $('plSel').textContent = on ? n + ' selected' : '';
+  const B = $('plBar'); B.textContent = ''; B.hidden = !on;
+  if (!on) return;
+  if (S.tick.moving) {
+    B.append(h('span', { class: 'moveLbl' }, `Move ${pagesWord(n)}: tap where ${n === 1 ? 'it goes' : 'they go'}`),
+             h('button', { type: 'button', class: 'plAct', 'data-act': 'cancel', onclick: () => { S.tick.moving = false; renderTick(); } }, 'Cancel'));
+    for (const s of moveGaps()) {
+      const bar = h('button', { type: 'button', class: 'moveHere', 'data-gap': s.g, onclick: () => moveTo(s.g) }, 'Move here');
+      const ref = s.before && T.querySelector(`.thumbP[data-id="${CSS.escape(s.before)}"]`);
+      const aft = s.after && T.querySelector(`.thumbP[data-id="${CSS.escape(s.after)}"]`);
+      if (aft) aft.after(bar); else if (ref) ref.before(bar);
+    }
+    return;
+  }
+  for (const [act, label] of [['delete', 'Delete'], ['copy', 'Copy'], ['cut', 'Cut'], ['move', 'Move']]) {
+    const off = !n || (act === 'move' && n === total);                       // moving every page changes nothing
+    B.append(h('button', { type: 'button', class: 'plAct', 'data-act': act, disabled: off, onclick: () => tickAction(act) }, label));
+  }
 }
 // the thumb of a page whose ink changed (ink.js apply: drawing, erasing, undo, redo): rebuild just its svg, once per
 // frame, so a stroke that lands in many pieces rebuilds once
@@ -625,7 +758,7 @@ function refreshThumb(pageId) {
 const HOLD_MS = 350, HOLD_PX = 6, EDGE = 40;
 let pd = null, eatThumbClick = false;
 function thumbDown(e) {
-  if (e.button !== 0 || pd || e.target.closest('button') || pagesOf(S.openNote).length < 2) return;   // one page: nothing lifts
+  if (e.button !== 0 || pd || S.tick || e.target.closest('button') || pagesOf(S.openNote).length < 2) return;   // one page or tick mode: nothing lifts
   pd = { t: e.currentTarget, id: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, lifted: false,
          timer: setTimeout(liftPage, HOLD_MS) };
   addEventListener('pointermove', pageDragMove, { passive: false });
@@ -816,6 +949,9 @@ function wire() {
   $('addBelow').addEventListener('click', () => addPageBelow(pagesOf(S.openNote).length - 1));
   $('listBtn').addEventListener('click', () => { S.listOpen = !S.listOpen; renderPageList(); });
   $('plClose').addEventListener('click', () => { S.listOpen = false; renderPageList(); });
+  $('plSelect').addEventListener('click', startTick);
+  $('plDone').addEventListener('click', endTick);
+  $('plAll').addEventListener('click', () => { if (S.tick && !S.tick.moving) tickAll(); });
   // a lifted page: Chrome has not started a scroll (the finger was still for the hold), so cancelling the
   // touchmove keeps it from starting; the click that ends a drag is eaten, a fresh press clears that
   $('plThumbs').addEventListener('touchmove', (e) => { if (pd && pd.lifted && e.cancelable) e.preventDefault(); }, { passive: false });
@@ -838,6 +974,8 @@ function wire() {
     if (e.target.closest && e.target.closest('input')) return;
     if (e.key === 'Escape') {
       if (!$('menu').hidden) closeMenu();
+      else if (S.tick && S.tick.moving) { S.tick.moving = false; renderTick(); }      // Escape in Move: back to the ticks
+      else if (S.tick) endTick();                                                  // Escape in tick mode: the list stays open
       else if (S.listOpen) { S.listOpen = false; renderPageList(); }
       else if (document.body.classList.contains('full') && !document.fullscreenElement) exitFull();
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
@@ -849,7 +987,8 @@ function wire() {
 
 // test hook: the checks wait for writes and clean up their rows through this
 window.__pw = { S, api, idle: () => chain, failed: () => failed, current, ink, tray: trayState,
-                pageDrag: () => (pd ? { lifted: pd.lifted, from: pd.from, to: pd.to } : null) };
+                pageDrag: () => (pd ? { lifted: pd.lifted, from: pd.from, to: pd.to } : null),
+                tick: () => (S.tick ? { ids: ticked(), moving: S.tick.moving } : null) };
 
 wire();
 (async () => {

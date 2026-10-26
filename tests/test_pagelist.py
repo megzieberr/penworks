@@ -1,4 +1,5 @@
 # PenWorks page list checks (pw-v4i): the thumbnails draw the page's ink, and a thumb tap keeps the panel open.
+# pw-v4q: tick mode (Select in the header): tick several pages, then Delete, Copy, Cut or Move them together.
 # Run: python tests/test_pagelist.py              (local mode only: ?local=1, Supabase is never touched)
 # Headless Playwright (Python), same harness as tests/test_pagedrag.py. Strokes are seeded straight into the
 # local store (pw.strokes.<page_id>, the records store-local.js reads); the mouse draws the rest on the desk.
@@ -6,6 +7,9 @@
 # A pen landing on the desk closes the panel (her "until I click on the page again"), so the live refresh is checked
 # through the stroke funnel with the panel open: ink.put (the same apply every stroke lands through) and the tray's
 # undo and redo buttons, which are not on the desk.
+# Tick mode (pw-v4q): Select in the list header ticks several pages (a tap toggles, the desk stays put), then Delete,
+# Copy, Cut or Move them together, each one undo step; the page clipboard is a list (Paste puts every page). A note
+# 'Ticks' with 6 pages, one stroke each whose first point's x (110, 120, ... 160) names the page. The "tick mode (pw-v4q)" group.
 import sys, subprocess, time, pathlib, math
 from playwright.sync_api import sync_playwright
 
@@ -27,8 +31,10 @@ SEED_JS = """() => {
   localStorage.setItem('penworks.local.v2', JSON.stringify({
     folders: [{ id: 'f1', parent_id: null, name: 'Lists', colour: null, position: 0, deleted_at: null, created_at: t, updated_at: t }],
     notes: [{ id: 'n1', folder_id: 'f1', name: 'Thumbs', pinned: false, cover_path: null, deleted_at: null, created_at: t, updated_at: '2026-10-25T10:02:00Z' },
-            { id: 'n2', folder_id: 'f1', name: 'Timing', pinned: false, cover_path: null, deleted_at: null, created_at: t, updated_at: '2026-10-25T10:01:00Z' }],
-    pages: [...[1, 2, 3, 4].map((k) => pg('a' + k, 'n1', k - 1)), ...[1, 2, 3, 4, 5, 6, 7, 8].map((k) => pg('b' + k, 'n2', k - 1))] }));
+            { id: 'n2', folder_id: 'f1', name: 'Timing', pinned: false, cover_path: null, deleted_at: null, created_at: t, updated_at: '2026-10-25T10:01:00Z' },
+            { id: 'n3', folder_id: 'f1', name: 'Ticks', pinned: false, cover_path: null, deleted_at: null, created_at: t, updated_at: '2026-10-25T10:00:30Z' }],
+    pages: [...[1, 2, 3, 4].map((k) => pg('a' + k, 'n1', k - 1)), ...[1, 2, 3, 4, 5, 6, 7, 8].map((k) => pg('b' + k, 'n2', k - 1)),
+            ...[1, 2, 3, 4, 5, 6].map((k) => pg('c' + k, 'n3', k - 1))] }));
   let seq = 0;
   const stroke = (pid, k, n) => ({ id: pid + '-s' + k, page_id: pid, seq: ++seq, kind: 'pen',
     style: { colour: '#000000', width: 2.5, dash: 'solid', opacity: 1 },
@@ -37,6 +43,8 @@ SEED_JS = """() => {
   const put = (pid, count, n) => localStorage.setItem('pw.strokes.' + pid, JSON.stringify(Array.from({ length: count }, (_, k) => stroke(pid, k, n))));
   put('a1', 2, 20); put('a3', 3, 20);
   for (let k = 1; k <= 8; k++) put('b' + k, 300, 20);
+  for (let k = 1; k <= 6; k++) localStorage.setItem('pw.strokes.c' + k, JSON.stringify([{ id: 'c' + k + '-s', page_id: 'c' + k, seq: 5000 + k, kind: 'pen',
+    style: { colour: '#000000', width: 2.5, dash: 'solid', opacity: 1 }, data: { points: [[100 + 10 * k, 200], [300, 260], [420, 240]] } }]));
 }"""
 THUMB_JS = """(i) => { const t = document.querySelector(`#plThumbs .thumbP[data-index="${i}"]`);
   const svgs = t ? [...t.querySelectorAll('.paper > svg')] : [], s = svgs[0];
@@ -65,6 +73,8 @@ def close_list(pg):
     if pg.locator("#pageList").is_visible(): pg.click("#plClose")
     pg.wait_for_selector("#pageList", state="hidden")
 def thumb(pg, i): return pg.locator(f"#plThumbs .thumbP[data-index='{i}']")
+def centre(pg, i):
+    b = thumb(pg, i).bounding_box(); return b["x"] + b["width"] / 2, b["y"] + b["height"] / 2
 def tinfo(pg, i): return pg.evaluate(THUMB_JS, i)
 def nstrokes(pg, pid): return len(pg.evaluate("(id) => window.__pw.ink.strokesOf(id)", pid))
 def zoom(pg): return float(pg.evaluate("document.getElementById('stack').dataset.zoom"))
@@ -214,12 +224,182 @@ try:
         check("all 8 thumbs drawn, 300 paths each", counts == [300] * 8, counts)
         check("no page errors (timing)", not errs, errs)
 
-        # ------------------------------------------------------------ 6. cache
+        # ------------------------------------------------------------ 6. tick mode (pw-v4q)
+        group[0] = "tick mode (pw-v4q)"
+        open_note(pg, "Ticks"); open_list(pg)
+        ORIG = [110, 120, 130, 140, 150, 160]
+        KEYS_JS = """() => window.__pw.S.pages.filter(p => p.note_id === 'n3' && !p.deleted_at).sort((a, b) => a.position - b.position)
+            .map(p => { const s = window.__pw.ink.strokesOf(p.id); return s.length ? s[0].data.points[0][0] : null; })"""
+        IDS3_JS = "() => window.__pw.S.pages.filter(p => p.note_id === 'n3' && !p.deleted_at).sort((a, b) => a.position - b.position).map(p => p.id)"
+        STORED3_JS = """async () => { const d = await window.__pw.api.loadAll();
+            return d.pages.filter(p => p.note_id === 'n3' && !p.deleted_at).sort((a, b) => a.position - b.position).map(p => p.id); }"""
+        BAR_JS = "() => [...document.querySelectorAll('#plBar button')].map(b => [b.textContent, b.disabled])"
+        UI_JS = """() => ({ sel: document.getElementById('plSel').textContent, selShown: !document.getElementById('plSel').hidden,
+            done: !document.getElementById('plDone').hidden, all: !document.getElementById('plAll').hidden, select: !document.getElementById('plSelect').hidden,
+            bar: !document.getElementById('plBar').hidden, ticks: [...document.querySelectorAll('#plThumbs .thumbP .tick')].filter(t => t.offsetParent).length,
+            ticked: [...document.querySelectorAll('#plThumbs .thumbP.ticked')].map(t => +t.dataset.index),
+            bars: [...document.querySelectorAll('#plThumbs .moveHere')].length, toast: document.getElementById('toast').textContent })"""
+        keys = lambda: pg.evaluate(KEYS_JS)
+        ui = lambda: pg.evaluate(UI_JS)
+        U3 = lambda: pg.evaluate("(window.__pw.S.hist['n3'] || { u: [] }).u.length")
+        tick = lambda: pg.evaluate("window.__pw.tick()")
+        def tap(*ks):
+            for k in ks: thumb(pg, k).click(); pg.wait_for_timeout(30)
+        def select(): pg.click("#plSelect"); pg.wait_for_timeout(40)
+        def act(name): pg.click(f"#plBar button[data-act='{name}']"); pg.wait_for_timeout(80); idle(pg)
+        def undo(): pg.click("#undoBtn"); pg.wait_for_timeout(60); idle(pg)
+        def redo(): pg.click("#redoBtn"); pg.wait_for_timeout(60); idle(pg)
+        ids0 = pg.evaluate(IDS3_JS)
+        check("set-up: 6 pages, one stroke each, told apart by x 110 to 160", keys() == ORIG, keys())
+        u0 = U3(); cur0 = pg.evaluate("window.__pw.S.cur")
+
+        # 1. Select: tick boxes, header, bar; a tap toggles and does not jump
+        select(); q = ui()
+        check("Select: 6 tick boxes, '0 selected', All and Done shown, Select hidden", q["ticks"] == 6 and q["sel"] == "0 selected" and q["selShown"]
+              and q["done"] and q["all"] and not q["select"], q)
+        check("the bar: Delete, Copy, Cut, Move, all disabled", pg.evaluate(BAR_JS) == [["Delete", True], ["Copy", True], ["Cut", True], ["Move", True]], pg.evaluate(BAR_JS))
+        box = pg.evaluate("""() => { const t = document.querySelector('#plThumbs .thumbP .tick'), b = t.getBoundingClientRect(), s = getComputedStyle(t, '::before');
+            return [Math.round(b.width), Math.round(b.height), parseFloat(s.width) + parseFloat(s.borderLeftWidth) + parseFloat(s.borderRightWidth), s.borderRadius]; }""")
+        check("a tick box: 28 px round ring, 44 px hit area", box[:3] == [44, 44, 28] and box[3] == "50%", box)
+        check("the page menu dots are hidden in tick mode", pg.evaluate("[...document.querySelectorAll('#plThumbs .thumbP .more')].every(m => !m.offsetParent)"))
+        tap(3); q = ui()
+        check("tap thumb 3: '1 selected', thumb 3 ticked, the buttons enabled", q["sel"] == "1 selected" and q["ticked"] == [3]
+              and all(not d_ for _, d_ in pg.evaluate(BAR_JS)), [q, pg.evaluate(BAR_JS)])
+        check("the tap does NOT jump the desk (S.cur, current() unchanged)", pg.evaluate("window.__pw.S.cur") == cur0 and pg.evaluate("window.__pw.current()") == cur0,
+              [pg.evaluate("window.__pw.S.cur"), cur0])
+        on = pg.evaluate("() => document.querySelector('#plThumbs .thumbP[data-index=\"3\"] .tick').getAttribute('aria-pressed')")
+        pg.evaluate("() => document.querySelector('#plThumbs .thumbP[data-index=\"5\"] .tick').click()"); pg.wait_for_timeout(30)
+        check("the tick box itself toggles too (aria-pressed follows)", on == "true" and ui()["ticked"] == [3, 5], ui())
+        tap(3, 5)
+        check("tapping again clears them: '0 selected', buttons disabled", ui()["sel"] == "0 selected" and all(d_ for _, d_ in pg.evaluate(BAR_JS)), ui())
+        # 7. hold-and-drag is off in tick mode; right-click opens no page menu
+        x, y = centre(pg, 2); pg.mouse.move(x, y); pg.mouse.down(); pg.wait_for_timeout(450)
+        held = pg.evaluate("window.__pw.pageDrag()")
+        x2, y2 = centre(pg, 5); pg.mouse.move(x2, y2, steps=8); pg.mouse.up(); pg.wait_for_timeout(80); idle(pg)
+        check("a hold on a thumb in tick mode lifts nothing, the drag moves nothing", held is None and keys() == ORIG and U3() == u0, [held, keys()])
+        if ui()["ticked"]: tap(*ui()["ticked"])                             # a press and release can land as a click: clear it
+        thumb(pg, 4).click(button="right"); pg.wait_for_timeout(60)
+        check("right-click on a thumb in tick mode: no page menu", pg.locator("#menu").is_hidden())
+        check("still 0 selected after that", ui()["sel"] == "0 selected", ui())
+
+        # 2. tick 2 and 4, Delete
+        tap(2, 4); act("delete"); q = ui()
+        check("Delete pages 2 and 4: pages 1, 3, 5, 6 left in that order", keys() == [110, 130, 150, 160], keys())
+        check("stored too", pg.evaluate(STORED3_JS) == [ids0[0], ids0[2], ids0[4], ids0[5]], pg.evaluate(STORED3_JS))
+        check("one undo step, toast '2 pages deleted'", U3() == u0 + 1 and q["toast"] == "2 pages deleted", [U3() - u0, q["toast"]])
+        check("the list stays open in tick mode, nothing ticked", pg.locator("#pageList").is_visible() and tick() == {"ids": [], "moving": False} and q["sel"] == "0 selected", [tick(), q])
+        undo()
+        check("undo: six pages in the original order with their strokes", keys() == ORIG and pg.evaluate(STORED3_JS) == ids0, keys())
+        redo()
+        check("redo: four again", keys() == [110, 130, 150, 160], keys())
+        undo()
+
+        # 3. tick 2 and 4, Copy; Paste after page 6
+        u1 = U3()
+        tap(2, 4); act("copy")
+        check("Copy: the page clipboard holds 2 entries, tick mode is off, no undo step", pg.evaluate("window.__pw.S.clip.length") == 2 and tick() is None
+              and U3() == u1 and ui()["toast"] == "2 pages copied", [pg.evaluate("window.__pw.S.clip.length"), tick(), ui()["toast"]])
+        check("Select is back in the header, the bar is gone", ui()["select"] and not ui()["bar"] and not ui()["selShown"], ui())
+        thumb(pg, 6).click(button="right"); pg.wait_for_timeout(60)
+        items = [t_.strip() for t_ in pg.locator("#menu button[role='menuitem']").all_inner_texts()]
+        check("page 6's menu offers 'Paste 2 pages'", "Paste 2 pages" in items, items)
+        pg.locator("#menu button", has_text="Paste 2 pages").click(); pg.wait_for_timeout(80); idle(pg)
+        ids8 = pg.evaluate(IDS3_JS)
+        check("Paste: 8 pages, the two new ones after page 6 carrying 2's and 4's strokes", keys() == ORIG + [120, 140], keys())
+        newr = pg.evaluate("(id) => window.__pw.ink.strokesOf(id)", ids8[6])
+        check("the pasted strokes are copies (new ids, on the new page)", len(newr) == 1 and newr[0]["id"] != "c2-s" and newr[0]["page_id"] == ids8[6], newr)
+        check("Paste is one undo step", U3() == u1 + 1, U3() - u1)
+        undo()
+        check("undo: six again", keys() == ORIG, keys())
+
+        # 4. tick 1 and 2, Cut; Paste after the last page
+        u2 = U3()
+        select(); tap(1, 2); act("cut")
+        check("Cut pages 1 and 2: four pages left (3 to 6), one undo step, toast '2 pages cut', tick mode off", keys() == [130, 140, 150, 160] and U3() == u2 + 1
+              and ui()["toast"] == "2 pages cut" and tick() is None, [keys(), U3() - u2, ui()["toast"]])
+        thumb(pg, 4).click(button="right"); pg.wait_for_timeout(60)
+        pg.locator("#menu button", has_text="Paste 2 pages").click(); pg.wait_for_timeout(80); idle(pg)
+        check("Paste after the last page: six pages, the cut two at the end", keys() == [130, 140, 150, 160, 110, 120], keys())
+        undo(); undo()
+        check("undo twice: 1 to 6 again", keys() == ORIG and pg.evaluate(STORED3_JS) == ids0, keys())
+
+        # 5. Move
+        u3 = U3()
+        select(); tap(5, 6); act("move"); q = ui()
+        lbl = pg.evaluate("document.querySelector('#plBar .moveLbl').textContent")
+        check("Move: the bar reads 'Move 2 pages: tap where they go' with Cancel", lbl == "Move 2 pages: tap where they go"
+              and pg.evaluate(BAR_JS) == [["Cancel", False]], [lbl, pg.evaluate(BAR_JS)])
+        info_lines.append(f"Move with pages 5 and 6 ticked: {q['bars']} 'Move here' bars (4 unticked pages give 5 gaps; the gap below page 4 is a no-op)")
+        check("pages 5, 6 ticked: 4 bars (4 unticked + 1 = 5 gaps, minus the no-op gap below page 4)", q["bars"] == 4, q["bars"])
+        first = pg.evaluate("""() => { const b = document.querySelector('#plThumbs .moveHere');
+            return [b.dataset.gap, b.previousElementSibling ? 'x' : null, b.nextElementSibling.dataset.id, getComputedStyle(b).height, getComputedStyle(b).borderTopStyle]; }""")
+        check("the first bar sits above page 1 (36 px, dashed)", first == ["0", None, ids0[0], "36px", "dashed"], first)
+        nxt = pg.evaluate("() => [...document.querySelectorAll('#plThumbs .moveHere')].map(b => b.previousElementSibling && b.previousElementSibling.dataset.index)")
+        check("the others sit below pages 1, 2 and 3 (none beside the ticked 5 and 6)", nxt == [None, "1", "2", "3"], nxt)
+        bw = pg.evaluate("() => { const b = document.querySelector('#plThumbs .moveHere').getBoundingClientRect(), T = document.getElementById('plThumbs'); return [b.width, T.clientWidth - 28]; }")
+        check("a bar is full width", abs(bw[0] - bw[1]) < 2, bw)
+        pg.click("#plThumbs .moveHere[data-gap='0']"); pg.wait_for_timeout(80); idle(pg)
+        check("tap the bar above page 1: order 5, 6, 1, 2, 3, 4", keys() == [150, 160, 110, 120, 130, 140], keys())
+        check("stored too", pg.evaluate(STORED3_JS) == [ids0[4], ids0[5], ids0[0], ids0[1], ids0[2], ids0[3]], pg.evaluate(STORED3_JS))
+        check("one undo step; tick mode ends, the list stays open, no bars left", U3() == u3 + 1 and tick() is None and pg.locator("#pageList").is_visible()
+              and ui()["bars"] == 0, [U3() - u3, tick(), ui()])
+        check("the first moved page is current (desk and list)", pg.evaluate("window.__pw.current()") == 0 and pg.evaluate(CUR_JS) == ["1"], pg.evaluate(CUR_JS))
+        undo()
+        check("undo restores 1 to 6", keys() == ORIG and pg.evaluate(STORED3_JS) == ids0, keys())
+        select(); tap(1, 3); act("move"); q = ui()
+        info_lines.append(f"Move with pages 1 and 3 ticked: {q['bars']} 'Move here' bars (4 unticked pages give 5 gaps; 1 and 3 are not side by side, so no gap is a no-op)")
+        check("pages 1, 3 ticked: 5 bars (4 unticked + 1 = 5 gaps, no no-op gap: 1 and 3 are not together)", q["bars"] == 5, q["bars"])
+        pg.click("#plBar button[data-act='cancel']"); pg.wait_for_timeout(40)
+        check("Cancel: back to the ticks (1 and 3 still ticked), no bars", ui()["ticked"] == [1, 3] and ui()["bars"] == 0 and tick()["moving"] is False, ui())
+        act("move")
+        pg.click("#plThumbs .moveHere[data-gap='2']"); pg.wait_for_timeout(120); idle(pg)
+        check("move them below page 4: order 2, 4, 1, 3, 5, 6", keys() == [120, 140, 110, 130, 150, 160], keys())
+        sheet = pg.locator("#stack .sheet[data-index='3']").bounding_box()
+        check("the desk jumped to the first moved page (page 3 now, current() 2, at the top)", pg.evaluate("window.__pw.current()") == 2 and pg.evaluate(CUR_JS) == ["3"]
+              and sheet and abs(sheet["y"] - pg.locator("#desk").bounding_box()["y"]) < 60, [pg.evaluate("window.__pw.current()"), pg.evaluate(CUR_JS), sheet])
+        undo()
+        check("undo: 1 to 6", keys() == ORIG, keys())
+        select(); tap(1, 2, 3, 4, 5, 6)
+        check("Move is disabled with every page ticked (moving all changes nothing)", dict(map(tuple, pg.evaluate(BAR_JS)))["Move"] is True, pg.evaluate(BAR_JS))
+        tap(1, 2, 3, 4, 5, 6)
+
+        # 6. All, then Delete everything
+        u4 = U3()
+        pg.click("#plAll"); pg.wait_for_timeout(30); a1 = [ui()["sel"], pg.get_attribute("#plAll", "aria-pressed")]
+        pg.click("#plAll"); pg.wait_for_timeout(30); a2 = [ui()["sel"], pg.get_attribute("#plAll", "aria-pressed")]
+        check("All ticks every page; again clears them", a1 == ["6 selected", "true"] and a2 == ["0 selected", "false"], [a1, a2])
+        pg.click("#plAll"); pg.wait_for_timeout(30)
+        act("delete")
+        idsF = pg.evaluate(IDS3_JS)
+        check("tick everything, Delete: exactly one fresh empty page", len(idsF) == 1 and idsF[0] not in ids0 and keys() == [None]
+              and pg.evaluate(STORED3_JS) == idsF, [idsF, keys()])
+        check("one undo step, toast '6 pages deleted', still in tick mode", U3() == u4 + 1 and ui()["toast"] == "6 pages deleted" and ui()["sel"] == "0 selected", [U3() - u4, ui()])
+        undo()
+        check("undo brings the six back (the fresh page goes)", keys() == ORIG and pg.evaluate(STORED3_JS) == ids0, [keys(), pg.evaluate(STORED3_JS)])
+
+        # 8. leaving tick mode
+        tap(2); pg.keyboard.press("Escape"); pg.wait_for_timeout(40)
+        check("Escape leaves tick mode, the list stays open", tick() is None and pg.locator("#pageList").is_visible() and ui()["ticks"] == 0 and ui()["select"], ui())
+        thumb(pg, 2).click(); pg.wait_for_timeout(100)
+        check("out of tick mode a thumb tap goes to the page again", pg.evaluate("window.__pw.current()") == 1 and ui()["ticked"] == [], pg.evaluate("window.__pw.current()"))
+        select(); tap(3); pg.click("#plDone"); pg.wait_for_timeout(40)
+        check("Done leaves tick mode", tick() is None and ui()["ticks"] == 0 and not ui()["bar"], ui())
+        select(); tap(4); pg.click("#plClose"); pg.wait_for_timeout(60)
+        check("the X closes the panel and ends tick mode", pg.locator("#pageList").is_hidden() and tick() is None)
+        open_list(pg)
+        check("reopened: no ticks, Select in the header", tick() is None and ui()["ticked"] == [] and ui()["ticks"] == 0 and ui()["select"], ui())
+        select(); tap(5)
+        d = pg.locator("#desk").bounding_box()
+        pg.mouse.move(d["x"] + d["width"] - 20, d["y"] + d["height"] / 2); pg.mouse.down(); pg.mouse.up(); pg.wait_for_timeout(80)
+        check("closing the panel from the desk ends tick mode too", pg.locator("#pageList").is_hidden() and tick() is None)
+        check("no page errors (tick mode)", not errs, errs)
+
+        # ------------------------------------------------------------ 7. cache
         group[0] = "cache"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v4p" not in keys:
+        if "pw-v4q" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v4p", "pw-v4p" in keys, keys)
+        check("cache is pw-v4q", "pw-v4q" in keys, keys)
         ctx.close()
         b.close()
 finally:
