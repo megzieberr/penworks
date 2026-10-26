@@ -13,6 +13,8 @@
 # pw-v4r: page bookmarks. The page menu (the note header's dots) toggles a page's `bookmark` (not an undo step), a ribbon
 # tab shows on the page and its thumb, and the list header's Bookmarks toggle shows only the bookmarked pages. A note
 # 'Marks' with 4 pages, one stroke each (x 110 to 140 names the page). The "bookmarks (pw-v4r)" group.
+# U3c: the bookmark is the page row's `bookmark` column (the twin's row, read through __pw.api.loadAll()), no longer
+# a pw.bookmark.<page_id> key on the device.
 # pw-v4t: tick mode's Share (a name box first, then one PDF or PNG images). Headless Chromium has no share sheet: an init
 # script stubs navigator.canShare / navigator.share (the files land in window.__shared); a second context has no
 # navigator.share and watches the downloads. PDFs are read with PyMuPDF, PNGs by their header and pixels (numpy), never
@@ -411,8 +413,11 @@ try:
         group[0] = "bookmarks (pw-v4r)"
         MK_JS = """() => window.__pw.S.pages.filter(p => p.note_id === 'n4' && !p.deleted_at).sort((a, b) => a.position - b.position)
             .map(p => { const s = window.__pw.ink.strokesOf(p.id); return [s.length ? s[0].data.points[0][0] : null, p.bookmark === true]; })"""
-        KEYS4_JS = """() => window.__pw.S.pages.filter(p => p.note_id === 'n4' && !p.deleted_at).sort((a, b) => a.position - b.position)
-            .map(p => localStorage.getItem('pw.bookmark.' + p.id) === '1')"""
+        KEYS4_JS = """async () => { await window.__pw.idle(); const rows = new Map((await window.__pw.api.loadAll()).pages.map(r => [r.id, r]));
+            return window.__pw.S.pages.filter(p => p.note_id === 'n4' && !p.deleted_at).sort((a, b) => a.position - b.position)
+              .map(p => !!rows.get(p.id) && rows.get(p.id).bookmark === true); }"""
+        ROW_JS = """async (id) => { await window.__pw.idle(); const r = (await window.__pw.api.loadAll()).pages.find(p => p.id === id); return r ? r.bookmark : null; }"""
+        nokeys = lambda: pg.evaluate("() => Object.keys(localStorage).filter(k => k.startsWith('pw.bookmark.')).length") == 0
         SHEETS_JS = "() => [...document.querySelectorAll('#stack .sheet')].map(s => !!s.querySelector(':scope > .bookmarkTab'))"
         THUMBS_JS = "() => [...document.querySelectorAll('#plThumbs .thumbP')].map(t => [+t.dataset.index, !!t.querySelector('.paper > .bookmarkTab')])"
         EMPTY_JS = "() => [...document.querySelectorAll('#plThumbs .plEmpty')].map(e => e.textContent)"
@@ -437,7 +442,7 @@ try:
         menu_click(pg, "Bookmark"); idle(pg)
         check("tap it: toast 'Bookmarked', page 2's record has bookmark: true", toast_() == "Bookmarked" and mk()[1] == [120, True]
               and [m[1] for m in mk()] == [False, True, False, False], [toast_(), mk()])
-        check("kept on the device (pw.bookmark.m2)", pg.evaluate(KEYS4_JS) == [False, True, False, False], pg.evaluate(KEYS4_JS))
+        check("kept in the page's row (bookmark: true for m2 only), no pw.bookmark.* key", pg.evaluate(KEYS4_JS) == [False, True, False, False] and nokeys(), pg.evaluate(KEYS4_JS))
         check("the sheet shows the tab (page 2 only)", pg.evaluate(SHEETS_JS) == [False, True, False, False], pg.evaluate(SHEETS_JS))
         check("not an undo step (undo and redo counts unchanged)", U4() == u0 and R4() == r0, [U4() - u0, R4() - r0])
         tab = pg.evaluate("""() => { const s = document.querySelector('#stack .sheet[data-index="2"]'), t = s.querySelector(':scope > .bookmarkTab'),
@@ -497,7 +502,7 @@ try:
         open_list(pg)
         thumb(pg, 4).click(button="right"); pg.wait_for_timeout(60); menu_click(pg, "Copy")
         thumb(pg, 4).click(button="right"); pg.wait_for_timeout(60); menu_click(pg, "Paste"); idle(pg)
-        check("copy page 4, paste: the pasted page is bookmarked (record, device, sheet, thumb)",
+        check("copy page 4, paste: the pasted page is bookmarked (record, row, sheet, thumb)",
               mk() == [[110, False], [120, True], [130, False], [140, True], [140, True]] and pg.evaluate(KEYS4_JS) == [False, True, False, True, True]
               and pg.evaluate(SHEETS_JS) == [False, True, False, True, True] and [t_[1] for t_ in pg.evaluate(THUMBS_JS)] == [False, True, False, True, True],
               [mk(), pg.evaluate(KEYS4_JS), pg.evaluate(SHEETS_JS)])
@@ -505,11 +510,11 @@ try:
         check("move page 2 to the end (tick Move): it stays bookmarked", mk() == [[110, False], [130, False], [140, True], [140, True], [120, True]]
               and pg.evaluate(SHEETS_JS) == [False, False, True, True, True], [mk(), pg.evaluate(SHEETS_JS)])
         thumb(pg, 5).click(button="right"); pg.wait_for_timeout(60); menu_click(pg, "Delete"); idle(pg)
-        gone = [mk(), pg.evaluate("localStorage.getItem('pw.bookmark.m2')")]
-        check("delete it: gone, its device key too", gone[0] == [[110, False], [130, False], [140, True], [140, True]] and gone[1] is None, gone)
+        gone = [mk(), pg.evaluate(ROW_JS, "m2")]
+        check("delete it: gone, its row too", gone[0] == [[110, False], [130, False], [140, True], [140, True]] and gone[1] is None, gone)
         undo()
-        check("undo the delete: back at the end, bookmarked (record, device, sheet)", mk() == [[110, False], [130, False], [140, True], [140, True], [120, True]]
-              and pg.evaluate("localStorage.getItem('pw.bookmark.m2')") == "1" and pg.evaluate(SHEETS_JS)[4] is True, [mk(), pg.evaluate(SHEETS_JS)])
+        check("undo the delete: back at the end, bookmarked (record, row, sheet)", mk() == [[110, False], [130, False], [140, True], [140, True], [120, True]]
+              and pg.evaluate(ROW_JS, "m2") is True and pg.evaluate(SHEETS_JS)[4] is True, [mk(), pg.evaluate(SHEETS_JS)])
         undo(); undo()
         check("undo the move and the paste: 4 pages, 2 and 4 still bookmarked (undo never touches a bookmark)",
               mk() == [[110, False], [120, True], [130, False], [140, True]], mk())
@@ -518,7 +523,7 @@ try:
         close_list(pg)
         page_menu(2); menu_click(pg, "Remove bookmark"); idle(pg); t2 = toast_()
         page_menu(4); menu_click(pg, "Remove bookmark"); idle(pg)
-        check("Remove bookmark (pages 2 and 4): toast 'Bookmark removed', none left, no tabs, no device keys", t2 == "Bookmark removed"
+        check("Remove bookmark (pages 2 and 4): toast 'Bookmark removed', none left, no tabs, every row false", t2 == "Bookmark removed"
               and [m[1] for m in mk()] == [False] * 4 and pg.evaluate(SHEETS_JS) == [False] * 4 and pg.evaluate(KEYS4_JS) == [False] * 4, [t2, mk()])
         open_list(pg); marks_toggle()
         empty = pg.evaluate(EMPTY_JS)
@@ -544,7 +549,7 @@ try:
               and ui()["toast"] == "2 pages deleted", [mk(), U4() - u7, ui()["toast"]])
         check("the filtered list now says 'No bookmarks yet'", pg.evaluate(EMPTY_JS) == ["No bookmarks yet"], pg.evaluate(EMPTY_JS))
         undo()
-        check("undo brings them back bookmarked (record, device, sheets, the filtered list)", mk() == [[110, False], [120, True], [130, True], [140, False]]
+        check("undo brings them back bookmarked (record, row, sheets, the filtered list)", mk() == [[110, False], [120, True], [130, True], [140, False]]
               and pg.evaluate(KEYS4_JS) == [False, True, True, False] and pg.evaluate(SHEETS_JS) == [False, True, True, False]
               and pg.evaluate(THUMBS_JS) == [[2, True], [3, True]], [mk(), pg.evaluate(THUMBS_JS)])
         pg.click("#plDone"); pg.wait_for_timeout(40)
@@ -560,9 +565,9 @@ try:
         # ------------------------------------------------------------ 8. cache
         group[0] = "cache"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v5b" not in keys:
+        if "pw-v5c" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v5b", "pw-v5b" in keys, keys)
+        check("cache is pw-v5c", "pw-v5c" in keys, keys)
         sw_src = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("sw.js lists vendor/jspdf.umd.min.js", "./vendor/jspdf.umd.min.js" in sw_src)
         ctx.close()

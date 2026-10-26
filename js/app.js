@@ -6,11 +6,13 @@
 // pw-v4r: page bookmarks (the page menu's Bookmark, a ribbon tab on the page and its thumb, a Bookmarks filter in the list).
 // pw-v4t: tick mode's Share: name the file first, then share the ticked pages as one PDF or as PNG images.
 // U3b: page pictures to storage a few seconds after she stops writing (js/snap.js); a note's card shows its first page.
+// U3c: a page's bookmark is the pages.bookmark column (migration 0004); the tray state follows her across devices
+// through profiles.settings (newer wins, by its tray_at stamp).
 import { api } from './api.js';
 import { initPage, showStack, fit, scrollToPage, relayout, current, bookmarkTab, markSheet, bgSvg, pageSize } from './page.js';
 import * as ink from './ink.js';
 import * as store from './store.js';
-import { initTray, closePanel, trayState, chooseTool } from './tray.js';
+import { initTray, closePanel, trayState, chooseTool, localTray, adopt as adoptTray } from './tray.js';
 import * as pics from './snap.js';
 
 const $ = (id) => document.getElementById(id);
@@ -285,16 +287,14 @@ function insertPage(snap, i) {
   list.forEach((x, k) => { if (x !== p && x.position !== k) { x.position = k; pairs.push([x.id, k]); } });
   if (pairs.length) save(() => api.reorderPages(pairs));
   S.pages.push(p);
-  save(() => api.createPage(p));
+  save(() => api.createPage(p));                          // U3c: the row carries the bookmark (undo of a delete, a paste)
   store.change(p.id, [], ink.strokesOf(p.id));              // U3a: undo of a delete: the database cascaded its strokes, send them again
-  store.keepBookmark(p.id, p.bookmark);                     // undo of a delete brings the bookmark back with the page
   touchNote(p.note_id);
   pics.syncCover(p.note_id);                                // U3b: a page at the top takes over the cover
 }
 function removePage(id) {
   const p = page(id), list = pagesOf(p.note_id).filter((x) => x !== p);
-  S.pages = S.pages.filter((x) => x !== p);
-  store.keepBookmark(id, false);                            // the op's snapshot still holds it, for undo
+  S.pages = S.pages.filter((x) => x !== p);                 // the op's snapshot still holds its bookmark, for undo
   orphans.add(id);
   save(() => api.deletePage(id));
   store.unqueue(id);                                        // U3a: its strokes cascade on the server; queued ops for it can never land
@@ -409,7 +409,7 @@ function setBookmark(id, on) {
   const p = page(id);
   if (!p) return;
   p.bookmark = on;
-  store.keepBookmark(id, on);
+  save(() => api.setBookmark(id, on));                      // U3c: the row; not an edit, the note keeps its place
   markSheet(id, on);
   if (S.listOpen) renderPageList();
   toast(on ? 'Bookmarked' : 'Bookmark removed');
@@ -1141,19 +1141,81 @@ function toggleTheme() {
 // ---------------------------------------------------------------- start
 async function load() {
   try { await api.purgeBin(30); } catch (_) { /* the bin empties itself next time */ }
+  const prof = api.profile().catch(() => null);           // U3c: the tray state, asked for beside the notes
   let d;
   try { d = await api.loadAll(); }
   catch (_) { toast('Could not load your notes. Check the connection, then reload.', 8000); return; }
   S.folders = d.folders; S.notes = d.notes; S.pages = d.pages;
-  S.pages.forEach((p) => { p.bookmark = store.bookmarked(p.id); });       // kept on the device until U3c (store.js)
+  S.pages.forEach((p) => { p.bookmark = p.bookmark === true; });         // U3c: the row's column (0004)
+  takeOverBookmarks();
   try { S.fold = JSON.parse(localStorage.getItem(PREF + 'fold') || '{}') || {}; } catch (_) { S.fold = {}; }
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(PREF + 'open') || '{}') || {}; } catch (_) { /* ignore */ }
   if (saved.sel === 'loose' || saved.sel === 'bin' || liveFolder(folder(saved.sel))) S.sel = saved.sel;
   render();
   if (saved.note && liveNote(note(saved.note))) await openNote(saved.note);
+  trayFrom(await prof);
   document.body.dataset.ready = '1';
 }
+
+// U3c, once per device: bookmarks from pw-v4r were kept in localStorage (pw.bookmark.<page_id> = '1'). A page that is
+// still there (live or in the bin) and not yet bookmarked in its row takes the bookmark through the database, and its
+// key goes once the row has it; every other pw.bookmark.* key goes at once. A failed write keeps its key for next time.
+const OLD_MARK = 'pw.bookmark.';
+let tookOver = { keys: 0, set: 0 };
+function takeOverBookmarks() {
+  const keys = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith(OLD_MARK)) keys.push(k); }
+  } catch (_) { return; }
+  const drop = (k) => { try { localStorage.removeItem(k); } catch (_) { /* ignore */ } };
+  tookOver = { keys: keys.length, set: 0 };
+  for (const k of keys) {
+    const id = k.slice(OLD_MARK.length), p = page(id);
+    let on = false;
+    try { on = localStorage.getItem(k) === '1'; } catch (_) { /* ignore */ }
+    if (!on || !p || p.bookmark) { drop(k); continue; }
+    p.bookmark = true;
+    tookOver.set++;
+    save(async () => { await api.setBookmark(id, true); drop(k); });
+  }
+}
+
+// ---------------------------------------------------------------- the tray state across devices (U3c)
+// profiles.settings = { tray: <what tray.js keeps>, tray_at: <ISO stamp> }; this device keeps the same with its own
+// tray_at. At start the database's copy wins only when it is newer: both stamps there and the database's later, or no
+// copy on this device at all. A copy here without a stamp (saved before U3c, or a test's seed) wins over the database.
+// Every tray change goes up a second after the last one, one update in flight, retried (2, 5, 10, 30 s, and on
+// `online`) until it lands. No dot, no toast: the tray state is a convenience, not her ink.
+const TRAY_MS = 1000, TRAY_BACKOFF = [2000, 5000, 10000, 30000];
+const later = (a, b) => Date.parse(a) > Date.parse(b);
+let trayNext = null, trayT = null, trayBusy = false, trayTries = 0;
+function trayFrom(profile) {
+  const s = (profile && profile.settings) || {}, mine = localTray();
+  const theirs = s.tray && typeof s.tray === 'object' && typeof s.tray_at === 'string' && !isNaN(Date.parse(s.tray_at)) ? s : null;
+  if (theirs && (!mine.present || (mine.at && later(theirs.tray_at, mine.at)))) { adoptTray(theirs.tray, theirs.tray_at); return; }
+  // this device's stamped copy is the newer one (or the database has none): it goes up, under its own stamp
+  if (profile && mine.present && mine.at && (!theirs || later(mine.at, theirs.tray_at))) { trayNext = { tray: mine.tray, at: mine.at }; trayFlush(); }
+}
+function trayKeep(tray, at) {
+  trayNext = { tray, at };
+  clearTimeout(trayT);
+  trayT = setTimeout(trayFlush, TRAY_MS);
+}
+async function trayFlush() {
+  trayT = null;
+  if (trayBusy || !trayNext) return;
+  const s = trayNext;
+  trayNext = null; trayBusy = true;
+  let ok = true;
+  try { await api.setSettings({ tray: s.tray, tray_at: s.at }); }
+  catch (_) { ok = false; if (!trayNext) trayNext = s; }
+  trayBusy = false;
+  if (ok) trayTries = 0;
+  if (!trayNext || trayT) return;                          // nothing left, or a newer change is still waiting its second
+  trayT = setTimeout(trayFlush, ok ? 0 : TRAY_BACKOFF[Math.min(trayTries++, TRAY_BACKOFF.length - 1)]);
+}
+addEventListener('online', () => { if (trayNext && !trayBusy) { clearTimeout(trayT); trayFlush(); } });
 
 async function enter(user) {
   S.user = user;
@@ -1213,7 +1275,7 @@ function wire() {
   // a right mouse press that lands while something is open (the press itself closes it before its contextmenu):
   // remembered here, before the tray's and the menu's own closers run, so that contextmenu does not flip the tool
   document.addEventListener('pointerdown', (e) => { rightOverOpen = e.button === 2 && overlayOpen(); }, true);   // any other press forgets it
-  initTray();
+  initTray({ onKeep: (tray, at) => trayKeep(tray, at) });
   initPage({ desk: $('desk'), stack: $('stack'), addBelow: $('addBelow'),
              onCurrent: (i) => { S.cur = Math.max(0, i); updateCount(); ink.clearSelection(); },   // a new page: the selection clears
              onSheets: ink.attach, ink: ink.hook, onPenButton: penButton });
@@ -1274,7 +1336,8 @@ function wire() {
 
 // test hook: the checks wait for writes and clean up their rows through this
 window.__pw = { S, api, idle: async () => { await chain; await store.settled(); await chain; }, failed: () => failed, current, ink, store, tray: trayState,
-                snap: pics.snapStats, renderGrid, covers: coverUrl,
+                snap: pics.snapStats, renderGrid, covers: coverUrl, bookmarksTaken: () => ({ ...tookOver }),
+                trayPending: () => ({ next: !!trayNext, busy: trayBusy, timer: !!trayT }),
                 pageDrag: () => (pd ? { lifted: pd.lifted, from: pd.from, to: pd.to } : null),
                 tick: () => (S.tick ? { ids: ticked(), moving: S.tick.moving } : null) };
 

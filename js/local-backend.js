@@ -8,27 +8,34 @@
 // Page pictures (U3b): the bucket is a Map in memory (path -> Blob), for this session only; nothing here deletes one.
 // A page update bumps its updated_at like the trigger pages_updated_at; setSnapshot writes snapshot_at = that same
 // instant (the database's 'now'), so a fresh picture reads updated_at = snapshot_at.
+// U3c: pages carry `bookmark` (0004); a page update counts as a note edit only when it moves position, orientation or
+// background (PAGE_EDIT), so a bookmark, a snapshot or a binning never moves the note up. `profile` = her profiles
+// row (profile / setSettings), settings {} until the tray first saves.
 
 const KEY = 'penworks.local.v2';
 const TABLES = ['folders', 'notes', 'pages'];
 const DEFAULTS = {
   folders: { parent_id: null, name: '', colour: null, position: 0, deleted_at: null },
   notes: { folder_id: null, name: 'Untitled', pinned: false, cover_path: null, deleted_at: null },
-  pages: { note_id: null, position: 0, orientation: 'portrait', background: 'grid',
+  pages: { note_id: null, position: 0, orientation: 'portrait', background: 'grid', bookmark: false,
            snapshot_path: null, snapshot_at: null, flagged: false, deleted_at: null },
 };
 const PAGE_EDIT = ['position', 'orientation', 'background'];
 const STROKE_KEYS = ['id', 'page_id', 'seq', 'kind', 'style', 'data'];
+const PROFILE = () => ({ id: 'local', username: 'local', display_name: '', pen_colours: [], settings: {},
+                         created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+const PROFILE_KEYS = ['id', 'username', 'display_name', 'pen_colours', 'settings'];
 
 function read() {
   try {
     const d = JSON.parse(localStorage.getItem(KEY) || 'null');
     if (d && TABLES.every((t) => Array.isArray(d[t]))) {
       if (!Array.isArray(d.strokes)) d.strokes = [];      // a store from before U3a: no strokes yet
+      if (!d.profile || typeof d.profile !== 'object') d.profile = PROFILE();   // before U3c: no profile row yet
       return d;
     }
   } catch (_) { /* fall through to an empty store */ }
-  return { folders: [], notes: [], pages: [], strokes: [] };
+  return { folders: [], notes: [], pages: [], strokes: [], profile: PROFILE() };
 }
 function write(d) { localStorage.setItem(KEY, JSON.stringify(d)); }
 function check(table) { if (!TABLES.includes(table)) throw new Error('Unknown table ' + table); }
@@ -200,6 +207,20 @@ export const localApi = {
   async removeSnapshots(paths) { paths.forEach((p) => storage.delete(p)); },
   storageList() { return [...storage.keys()]; },                         // test hook: every path in the bucket
   snapshotReads() { return reads; },                                     // test hook: how many getSnapshot calls
+
+  // ---------------------------------------------------------------- her profile row (U3c)
+  async profile() {
+    const d = read();
+    return clone(Object.fromEntries(PROFILE_KEYS.map((k) => [k, d.profile[k]])));
+  },
+  async setSettings(patch, whole = false) {
+    maybeFail();
+    const d = read();
+    d.profile.settings = whole ? clone(patch) : { ...(d.profile.settings || {}), ...clone(patch) };
+    d.profile.updated_at = new Date().toISOString();
+    write(d);
+    return clone(d.profile.settings);
+  },
 
   failNext(n) { failNext = n; },
   refuseNext(n) { refuseNext = n; },

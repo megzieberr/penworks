@@ -7,6 +7,9 @@
 // Restyle has its own colour (it starts as the last ink tool's colour when restyle is picked); a colour tap
 // while restyle is on changes only that. With the select tool and a selection on the page, a colour tap
 // recolours the selection and a tap on Restyle restyles it (the select tool and the selection stay).
+// U3c: the tray state follows her across devices. keep() writes it here (localStorage pw.tools, with its tray_at stamp)
+// and hands it to app.js (onKeep), which sends it to profiles.settings a second after the last change. At start the
+// device copy is used at once; app.js then offers the database's copy to adopt() when it is the newer one.
 import { setTool, setStyles, hasSelection, recolourSelection, restyleSelection } from './ink.js';
 
 // Megan's own 13 (25 Oct 17:43: Sky blue out, Light green and Teal in), in her order: [hex, name].
@@ -59,9 +62,9 @@ function el(tag, attrs = {}, ...kids) {
   return e;
 }
 
-function load() {
-  let saved = {};
-  try { saved = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (_) { /* defaults */ }
+// whatever was saved (this device's copy, or the database's): unknown colours fall back, a bad order is ignored
+function sanitise(saved) {
+  if (!saved || typeof saved !== 'object') saved = {};
   const s = { tool: INK.includes(saved.tool) ? saved.tool : 'pen',
               pen: { ...DEFAULTS.pen, ...(saved.pen || {}) }, highlighter: { ...DEFAULTS.highlighter, ...(saved.highlighter || {}) } };
   // her order: used only when it is exactly her 13 hex values in some order, otherwise her default order
@@ -83,8 +86,20 @@ function load() {
   s.restyle = { colour: KNOWN.has(rc.toLowerCase()) ? CANON.get(rc.toLowerCase()) : s.spec && same(rc, s.spec) ? s.spec : s[s.lastInk].colour };
   return s;
 }
+function readLocal() {
+  try { const v = JSON.parse(localStorage.getItem(KEY) || 'null'); return v && typeof v === 'object' ? v : null; } catch (_) { return null; }
+}
+function load() { return sanitise(readLocal() || {}); }
+// the one shape that is kept, here and in profiles.settings.tray
+const kept = () => JSON.parse(JSON.stringify({ tool: st.lastInk, pen: st.pen, highlighter: st.highlighter, restyle: st.restyle, order: st.order, spec: st.spec }));
+function writeLocal(tray, at) {
+  try { localStorage.setItem(KEY, JSON.stringify({ ...tray, tray_at: at })); } catch (_) { /* ignore */ }
+}
+let onKeep = () => {};
 function keep() {
-  try { localStorage.setItem(KEY, JSON.stringify({ tool: st.lastInk, pen: st.pen, highlighter: st.highlighter, restyle: st.restyle, order: st.order, spec: st.spec })); } catch (_) { /* ignore */ }
+  const tray = kept(), at = new Date().toISOString();
+  writeLocal(tray, at);
+  try { onKeep(tray, at); } catch (_) { /* the device copy is kept either way */ }
 }
 function push() {
   setStyles(st.pen, st.highlighter, st.restyle);                 // restyle hands out these
@@ -355,7 +370,8 @@ export function closePicker() {
 }
 
 // ---------------------------------------------------------------- build
-export function initTray() {
+export function initTray(o = {}) {
+  if (o.onKeep) onKeep = o.onKeep;
   st = load();
   tray = document.getElementById('tray');
   const undo = document.getElementById('undoBtn'), redo = document.getElementById('redoBtn');
@@ -389,5 +405,24 @@ export function initTray() {
   push();
 }
 export function trayState() { return JSON.parse(JSON.stringify(st)); }
+// U3c: this device's copy: is there one, and its stamp (null for a copy saved before U3c, or a test's seed)
+export function localTray() {
+  const v = readLocal();
+  return { present: !!v, at: v && typeof v.tray_at === 'string' ? v.tray_at : null, tray: st ? kept() : null };
+}
+// U3c: the database's copy, newer than this device's: the same sanitising as load(), then the tray shows it and this
+// device keeps it under the database's stamp (so the next start finds them equal)
+export function adopt(saved, at) {
+  if (!st || !saved || typeof saved !== 'object') return;
+  closePanel(); closePicker();
+  st = sanitise(saved);
+  if (colours) {
+    const byColour = new Map(swatches.map((s) => [s.dataset.colour, s]));
+    swatches = st.order.map((c) => byColour.get(c)).filter(Boolean);
+    colours.prepend(...swatches);                                 // the spare slot stays last
+  }
+  writeLocal(kept(), at);
+  push();
+}
 // another part of the app picks a tool (a paste turns select on): the same path as a tap on its button, so it lights up
 export function chooseTool(t) { if (st && st.tool !== t) pickTool(t); }

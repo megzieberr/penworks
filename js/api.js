@@ -12,8 +12,11 @@ const TABLES = ['folders', 'notes', 'pages'];
 const COLS = {
   folders: 'id,owner_id,parent_id,name,colour,position,deleted_at,created_at,updated_at',
   notes: 'id,owner_id,folder_id,name,pinned,cover_path,deleted_at,created_at,updated_at',
-  pages: 'id,owner_id,note_id,position,orientation,background,snapshot_path,snapshot_at,flagged,deleted_at,created_at,updated_at',
+  pages: 'id,owner_id,note_id,position,orientation,background,bookmark,snapshot_path,snapshot_at,flagged,deleted_at,created_at,updated_at',
 };
+// the signed-in person's own row (U3c): settings.tray = the pen tray's state (js/tray.js), settings.tray_at = when it was
+// saved (newer wins across devices). pen_colours is not used: her 13 colours are code in tray.js, only their order follows her.
+const PROFILE_COLS = 'id,username,display_name,pen_colours,settings';
 // page pictures (U3b): bucket `snapshots`, private, one object per page at <owner uuid>/<page id>.webp (js/snap.js)
 const SNAP_BUCKET = 'snapshots';
 // strokes (U3a): only through strokesOf and putStrokes (js/store.js calls them); owner_id defaults to auth.uid()
@@ -31,6 +34,11 @@ async function client() {
   return sb;
 }
 function check(table) { if (!TABLES.includes(table)) throw new Error('Unknown table ' + table); }
+async function me(c) {
+  const { data } = await c.auth.getSession();
+  if (!data.session) throw new Error('Not signed in');
+  return data.session.user.id;
+}
 function userOf(session) {
   if (!session) return null;
   const email = session.user.email || '';
@@ -191,6 +199,28 @@ const liveApi = {
     if (error) throw error;
   },
 
+  // ---------------------------------------------------------------- her profile row (U3c)
+  async profile() {
+    const c = await client(), uid = await me(c);
+    const { data, error } = await c.from('profiles').select(PROFILE_COLS).eq('id', uid).maybeSingle();
+    if (error) throw error;
+    return data;
+  },
+
+  // patch = some keys of settings; the row's settings are read and merged here (the row is tiny), then written whole,
+  // so a key another device wrote and this patch does not name stays. Answers the settings as saved.
+  // whole = true: the patch IS the settings (the live test puts the row back as it found it).
+  async setSettings(patch, whole = false) {
+    const c = await client(), uid = await me(c);
+    const { data: row, error: e1 } = await c.from('profiles').select('settings').eq('id', uid).single();
+    if (e1) throw e1;
+    const settings = whole ? { ...patch } : { ...((row && row.settings) || {}), ...patch };
+    const { data, error } = await c.from('profiles').update({ settings }).eq('id', uid).select('settings');
+    if (error) throw error;
+    if (!data || !data.length) throw new Error('The settings were not saved');
+    return data[0].settings;
+  },
+
   failNext() { /* local twin only */ },
   refuseNext() { /* local twin only */ },
 };
@@ -221,9 +251,11 @@ export const api = {
   pinNote: (id, pinned) => base.update('notes', [id], { pinned }),
 
   // pages: numbered by position inside their note
-  createPage: (r) => base.insert('pages', pick(r, ['id', 'note_id', 'position', 'orientation', 'background'])),
+  createPage: (r) => base.insert('pages', pick(r, ['id', 'note_id', 'position', 'orientation', 'background', 'bookmark'])),
   reorderPages: (pairs) => eachPos('pages', pairs),
   setPages: (ids, patch) => base.update('pages', ids, pick(patch, ['orientation', 'background'])),
+  // the bookmark (U3c, a column since 0004): not an edit, the note's "last edited" stays where it was
+  setBookmark: (id, on) => base.update('pages', [id], { bookmark: !!on }),
   deletePage: (id) => base.remove('pages', [id]),             // gone for good; the app's undo puts it back
 
   // ids = { folders: [...], notes: [...], pages: [...] }
