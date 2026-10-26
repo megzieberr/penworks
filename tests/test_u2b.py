@@ -58,6 +58,10 @@
 # Arrow tip = first corner (pw-v4w): classify takes the arrow's tip from tipIndex (ink.js), the stroke's FIRST sharp corner,
 # not the point farthest from the start; the tail may be up to 1.2 x the shaft. Her real pen strokes live in tests/fixtures
 # (arrow-pen-fail, arrow-pen-ok, curved-arrow-pen; never edited). The "arrow tip = first corner (pw-v4w)" group.
+# Curved arrow (pw-v4x): a curved shaft with the arrow's head at its end snaps to { type: 'carrow', x1, y1, xm, ym, x2, y2 }
+# (the arc's data, the head along the arc's end tangent), a <g> of two paths; her curved-arrow-pen fixture is one; three
+# handles, move, resize, turn, the erasers, restyle, Duplicate and Paste keep the head on the end. A snap's undo takes the
+# shape away as every snap's does. The "curved arrow (pw-v4x)" group.
 import sys, subprocess, time, pathlib, re, json, math, random
 from playwright.sync_api import sync_playwright
 
@@ -2604,10 +2608,235 @@ try:
         check("no page errors in the arrow tip group", not ea, ea)
         ctx.close()
 
+        # ------------------------------------------------------------ pw-v4x: the curved arrow (an arc shaft, the arrow's head at its end)
+        group[0] = "curved arrow (pw-v4x)"
+        ctx, pg, ec1 = fresh(b); errs += ec1
+        open_note(pg, "Snap")
+        CK = ("x1", "y1", "xm", "ym", "x2", "y2")
+        CAR_JS = """(id) => { const e = document.querySelector(`svg.ink [data-id="${id}"]`); if (!e) return null;
+          const k = [...e.children], cs = (c) => c ? getComputedStyle(c).strokeDasharray : null;
+          return { tag: e.tagName, type: e.dataset.type, parent: e.parentNode.getAttribute('class'), kids: k.map(c => c.tagName),
+            sd: k[0] ? k[0].getAttribute('d') : null, hd: k[1] ? k[1].getAttribute('d') : null, hcls: k[1] ? k[1].getAttribute('class') : null,
+            shaftDash: cs(k[0]), headDash: cs(k[1]) }; }"""
+        SHAFT_ON_JS = """([id, x, y]) => { const e = document.querySelector(`svg.ink [data-id="${id}"]`);
+          return !!e && !!e.children[0] && e.children[0].isPointInStroke(new DOMPoint(x, y)); }"""
+        def car(rid): return pg.evaluate(CAR_JS, rid)
+        def head3(rid):                                  # the drawn head: [barb, tip, barb]
+            i_ = car(rid); n_ = [float(v) for v in re.findall(r"-?\d+(?:\.\d+)?", (i_ or {}).get("hd") or "")]
+            return [(n_[0], n_[1]), (n_[2], n_[3]), (n_[4], n_[5])] if len(n_) == 6 else None
+        def head_dir(rid):                               # the way the head points: from the barbs' middle to the tip
+            h_ = head3(rid)
+            if not h_: return None
+            vx, vy = h_[1][0] - (h_[0][0] + h_[2][0]) / 2, h_[1][1] - (h_[0][1] + h_[2][1]) / 2; L_ = math.hypot(vx, vy) or 1
+            return (vx / L_, vy / L_)
+        def circ3(d):                                    # the circle through start, middle, end: (ox, oy, r)
+            ax, ay, bx, by, cx_, cy_ = (d[k] for k in CK)
+            D = 2 * (ax * (by - cy_) + bx * (cy_ - ay) + cx_ * (ay - by))
+            a2, b2, c2 = ax * ax + ay * ay, bx * bx + by * by, cx_ * cx_ + cy_ * cy_
+            ox = (a2 * (by - cy_) + b2 * (cy_ - ay) + c2 * (ay - by)) / D; oy = (a2 * (cx_ - bx) + b2 * (ax - cx_) + c2 * (bx - ax)) / D
+            return ox, oy, math.hypot(ax - ox, ay - oy)
+        def tan_end(d):                                  # the arc's unit tangent at its end, the way it travels (start, middle, end)
+            ox, oy, _ = circ3(d); vx, vy = d["x2"] - ox, d["y2"] - oy; L_ = math.hypot(vx, vy); t_ = (-vy / L_, vx / L_)
+            return t_ if t_[0] * (d["x2"] - d["xm"]) + t_[1] * (d["y2"] - d["ym"]) > 0 else (-t_[0], -t_[1])
+        def ang(u, v): return math.degrees(math.acos(max(-1.0, min(1.0, u[0] * v[0] + u[1] * v[1]))))
+        def curved_arrow(cx, cy, r, a0, a1, wing=28, spread=35):   # rough_arc, then a V at its end (one wing, back to the tip, the other)
+            pts = rough_arc(cx, cy, r, a0, a1); t_ = math.radians(a1); sg = 1 if a1 > a0 else -1
+            u = (-sg * math.sin(t_), sg * math.cos(t_)); tip = pts[-1]
+            def w(deg):
+                c_, s_ = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+                return (tip[0] - wing * (u[0] * c_ - u[1] * s_), tip[1] - wing * (u[1] * c_ + u[0] * s_))
+            return pts + [w(spread), tip, w(-spread)]
+        # 1. her pen stroke (the fixture)
+        CURVED = fixture("curved-arrow-pen.json")
+        r = classify_(CURVED)
+        check("her curved pen arrow (fixture): carrow", bool(r) and r["type"] == "carrow", r)
+        if r and r["type"] == "carrow":
+            check("... stored as { type, x1, y1, xm, ym, x2, y2 } to 0.1 px, nothing else", sorted(r) == sorted(("type",) + CK) and all(round(r[k], 1) == r[k] for k in CK), r)
+            check("... its start within 3 px of (67.6, 174.2)", near((r["x1"], r["y1"]), (67.6, 174.2), 3), r)
+            check("... its end (the tip) within 3 px of (165, 96)", near((r["x2"], r["y2"]), (165, 96), 3), r)
+            ti = tip_(CURVED); sh = CURVED[:ti + 1]            # the shaft's own least squares circle (x^2 + y^2 + a x + b y + c = 0)
+            M_ = [[sum(p_[0] * p_[0] for p_ in sh), sum(p_[0] * p_[1] for p_ in sh), sum(p_[0] for p_ in sh)],
+                  [sum(p_[0] * p_[1] for p_ in sh), sum(p_[1] * p_[1] for p_ in sh), sum(p_[1] for p_ in sh)],
+                  [sum(p_[0] for p_ in sh), sum(p_[1] for p_ in sh), len(sh)]]
+            R_ = [-sum(p_[0] * (p_[0] ** 2 + p_[1] ** 2) for p_ in sh), -sum(p_[1] * (p_[0] ** 2 + p_[1] ** 2) for p_ in sh), -sum(p_[0] ** 2 + p_[1] ** 2 for p_ in sh)]
+            def det3(m): return m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+            sol = [det3([[R_[k] if j == i else M_[k][j] for j in range(3)] for k in range(3)]) / det3(M_) for i in range(3)]
+            kox, koy = -sol[0] / 2, -sol[1] / 2; kr = math.sqrt(kox ** 2 + koy ** 2 - sol[2])
+            check("... its middle point on the shaft's fitted circle (within 0.5 px)", abs(math.hypot(r["xm"] - kox, r["ym"] - koy) - kr) <= 0.5, [r, kox, koy, kr])
+            te = tan_end(r)
+            info_lines.append(f"curved-arrow-pen: {r}, end tangent ({te[0]:.3f}, {te[1]:.3f}), {math.degrees(math.atan2(te[1], te[0])):.1f} degrees from +x (y down)")
+            check("... its end tangent within 15 degrees of +x", ang(te, (1, 0)) <= 15, te)
+        r = classify_(FAIL); r2 = classify_(OK); r3 = classify_(rough_arrow())
+        check("the straight fixtures and the mouse arrow are still arrows (not carrow)", [x and x["type"] for x in (r, r2, r3)] == ["arrow"] * 3, [r, r2, r3])
+        HA = rough_arc(400, 500, 150, -150, -30)
+        check("a hand arc with NO head: still arc (classify)", (classify_(HA) or {}).get("type") == "arc", classify_(HA))
+        tool(pg, "pen")
+        draw(pg, 1, HA, hold=650)
+        check("... and drawn and held: arc", (last(pg, "p1") or {}).get("data", {}).get("type") == "arc", last(pg, "p1"))
+        undo(pg)
+        # 2. a mouse-drawn curved arrow snaps
+        CA = curved_arrow(400, 500, 150, -150, -30)
+        check("classify on the mouse curved arrow: carrow", (classify_(CA) or {}).get("type") == "carrow", classify_(CA))
+        u0 = U(pg)
+        draw(pg, 1, CA, hold=650)
+        r = last(pg, "p1")
+        ok = r and r["kind"] == "shape" and r["data"].get("type") == "carrow"
+        check("a mouse curved arrow (arc + a V at its end) held: shape/carrow", ok, r and [r["kind"], r["data"]])
+        check("... one stroke on the page, ONE undo step", len(strokes(pg, "p1")) == 1 and U(pg) == u0 + 1, [len(strokes(pg, "p1")), U(pg), u0])
+        check("... lastStroke() reports carrow", (pg.evaluate("window.__pw.ink.lastStroke()") or {}).get("classify") == "carrow")
+        if ok:
+            d = r["data"]; e = car(r["id"]); h = head3(r["id"])
+            check("... its start near the stroke's start, its end near the V's tip", near((d["x1"], d["y1"]), CA[0], 3) and near((d["x2"], d["y2"]), CA[-2], 3), [d, CA[0], CA[-2]])
+            check("... on the page as a <g> in g.pen with two paths (shaft, head)", e and e["tag"] == "g" and e["type"] == "carrow" and e["parent"] == "pen" and e["kids"] == ["path", "path"] and e["hcls"] == "head", e)
+            check("... the shaft's d is the arc's (M .. A ..)", e and e["sd"].startswith("M") and "A" in e["sd"], e)
+            check("... the head's three points sit at the end, its middle point = the end point", h is not None and near(h[1], (d["x2"], d["y2"]), 0.1)
+                  and all(near(q, (d["x2"], d["y2"]), 40) for q in h), [h, d])
+            check("... the head points along the arc's end tangent (within 1 degree)", h is not None and ang(head_dir(r["id"]), tan_end(d)) <= 1, [head_dir(r["id"]), tan_end(d)])
+            check("... the head is never dashed, the shaft is solid", e["headDash"] == "none" and e["shaftDash"] == "none", e)
+            thumb = pg.evaluate("""(id) => import('./js/ink.js').then(m => { const s = m.thumbSvg('p1'), g = s.querySelector(`[data-id="${id}"]`);
+              return g ? [g.tagName, g.dataset.type, [...g.children].map(c => c.tagName), !!g.children[1] && !!g.children[1].getAttribute('d')] : null; })""", r["id"])
+            check("the page list thumb (and so Share, which draws thumbSvg) has the curved arrow: a <g> with shaft and head", thumb == ["g", "carrow", ["path", "path"], True], thumb)
+        undo(pg)
+        check("undo of the snap takes the curved arrow away (as every snap: the snap is the one step)", len(strokes(pg, "p1")) == 0, strokes(pg, "p1"))
+        redo(pg)
+        check("redo brings it back as a carrow", (last(pg, "p1") or {}).get("data", {}).get("type") == "carrow")
+        # highlighter: an arc, never a curved arrow
+        tool(pg, "highlighter")
+        draw(pg, 1, curved_arrow(400, 900, 150, -150, -30), hold=650)
+        hl = last(pg, "p1")
+        check("a highlighter curved arrow held: shape/arc (no highlighter arrows) with the highlighter's look",
+              hl and hl["kind"] == "shape" and hl["data"].get("type") == "arc" and hl["style"]["opacity"] < 1, hl and [hl["kind"], hl["data"], hl["style"]])
+        tool(pg, "pen")
+        # a dashed pen: the shaft dashed, the head not
+        pg.click("#tool-pen"); pg.locator("#toolPanel .dash[data-dash='dashed']").click(); pg.mouse.click(400, 10)
+        draw(pg, 1, curved_arrow(400, 1050, 120, -150, -30), hold=650)
+        dr = last(pg, "p1"); e = car(dr["id"]) if dr else None
+        check("a dashed pen curved arrow: carrow, the shaft path dashed, the head not", dr and dr["data"].get("type") == "carrow" and dr["style"]["dash"] == "dashed"
+              and e and e["shaftDash"] not in ("none", None) and e["headDash"] == "none", [dr and dr["data"], e])
+        pg.click("#tool-pen"); pg.locator("#toolPanel .dash[data-dash='solid']").click(); pg.mouse.click(400, 10)
+        if dr and dr["data"].get("type") == "carrow":
+            pg.click("#tray .sw[data-colour='#FF3636']")
+            tool(pg, "restyle")
+            u0 = U(pg)
+            q = pg.evaluate("(id) => import('./js/ink.js').then(m => m.outline(m.strokesOf('p1').find(r => r.id === id))[24])", dr["id"])
+            tap_page(pg, 1, q[0], q[1])
+            rr = [s for s in strokes(pg, "p1") if s["id"] == dr["id"]]; e = car(dr["id"])
+            check("restyle on it: still a carrow with the same points, red, still dashed, one undo step", len(rr) == 1 and rr[0]["data"] == dr["data"]
+                  and rr[0]["style"]["colour"] == "#FF3636" and rr[0]["style"]["dash"] == "dashed" and U(pg) == u0 + 1, [rr and rr[0]["style"], U(pg), u0])
+            check("... the shaft dashed and the head still not", e and e["shaftDash"] not in ("none", None) and e["headDash"] == "none", e)
+            tool(pg, "pen")
+        ctx.close()
+
+        # 3. handles: three; the end drags the tip and the head turns with it, the middle bends it
+        ctx, pg, ec2 = fresh(b); errs += ec2
+        open_note(pg, "Handles")
+        pen = Pen(ctx, pg)
+        draw(pg, 1, curved_arrow(400, 500, 150, -150, -30), hold=650)
+        a = last(pg, "p2")
+        check("a curved arrow to grab", a and a["kind"] == "shape" and a["data"].get("type") == "carrow", a and a["data"])
+        if a and a["data"].get("type") == "carrow":
+            d0 = dict(a["data"]); u0 = U(pg); hd0 = head_dir(a["id"])
+            hs = pg.evaluate("(id) => import('./js/ink.js').then(m => m.handles(m.strokesOf('p2').find(r => r.id === id)))", a["id"])
+            check("handles gives 3: start, middle, end", hs == [[d0["x1"], d0["y1"]], [d0["xm"], d0["ym"]], [d0["x2"], d0["y2"]]], hs)
+            tool(pg, "select")
+            pen.stroke([screen(pg, 1, d0["x2"], d0["y2"]), screen(pg, 1, d0["x2"] + 30, d0["y2"] + 40)])
+            d1 = last(pg, "p2")["data"]; hd1 = head_dir(a["id"]); h1 = head3(a["id"])
+            check("the select tool on the end handle moves the tip: only the end moves", d1.get("type") == "carrow" and abs(d1["x2"] - (d0["x2"] + 30)) <= 1.5
+                  and abs(d1["y2"] - (d0["y2"] + 40)) <= 1.5 and all(d1[k] == d0[k] for k in ("x1", "y1", "xm", "ym")), [d0, d1])
+            check("... one undo step, no stroke drawn", len(strokes(pg, "p2")) == 1 and U(pg) == u0 + 1, [len(strokes(pg, "p2")), U(pg), u0])
+            check("... the head sits on the new tip", h1 is not None and near(h1[1], (d1["x2"], d1["y2"]), 0.1), [h1, d1])
+            check("... and turned with the new tangent (moved over 3 degrees, along the new tangent within 1)", hd0 and hd1 and ang(hd0, hd1) > 3 and ang(hd1, tan_end(d1)) <= 1,
+                  [hd0, hd1, tan_end(d1)])
+            r0 = circ3(d1)[2]
+            pen.stroke([screen(pg, 1, d1["xm"], d1["ym"]), screen(pg, 1, d1["xm"], d1["ym"] - 40)])
+            d2 = last(pg, "p2")["data"]; r2_ = circ3(d2)[2]
+            check("the middle handle changes the curvature: the radius changes, the ends stay", d2.get("type") == "carrow" and abs(r2_ - r0) > 0.05 * r0
+                  and all(d2[k] == d1[k] for k in ("x1", "y1", "x2", "y2")), [d1, d2, r0, r2_])
+            check("... the shaft runs through the new middle, the head follows the new end tangent", pg.evaluate(SHAFT_ON_JS, [a["id"], d2["xm"], d2["ym"]])
+                  and ang(head_dir(a["id"]), tan_end(d2)) <= 1, [head_dir(a["id"]), tan_end(d2)])
+            undo(pg); undo(pg)
+            check("undo twice puts it back", last(pg, "p2")["data"] == d0, [last(pg, "p2")["data"], d0])
+        ctx.close()
+
+        # 4. move, resize and turn with the select tool keep it a curved arrow with the head on its end
+        ctx, pg, ec3 = fresh(b); errs += ec3
+        open_note(pg, "Select")
+        CAD = {"type": "carrow", "x1": 270.1, "y1": 375, "xm": 400, "ym": 300, "x2": 529.9, "y2": 375}   # centre (400, 450), r 150, -150 to -30 degrees
+        def put_car(pid, rid="ca", style=None):
+            pg.evaluate(PUT_JS, [pid, [{"id": rid, "page_id": pid, "seq": int(time.time() * 1000), "kind": "shape",
+                                         "style": style or {"colour": "#000000", "width": 2.5, "dash": "solid", "opacity": 1}, "data": dict(CAD)}]])
+        def head_ok(rid, d):
+            h_ = head3(rid)
+            return h_ is not None and near(h_[1], (d["x2"], d["y2"]), 0.5) and ang(head_dir(rid), tan_end(d)) <= 1
+        put_car("p4")
+        check("a curved arrow put on the page is drawn with its head at the end", head_ok("ca", CAD), [head3("ca"), tan_end(CAD)])
+        tool(pg, "select")
+        select_box((250, 280), (550, 395))
+        check("the curved arrow is selected", sel(pg) and sel(pg)["ids"] == ["ca"], sel(pg))
+        u0 = U(pg)
+        drag_page(pg, 1, (330, 335), (380, 375))                  # inside the box, away from the three handles
+        d1 = by_id()["ca"]["data"]
+        check("a move keeps the type and moves all three points by (50, 40)", d1["type"] == "carrow"
+              and all(abs(d1[k] - (CAD[k] + (50 if "x" in k else 40))) <= 0.11 for k in CK), [CAD, d1])
+        check("... one undo step, the head's tip = (x2, y2) within 0.5 px, along the tangent", U(pg) == u0 + 1 and head_ok("ca", d1), [U(pg), u0, head3("ca"), d1])
+        undo(pg)
+        select_box((250, 280), (550, 395))
+        q = pg.evaluate(CORN_JS); o, c2 = q[0], q[2]
+        drag_page(pg, 1, (c2[0], c2[1]), (o[0] + 2 * (c2[0] - o[0]), o[1] + 2 * (c2[1] - o[1])), steps=12)
+        d2 = by_id()["ca"]["data"]
+        s_ = math.hypot(d2["x2"] - d2["x1"], d2["y2"] - d2["y1"]) / math.hypot(CAD["x2"] - CAD["x1"], CAD["y2"] - CAD["y1"])
+        check("a resize to twice the size keeps the type and scales the points", d2["type"] == "carrow" and abs(s_ - 2) < 0.08, [s_, d2])
+        check("... the head's tip = (x2, y2) within 0.5 px, along the tangent", head_ok("ca", d2), [head3("ca"), d2])
+        undo(pg)
+        select_box((250, 280), (550, 395))
+        c = pturn(40)
+        d3 = by_id()["ca"]["data"]; exp = [rot_about((CAD["x" + k], CAD["y" + k]), c, 40) for k in ("1", "m", "2")]
+        check("a turn of 40 degrees keeps the type and turns all three points about the box centre (1 px)", d3["type"] == "carrow"
+              and all(near((d3["x" + k], d3["y" + k]), e_, 1) for k, e_ in zip(("1", "m", "2"), exp)), [d3, exp])
+        check("... the head's tip = (x2, y2) within 0.5 px, re-aimed along the turned tangent", head_ok("ca", d3) and ang(tan_end(d3), tan_end(CAD)) > 35, [head3("ca"), d3])
+        undo(pg)
+        # Duplicate and paste keep the type
+        select_box((250, 280), (550, 395))
+        pg.locator(".selChips .chip[data-act='duplicate']").click(); pg.wait_for_timeout(40)
+        dups = [v for k_, v in by_id().items() if k_ != "ca"]
+        check("Duplicate: one more carrow, every point moved by (+24, +24)", len(dups) == 1 and dups[0]["data"]["type"] == "carrow"
+              and all(abs(dups[0]["data"][k] - (CAD[k] + 24)) < 1e-6 for k in CK), dups)
+        pg.locator(".selChips .chip[data-act='copy']").click(); pg.wait_for_timeout(40)
+        before = set(by_id())
+        pg.evaluate("import('./js/ink.js').then(m => m.pasteAt('p4', 400, 800))"); pg.wait_for_timeout(60)
+        pasted = [v for k_, v in by_id().items() if k_ not in before]
+        check("Copy then Paste: one more carrow with its head drawn on its end", len(pasted) == 1 and pasted[0]["data"]["type"] == "carrow"
+              and head_ok(pasted[0]["id"], pasted[0]["data"]), pasted)
+        ctx.close()
+
+        # 5. erasers: the area eraser bites it into ink (the head's ink too), the stroke eraser takes it whole
+        ctx, pg, ec4 = fresh(b); errs += ec4
+        open_note(pg, "Erase")
+        put_car("p5")
+        r0 = strokes(pg, "p5")[0]; u0 = U(pg)
+        tool(pg, "area")
+        drag_page(pg, 1, (400, 270), (400, 330), steps=8)                 # across the shaft's middle (400, 300)
+        s1 = strokes(pg, "p5")
+        check("the area eraser across the shaft: no shape left, only pen ink", s1 and all(s["kind"] == "pen" for s in s1), [(s["kind"], s["data"].get("type")) for s in s1])
+        heads = [s for s in s1 if near(s["data"]["points"][0], (CAD["x2"], CAD["y2"]), 20) and all(near(p_, (CAD["x2"], CAD["y2"]), 20) for p_ in s["data"]["points"])
+                 and any(near(p_, (CAD["x2"], CAD["y2"]), 0.2) for p_ in s["data"]["points"])]
+        shafts = [s for s in s1 if s not in heads]
+        check("... two shaft pieces and the head's ink piece, solid", len(shafts) == 2 and len(heads) == 1 and heads[0]["style"]["dash"] == "solid", [len(shafts), len(heads)])
+        check("... every piece keeps its page and seq, one undo step", all(s["page_id"] == "p5" and s["seq"] == r0["seq"] for s in s1) and U(pg) == u0 + 1, [U(pg), u0])
+        undo(pg)
+        s2 = strokes(pg, "p5")
+        check("undo: the curved arrow is back, the same id and data", len(s2) == 1 and s2[0]["id"] == "ca" and s2[0]["data"] == CAD and (car("ca") or {}).get("type") == "carrow", s2)
+        tool(pg, "eraser")
+        u0 = U(pg)
+        tap_page(pg, 1, 400, 300)
+        check("the stroke eraser on the shaft removes it whole, one undo step", len(strokes(pg, "p5")) == 0 and U(pg) == u0 + 1, [strokes(pg, "p5"), U(pg), u0])
+        check("no page errors in the curved arrow group", not (ec1 or ec2 or ec3 or ec4), [ec1, ec2, ec3, ec4])
+        ctx.close()
+
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v4w", "pw-v4w" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v4x", "pw-v4x" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)

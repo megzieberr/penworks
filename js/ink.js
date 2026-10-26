@@ -51,6 +51,13 @@
 // farthest from the start. She rides the pen back along the first wing to the tip; passing the real corner by a hair on that
 // return put the old "farthest point" tip on the return pass, and the snap did nothing. The tail may now be up to 1.2 x the
 // shaft (her draw-back head path is nearly twice a plain V).
+// Curved arrow (pw-v4x, her ask 26 Oct): a curved shaft with the arrow's head at its END, data { type: 'carrow', x1, y1, xm,
+// ym, x2, y2 }: exactly an arc's data (start, a middle point on the arc, end = the tip). The head has no field of its own: it
+// always points along the arc's direction of travel at its end (arcGeom's te), so a handle drag, a move, a resize or a turn
+// re-aims it by itself. Classify runs it right after the straight arrow: the shaft (up to the first sharp corner) fits an
+// arc (arcFit, the arc branch's own rules) and the tail passes the arrow's head rules measured against the arc's end tangent.
+// Drawn as a <g> of the arc's path and the head's path (the head never dashed); three handles, the arc's; the area eraser
+// turns it into the arc's ink plus the head's ink. A highlighter curved arrow becomes an arc (no highlighter arrows).
 
 import * as store from './store-local.js';
 import { pageAt, pagePoint, view, pageSize } from './page.js';
@@ -140,7 +147,7 @@ export function outline(rec, n = 48) {
     for (let k = 0; k <= n; k++) { const a = (k / n) * 2 * Math.PI; out.push(turn([d.cx + rx * Math.cos(a), d.cy + ry * Math.sin(a)], c, tu)); }
     return out;
   }
-  if (d.type === 'arc') {                                          // n points from the start to the end
+  if (d.type === 'arc' || d.type === 'carrow') {                   // n points from the start to the end (a curved arrow: its shaft)
     const g = arcGeom(d);
     if (!g) return [[d.x1, d.y1], [d.xm, d.ym], [d.x2, d.y2]];
     const out = [[d.x1, d.y1]], m = n - 1;
@@ -161,8 +168,9 @@ function qbez(d, t) {
   return [u * u * d.x1 + 2 * u * t * d.cx + t * t * d.x2, u * u * d.y1 + 2 * u * t * d.cy + t * t * d.y2];
 }
 // an arc's circle, through its start, middle and end: { ox, oy, r, t1 (the start's angle), sweep (signed, radians:
-// plus is the way angles grow on the page, SVG's sweep flag 1) }; null when the three sit in a line (the middle
-// under 0.5 px off the chord) or the ends meet
+// plus is the way angles grow on the page, SVG's sweep flag 1), te (the unit tangent at the end, the way the arc
+// travels from the start through the middle to the end: a curved arrow's head points along it) }; null when the three
+// sit in a line (the middle under 0.5 px off the chord) or the ends meet
 function arcGeom(d) {
   const ax = d.x1, ay = d.y1, bx = d.xm, by = d.ym, cx = d.x2, cy = d.y2, chord = Math.hypot(cx - ax, cy - ay);
   if (!chord || Math.abs((bx - ax) * (cy - ay) - (by - ay) * (cx - ax)) / chord < 0.5) return null;
@@ -170,14 +178,23 @@ function arcGeom(d) {
   const a2 = ax * ax + ay * ay, b2 = bx * bx + by * by, c2 = cx * cx + cy * cy;
   const ox = (a2 * (by - cy) + b2 * (cy - ay) + c2 * (ay - by)) / D, oy = (a2 * (cx - bx) + b2 * (ax - cx) + c2 * (bx - ax)) / D;
   const t1 = Math.atan2(ay - oy, ax - ox), tm = Math.atan2(by - oy, bx - ox), t2 = Math.atan2(cy - oy, cx - ox);
-  const toEnd = nrmA(t2 - t1);
-  return { ox, oy, r: Math.hypot(ax - ox, ay - oy), t1, sweep: nrmA(tm - t1) <= toEnd ? toEnd : toEnd - 2 * Math.PI };
+  const toEnd = nrmA(t2 - t1), sweep = nrmA(tm - t1) <= toEnd ? toEnd : toEnd - 2 * Math.PI, sg = sweep > 0 ? 1 : -1;
+  return { ox, oy, r: Math.hypot(ax - ox, ay - oy), t1, sweep, te: [-sg * Math.sin(t2), sg * Math.cos(t2)] };
+}
+// a curved arrow's head direction (unit) and its shaft's length: the arc's end tangent and length; three points in a
+// line: from the middle to the end, the two straight pieces' length
+function carrowDir(d) {
+  const g = arcGeom(d);
+  if (g) return { u: g.te, L: g.r * Math.abs(g.sweep) };
+  const dx = d.x2 - d.xm, dy = d.y2 - d.ym, l = Math.hypot(dx, dy) || 1;
+  return { u: [dx / l, dy / l], L: Math.hypot(d.xm - d.x1, d.ym - d.y1) + Math.hypot(dx, dy) };
 }
 const nrmA = (t) => ((t % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);   // an angle in [0, 2 pi)
 // a shape as plain ink (the area eraser, pw-v4l): one or two pen or highlighter records (the inHl rule picks the kind,
 // so a highlighter-born shape's ink stays in its .hlo group), same page, seq and style, fresh ids, points every 3 px
 // along the outline. Closed shapes give ONE closed polyline (its last point repeats the first); an arrow gives two,
-// the shaft and the head (the head's two lines through the tip, where makeEl draws them, solid like the drawn head).
+// the shaft and the head (the head's two lines through the tip, where makeEl draws them, solid like the drawn head); a
+// curved arrow too: the arc's ink and the head's.
 const INK_STEP = 3;
 function densify(poly, step) {                                     // every vertex kept, no gap over step
   if (!poly.length) return [];
@@ -192,21 +209,19 @@ function densify(poly, step) {                                     // every vert
 function shapeToInk(rec) {
   const d = rec.data || {}, kind = inHl(rec) ? 'highlighter' : 'pen';
   const ink = (pts, style = rec.style) => ({ id: uuid(), page_id: rec.page_id, seq: rec.seq, kind, style: { ...style }, data: { points: pts } });
-  if (d.type === 'arrow') {
-    const h = arrowHeadPts(d, (rec.style && rec.style.width) || 2.5);
-    return [ink(densify([[d.x1, d.y1], [d.x2, d.y2]], INK_STEP)), ink(densify(h, INK_STEP), { ...rec.style, dash: 'solid' })];
-  }
+  const head = () => ink(densify(arrowHeadPts(d, (rec.style && rec.style.width) || 2.5), INK_STEP), { ...rec.style, dash: 'solid' });
+  if (d.type === 'arrow') return [ink(densify([[d.x1, d.y1], [d.x2, d.y2]], INK_STEP)), head()];
   let len = 0;                                                     // curves: enough points for a 3 px step
   if (d.type === 'circle') len = 2 * Math.PI * d.r;
   else if (d.type === 'ellipse') { const a = d.rx, b = d.ry; len = Math.PI * (3 * (a + b) - Math.sqrt((3 * a + b) * (a + 3 * b))); }
-  else if (d.type === 'arc') { const g = arcGeom(d); len = g ? g.r * Math.abs(g.sweep) : 0; }
+  else if (d.type === 'arc' || d.type === 'carrow') { const g = arcGeom(d); len = g ? g.r * Math.abs(g.sweep) : 0; }
   else if (d.type === 'parabola') len = polyLen(outline(rec, 96));
   const o = outline(rec, Math.max(48, Math.ceil(len / INK_STEP)));
   if (o.length < 2) return [];
   const closed = d.type === 'rect' || d.type === 'triangle' || d.type === 'circle' || d.type === 'ellipse';
   const pts = densify(o, INK_STEP);
   if (closed) pts[pts.length - 1] = pts[0].slice();
-  return [ink(pts)];
+  return d.type === 'carrow' ? [ink(pts), head()] : [ink(pts)];
 }
 // the point q turned deg degrees about c (plus = clockwise on the page, the way SVG's rotate() turns)
 function turn(q, c, deg) {
@@ -266,16 +281,29 @@ function styleEl(el, rec) {
   else el.removeAttribute('stroke-dasharray');
 }
 // shapes are SVG primitives: line, polygon (rect, triangle), circle, ellipse, path (arc, parabola); an arrow is a <g> of its
-// line and an open head (the head never dashed, so every arrow ends the same way)
-const SHAPE_TAG = { line: 'line', arrow: 'g', rect: 'polygon', triangle: 'polygon', circle: 'circle', ellipse: 'ellipse', arc: 'path', parabola: 'path' };
-function arrowHeadPts(d, w) {                                    // [one barb's end, the tip, the other barb's end]
-  const dx = d.x2 - d.x1, dy = d.y2 - d.y1, L = Math.hypot(dx, dy) || 1, ux = dx / L, uy = dy / L;
-  const len = Math.min(L * 0.45, Math.max(14, w * 4)), a = 28 * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
-  const b1 = [d.x2 - len * (ux * c - uy * s), d.y2 - len * (uy * c + ux * s)];
-  const b2 = [d.x2 - len * (ux * c + uy * s), d.y2 - len * (uy * c - ux * s)];
-  return [b1, [d.x2, d.y2], b2];
+// line and an open head, a curved arrow a <g> of its arc's path and the same head (the head never dashed, so every arrow
+// ends the same way)
+const SHAPE_TAG = { line: 'line', arrow: 'g', carrow: 'g', rect: 'polygon', triangle: 'polygon', circle: 'circle', ellipse: 'ellipse', arc: 'path', parabola: 'path' };
+// the head's three points [one barb's end, the tip, the other barb's end] for a tip, the unit direction the shaft arrives
+// in (ux, uy), the shaft's length L (a short shaft gets a smaller head) and the ink width w; both arrow kinds use it
+function headPts(tip, ux, uy, L, w) {
+  const len = Math.min((L || 1) * 0.45, Math.max(14, w * 4)), a = 28 * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+  const b1 = [tip[0] - len * (ux * c - uy * s), tip[1] - len * (uy * c + ux * s)];
+  const b2 = [tip[0] - len * (ux * c + uy * s), tip[1] - len * (uy * c - ux * s)];
+  return [b1, [tip[0], tip[1]], b2];
+}
+function arrowHeadPts(d, w) {                                    // an arrow along its chord, a curved arrow along its end tangent
+  if (d.type === 'carrow') { const { u, L } = carrowDir(d); return headPts([d.x2, d.y2], u[0], u[1], L, w); }
+  const dx = d.x2 - d.x1, dy = d.y2 - d.y1, L = Math.hypot(dx, dy) || 1;
+  return headPts([d.x2, d.y2], dx / L, dy / L, L, w);
 }
 function arrowHead(d, w) { return 'M' + arrowHeadPts(d, w).map((q) => f1(q[0]) + ' ' + f1(q[1])).join('L'); }
+function arcD(d) {                                               // M start A r r 0 large sweep end; in a line: straight
+  const g = arcGeom(d), p = (x, y) => f1(x) + ' ' + f1(y);
+  return g
+    ? 'M' + p(d.x1, d.y1) + 'A' + f1(g.r) + ' ' + f1(g.r) + ' 0 ' + (Math.abs(g.sweep) > Math.PI ? 1 : 0) + ' ' + (g.sweep > 0 ? 1 : 0) + ' ' + p(d.x2, d.y2)
+    : 'M' + p(d.x1, d.y1) + 'L' + p(d.xm, d.ym) + 'L' + p(d.x2, d.y2);
+}
 function setGeom(el, rec) {
   const d = rec.data, at = (k, v) => el.setAttribute(k, f1(v));
   if (d.type === 'line') { at('x1', d.x1); at('y1', d.y1); at('x2', d.x2); at('y2', d.y2); }
@@ -283,18 +311,17 @@ function setGeom(el, rec) {
     const [ln, hd] = el.children;
     for (const k of ['x1', 'y1', 'x2', 'y2']) ln.setAttribute(k, f1(d[k]));
     hd.setAttribute('d', arrowHead(d, (rec.style && rec.style.width) || 2.5));
+  } else if (d.type === 'carrow') {                                // the arc's path, then the head along its end tangent
+    const [sh, hd] = el.children;
+    sh.setAttribute('d', arcD(d));
+    hd.setAttribute('d', arrowHead(d, (rec.style && rec.style.width) || 2.5));
   } else if (d.type === 'rect' || d.type === 'triangle') el.setAttribute('points', d.points.map((q) => f1(q[0]) + ',' + f1(q[1])).join(' '));
   else if (d.type === 'circle') { at('cx', d.cx); at('cy', d.cy); at('r', d.r); }
   else if (d.type === 'ellipse') {                                 // a turned ellipse: rotate(angle cx cy), none at 0
     at('cx', d.cx); at('cy', d.cy); at('rx', d.rx); at('ry', d.ry);
     if (d.angle) el.setAttribute('transform', `rotate(${f1(d.angle)} ${f1(d.cx)} ${f1(d.cy)})`); else el.removeAttribute('transform');
   }
-  else if (d.type === 'arc') {                                     // M start A r r 0 large sweep end; in a line: straight
-    const g = arcGeom(d), p = (x, y) => f1(x) + ' ' + f1(y);
-    el.setAttribute('d', g
-      ? 'M' + p(d.x1, d.y1) + 'A' + f1(g.r) + ' ' + f1(g.r) + ' 0 ' + (Math.abs(g.sweep) > Math.PI ? 1 : 0) + ' ' + (g.sweep > 0 ? 1 : 0) + ' ' + p(d.x2, d.y2)
-      : 'M' + p(d.x1, d.y1) + 'L' + p(d.xm, d.ym) + 'L' + p(d.x2, d.y2));
-  }
+  else if (d.type === 'arc') el.setAttribute('d', arcD(d));
   else if (d.type === 'parabola') {                                // M start Q control end
     const p = (x, y) => f1(x) + ' ' + f1(y);
     el.setAttribute('d', 'M' + p(d.x1, d.y1) + 'Q' + p(d.cx, d.cy) + ' ' + p(d.x2, d.y2));
@@ -307,10 +334,10 @@ function makeEl(rec) {
   styleEl(el, rec);
   if (shape) {
     el.dataset.type = rec.data.type;
-    if (rec.data.type === 'arrow') {
+    if (rec.data.type === 'arrow' || rec.data.type === 'carrow') {   // the shaft (a line, or the arc's path), then the head
       const hd = document.createElementNS(SVGNS, 'path');
       hd.setAttribute('class', 'head'); hd.setAttribute('stroke-dasharray', 'none');
-      el.append(document.createElementNS(SVGNS, 'line'), hd);
+      el.append(document.createElementNS(SVGNS, rec.data.type === 'arrow' ? 'line' : 'path'), hd);
     }
     setGeom(el, rec);
   } else el.setAttribute('d', dOf(rec));
@@ -597,9 +624,15 @@ function kasa(raw) {
 }
 // arc: an open stroke that sits on one circle (the Kasa fit above, k): every point within 6% of the size from the
 // circle, the radius at most 3 x the size, the end further than 10% of the size from the start, and 25 to 330 degrees
-// swept the way the stroke travels (the raw point half way along its length, against the chord, gives that way)
-function arcOf(raw, A, Z, size, k = kasa(raw)) {
-  if (dist(A, Z) <= 0.1 * size) return null;                       // closed: the closed test's
+// swept the way the stroke travels (the raw point half way along its length, against the chord, gives that way).
+// arcFit (pw-v4x): the arc branch's whole fit on any run of points (the whole stroke, or a curved arrow's shaft), the
+// size being that run's own box diagonal; the arc's data with the ends and the middle moved onto the circle, or null.
+// k: the run's Kasa fit when the caller has it already
+export function arcFit(raw, k) {
+  if (!raw || raw.length < 3) return null;
+  const bb = bbox(raw), size = Math.hypot(bb[2] - bb[0], bb[3] - bb[1]), A = raw[0], Z = raw[raw.length - 1];
+  if (!(size > 0) || dist(A, Z) <= 0.1 * size) return null;        // closed: the closed test's
+  if (k === undefined) k = kasa(raw);
   if (!k) return null;
   const n = raw.length, { ox, oy, r } = k;
   if (r > 3 * size) return null;                                   // flatter: a line or freehand
@@ -719,7 +752,21 @@ export function tipIndex(raw) {
   }
   return best;
 }
-// in this order: arrow, line, parabola, arc, then closed: triangle, rect, circle or ellipse; null = stays freehand.
+// the arrow's head rules (round 2, shared with the curved arrow): the tail (the stroke from the tip on) measured from the tip
+// against the unit direction u the shaft arrives in; L = the shaft's chord. Its path 0.08 to 1.2 x L, it comes back on BOTH
+// sides of u by need = max(3, 4% of L) at least, and back along u by need to 0.6 x L
+function headOk(tail, tip, u, L) {
+  const tl = polyLen(tail);
+  if (tl < 0.08 * L || tl > 1.2 * L) return false;
+  let left = 0, right = 0, backMax = 0;
+  for (const q of tail) {
+    const qx = q[0] - tip[0], qy = q[1] - tip[1], lat = u[0] * qy - u[1] * qx, along = u[0] * qx + u[1] * qy;
+    left = Math.max(left, lat); right = Math.max(right, -lat); backMax = Math.max(backMax, -along);
+  }
+  const need = Math.max(3, 0.04 * L);
+  return left >= need && right >= need && backMax >= need && backMax <= 0.6 * L;
+}
+// in this order: arrow, curved arrow, line, parabola, arc, then closed: triangle, rect, circle or ellipse; null = stays freehand.
 // A parabola leaves its two fit numbers in FIT (lastStroke().fit); every other answer leaves FIT null
 export function classify(raw) {
   FIT = null;
@@ -731,27 +778,23 @@ export function classify(raw) {
   // back on both sides of the shaft (the V of the head)
   const ti = tipIndex(raw), shaft = ti < 0 ? 0 : dist(A, raw[ti]);
   if (ti >= 0 && shaft >= SNAP_MIN) {
-    const tip = raw[ti], tail = raw.slice(ti), tl = polyLen(tail);
-    if (tl >= 0.08 * shaft && tl <= 1.2 * shaft && straight(raw.slice(0, ti + 1), A, tip, 0.06)) {
-      const ux = (tip[0] - A[0]) / shaft, uy = (tip[1] - A[1]) / shaft;
-      let left = 0, right = 0, backMax = 0;
-      for (const q of tail) {
-        const qx = q[0] - tip[0], qy = q[1] - tip[1], lat = ux * qy - uy * qx, along = ux * qx + uy * qy;
-        left = Math.max(left, lat); right = Math.max(right, -lat); backMax = Math.max(backMax, -along);
-      }
-      const need = Math.max(3, 0.04 * shaft);
-      if (left >= need && right >= need && backMax >= need && backMax <= 0.6 * shaft) {
-        return { type: 'arrow', x1: r1(A[0]), y1: r1(A[1]), x2: r1(tip[0]), y2: r1(tip[1]) };
-      }
+    const tip = raw[ti], tail = raw.slice(ti);
+    if (straight(raw.slice(0, ti + 1), A, tip, 0.06) && headOk(tail, tip, [(tip[0] - A[0]) / shaft, (tip[1] - A[1]) / shaft], shaft)) {
+      return { type: 'arrow', x1: r1(A[0]), y1: r1(A[1]), x2: r1(tip[0]), y2: r1(tip[1]) };
     }
+    // curved arrow (pw-v4x): the shaft up to the tip fits an arc (arcFit, the arc's own rules) and the tail passes the same
+    // head rules, measured from the arc's end against its end tangent (the fitted arc's own, not the last raw points,
+    // which bend into the head); the arc's end is the tip
+    const a = arcFit(raw.slice(0, ti + 1)), g = a && arcGeom(a);
+    if (g && headOk(tail, [a.x2, a.y2], g.te, shaft)) return { ...a, type: 'carrow' };
   }
   // line: every point close to the chord
   if (straight(raw, A, Z, 0.06)) return { type: 'line', x1: r1(A[0]), y1: r1(A[1]), x2: r1(Z[0]), y2: r1(Z[1]) };
   // parabola: open, one turn, and a better fit than the arc's (parabolaOf above)
   const k = kasa(raw), par = parabolaOf(raw, A, Z, size, k);
   if (par) { FIT = { p: r1(par.p), a: Number.isFinite(par.a) ? r1(par.a) : null }; return par.shape; }
-  // arc: open, and on one circle (arcOf above)
-  const arc = arcOf(raw, A, Z, size, k);
+  // arc: open, and on one circle (arcFit above)
+  const arc = arcFit(raw, k);
   if (arc) return arc;
   // closed: the end (or, for an overshoot, the point nearest the start in the last 30%) within 10% of the size
   let ci = raw.length - 1, cd = Infinity;
@@ -793,7 +836,7 @@ export function handles(rec) {
     const tu = d.type === 'ellipse' ? d.angle || 0 : 0;                                     // a turned ellipse: turned too
     return [[d.cx, d.cy - ry], [d.cx + rx, d.cy], [d.cx, d.cy + ry], [d.cx - rx, d.cy]].map((q) => turn(q, c, tu));   // N, E, S, W
   }
-  if (d.type === 'arc') return [[d.x1, d.y1], [d.xm, d.ym], [d.x2, d.y2]];                  // start, middle, end
+  if (d.type === 'arc' || d.type === 'carrow') return [[d.x1, d.y1], [d.xm, d.ym], [d.x2, d.y2]];   // start, middle, end (a curved arrow's end: its tip)
   if (d.type === 'parabola') return [[d.x1, d.y1], qbez(d, 0.5), [d.x2, d.y2]];           // start, the curve's middle M, end
   return [];
 }
@@ -822,7 +865,7 @@ function dragHandle(rec, h, x, y) {
   else if (d.type === 'ellipse') {                                 // the centre holds; N and S set the height, E and W the width
     const [lx, ly] = turn([x, y], [d.cx, d.cy], -(d.angle || 0));   // a turned ellipse: in its own frame
     if (h % 2) d.rx = r1(Math.max(2, Math.abs(lx - d.cx))); else d.ry = r1(Math.max(2, Math.abs(ly - d.cy)));
-  } else if (d.type === 'arc') {                                   // only that point moves: the arc is the circle through the three
+  } else if (d.type === 'arc' || d.type === 'carrow') {           // only that point moves: the arc is the circle through the three (a head re-aims itself)
     const k = ['1', 'm', '2'][h];
     d['x' + k] = r1(x); d['y' + k] = r1(y);
   } else if (d.type === 'parabola') {                              // an end moves alone (the control holds); the middle M' sets
@@ -868,7 +911,7 @@ function xform(rec, f, s, rot) {
   if (rec.kind !== 'shape') nd = { ...d, points: d.points.map(P) };
   else if (d.type === 'line' || d.type === 'arrow') { const a = P([d.x1, d.y1]), b = P([d.x2, d.y2]); nd = { ...d, x1: a[0], y1: a[1], x2: b[0], y2: b[1] }; }
   else if (d.type === 'rect' || d.type === 'triangle') nd = { ...d, points: d.points.map(P) };
-  else if (d.type === 'arc') {
+  else if (d.type === 'arc' || d.type === 'carrow') {              // a curved arrow's head follows its new end tangent
     const a = P([d.x1, d.y1]), m = P([d.xm, d.ym]), z = P([d.x2, d.y2]);
     nd = { ...d, x1: a[0], y1: a[1], xm: m[0], ym: m[1], x2: z[0], y2: z[1] };
   } else if (d.type === 'parabola') {                              // a Bezier maps through its three points
@@ -1211,6 +1254,7 @@ function snapNow() {
   if (!shape) return;                                              // stays freehand
   const hl = g.rec.kind === 'highlighter';
   if (hl && shape.type === 'arrow') shape = { type: 'line', x1: shape.x1, y1: shape.y1, x2: shape.x2, y2: shape.y2 };   // no highlighter arrows
+  if (hl && shape.type === 'carrow') shape = { ...shape, type: 'arc' };                    // ... curved ones neither: the shaft's arc
   // a highlighter shape keeps the highlighter's look (opacity under 1: it stays in its .hlo group)
   const style = hl ? { colour: g.rec.style.colour, width: g.rec.style.width, dash: 'solid', opacity: g.rec.style.opacity } : g.rec.style;
   const d = data(g.page), rec = { ...g.rec, kind: 'shape', style, data: shape }, el = makeEl(rec);
