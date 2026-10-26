@@ -431,7 +431,7 @@ try:
         # 1. page 2's menu: Bookmark, right after the paper items; tap it
         items = page_menu(2)
         check("page 2's menu has 'Bookmark' right after the paper items (Lined), before 'Bin this note'",
-              "Bookmark" in items and items.index("Bookmark") == items.index("Lined, 8 mm") + 1 and items.index("Bin this note") == items.index("Bookmark") + 1
+              "Bookmark" in items and items.index("Bookmark") == items.index("Lined") + 1 and items.index("Bin this note") == items.index("Bookmark") + 1
               and "Remove bookmark" not in items, items)
         u0, r0 = U4(), R4()
         menu_click(pg, "Bookmark"); idle(pg)
@@ -560,9 +560,9 @@ try:
         # ------------------------------------------------------------ 8. cache
         group[0] = "cache"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v4t" not in keys:
+        if "pw-v4u" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v4t", "pw-v4t" in keys, keys)
+        check("cache is pw-v4u", "pw-v4u" in keys, keys)
         sw_src = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("sw.js lists vendor/jspdf.umd.min.js", "./vendor/jspdf.umd.min.js" in sw_src)
         ctx.close()

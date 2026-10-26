@@ -502,7 +502,7 @@ function paperMenu(anchor) {
     { head: 'Paper' },
     { label: 'Blank', on: p.background === 'blank', keep: true, fn: () => ask('background', 'blank') },
     { label: 'Grid, 1 cm squares', on: p.background === 'grid', keep: true, fn: () => ask('background', 'grid') },
-    { label: 'Lined, 8 mm', on: p.background === 'lined', keep: true, fn: () => ask('background', 'lined') },
+    { label: 'Lined', on: p.background === 'lined', keep: true, fn: () => ask('background', 'lined') },
     p.id ? { label: p.bookmark ? 'Remove bookmark' : 'Bookmark', fn: () => setBookmark(p.id, !p.bookmark) } : null,
     { head: 'Note' },
     { label: 'Bin this note', fn: () => binThing('note', S.openNote) }]);
