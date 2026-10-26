@@ -11,7 +11,7 @@
 // jump to a page stops the glide at once.
 // A finger held still for 500 ms on the desk (pw-v4k) stops that finger's pan and asks the ink hook for the hold
 // menu (Paste); a second finger, a move of more than 6 px, the lift or the pen cancels it. The pen button's
-// contextmenu never opens a menu.
+// contextmenu never opens a menu; since pw-v4v it flips between Select and the last ink tool.
 
 export const CM = 96 / 2.54;                 // 1 cm at 96 px per inch
 export const A4 = { w: 794, h: 1123 };       // 21 x 29.7 cm at zoom 1
@@ -23,7 +23,7 @@ const ZMIN = 0.2, ZMAX = 4, MARGIN = 24, GAP = 24, BELOW = 90;   // BELOW: room 
 const SVGNS = 'http://www.w3.org/2000/svg';
 const FLICK = 0.25, STOP = 0.02, DECAY = 0.95, FRAME = 1000 / 60, WINDOW = 100;   // glide: px per ms, per 16.7 ms, ms
 
-let desk, stack, addBelow, onCurrent = () => {}, onSheets = () => {}, ink = null;
+let desk, stack, addBelow, onCurrent = () => {}, onSheets = () => {}, onPenButton = () => {}, ink = null;
 const V = { x: 0, y: 0, z: 1 };
 const L = { tops: [], sizes: [], ids: [], w: A4.w, h: 0 };
 let R = null;        // the desk's place on screen, refreshed at every pen-down and resize
@@ -237,6 +237,7 @@ export function initPage(els) {
   if (els.onCurrent) onCurrent = els.onCurrent;
   if (els.onSheets) onSheets = els.onSheets;
   if (els.ink) ink = els.ink;                       // { down(e), move(events), up(e, cancelled), hover(e), fingerTap(cx, cy), holdMenu(cx, cy) }
+  if (els.onPenButton) onPenButton = els.onPenButton;   // the pen button's contextmenu on the desk (pw-v4v): app.js flips the tool
   const touches = new Map();
   let pinch = null, drag = null, penSeen = -1e9, inkId = null, chord = false, holdT = 0;
   const now = () => performance.now();
@@ -301,7 +302,7 @@ export function initPage(els) {
     stopGlide(); settle(); unscroll();                                     // any touch, pen or click holds the stack where it is
     if (e.pointerType === 'pen' || e.pointerType === 'mouse') {           // the S Pen and the mouse draw
       if (e.pointerType === 'pen') { penSeen = performance.now(); cancelHold(); }
-      if (e.button > 0 && e.button !== 2) return;                         // button 2: the pen button / right mouse (a grab)
+      if (e.button > 0 && e.button !== 2) return;                         // button 2: the pen button / right mouse (ink.down turns it away)
       chord = false;
       inkDown(e);
       return;
@@ -377,10 +378,14 @@ export function initPage(els) {
     if (e.ctrlKey) zoomAt(pt(e), Math.exp(-e.deltaY * 0.0025));
     else { pinned = null; clampView(); V.x -= e.shiftKey ? e.deltaY : e.deltaX; V.y -= e.shiftKey ? 0 : e.deltaY; request(); }
   }, { passive: false });
-  // the S Pen's button on her tablet arrives only as this contextmenu, once per press: no menu, and it does nothing
+  // the S Pen's button on her tablet arrives only as this contextmenu, once per press: no menu, and (pw-v4v) it flips
+  // the tool between Select and the last ink tool (app.js, onPenButton). A finger's long press never flips (its
+  // contextmenu says touch, or a finger is still down), nor does a press while the pen is on the paper
   desk.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     unscroll();
+    if (e.pointerType === 'touch' || touches.size || drag || inkId !== null) return;
+    onPenButton(e);
   });
   window.addEventListener('resize', () => { R = null; stopGlide(); if (L.tops.length) relayout(); });
   desk.addEventListener('scroll', () => { unscroll(); R = null; }, { passive: true });   // cannot fire with overflow: clip; a fallback only

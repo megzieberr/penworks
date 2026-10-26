@@ -10,14 +10,17 @@
 // opaque and the group's opacity makes them see-through, so going over a spot again stays one flat colour.
 // Storage goes through js/store-local.js only.
 // Part B: hold the pen still at the end of a pen stroke and it snaps into a line, arrow, arc, triangle, rect,
-// circle or ellipse (SVG primitives); with the pen tool a shape's handles can be grabbed and dragged; the restyle
+// circle or ellipse (SVG primitives); with the select tool a shape's handles can be grabbed and dragged; the restyle
 // tool gives strokes the restyle colour and the pen's (or the highlighter's) width, dash or opacity; rectangle
 // select moves, resizes, copies, deletes and (from the tray) recolours or restyles. Every one of these is one
 // step on the note's undo stack.
 // A held highlighter stroke snaps too (never to an arrow): a shape whose style.opacity is under 1 is a
 // highlighter-born shape and lives in the highlighter layer (inHl below is that one rule).
-// Shape handles (pw-v4e): with the pen tool, the pen landing within reach of an end point, corner or compass point
-// grabs it and drags it, button or no button; anywhere else the pen draws. The pen button changes nothing.
+// Shape handles (pw-v4v, her ruling 26 Oct: "I want the drag in the select button rather"): the plain pen never grabs,
+// it always draws. With the SELECT tool, a pen landing within reach of an end point, corner or compass point of any shape
+// on the page grabs it and drags it (after the selection's own turn ring and corners, before a move inside the box); a grab
+// that moves under 4 px on screen is a tap and selects as any select tap does (that shape when nothing else wins). The pen button (a contextmenu on the desk, page.js)
+// flips between Select and the last ink tool.
 // Arc snap (pw-v4f): an open curve held still snaps into a circular arc, data { type: 'arc', x1, y1, xm, ym, x2, y2 }
 // (start, the point half way round, end); its three handles move one point each, the arc is the circle through them.
 // Select turns (pw-v4g): a ring above the selection box turns the selection about the box's centre (snapping to
@@ -58,7 +61,7 @@ const HOLD_PX = 4;               // snap: "still" means within 4 px on screen of
 const SNAP_MIN = 30;             // snap: a stroke shorter than this (page px) never snaps
 const SNAP_ANIM = 150;           // snap: the soft cross-fade, ms
 export const GRAB = 12;          // selection corners: px on screen (12 px at zoom 1)
-export const HANDLE_REACH = 20;  // shape handles (pen tool): px on screen (20 px at zoom 1), a pen tip needs room
+export const HANDLE_REACH = 20;  // shape handles (select tool): px on screen (20 px at zoom 1), a pen tip needs room
 const SEL_BLUE = '#2F4BB8';      // the selection box (the paper is white in both modes)
 
 const P = new Map();             // page id -> { strokes (by seq), byId, svg, hl, pen, hlo (opacity -> group), els (id -> path), w, h }
@@ -104,7 +107,8 @@ export function setTool(tool, style) {
   if (tool === 'pen' || tool === 'highlighter') T.lastInk = tool;   // the overlap tie-break (topAt) follows it
 }
 export function setStyles(pen, highlighter, restyle) { ST.pen = { ...pen }; ST.highlighter = { ...highlighter }; ST.restyle = restyle ? { ...restyle } : null; }
-export function tool() { return { tool: T.tool, style: { ...T.style } }; }
+export function tool() { return { tool: T.tool, lastInk: T.lastInk, style: { ...T.style } }; }
+export function busy() { return !!G; }   // a gesture is running (the pen button flip waits for the lift)
 
 // ---------------------------------------------------------------- the model
 function data(id) {
@@ -746,7 +750,7 @@ export function classify(raw) {
   return { type: 'circle', cx: r1(cx), cy: r1(cy), r: r1((RX + RY) / 2) };
 }
 
-// ---------------------------------------------------------------- shape handles (grab with the pen tool)
+// ---------------------------------------------------------------- shape handles (grab with the select tool)
 export function handles(rec) {
   const d = rec.data || {};
   if (d.type === 'line' || d.type === 'arrow') return [[d.x1, d.y1], [d.x2, d.y2]];
@@ -803,12 +807,21 @@ function showHandle(cx, cy) {
 function hideHandle() { if (hring) hring.hidden = true; }
 // the S Pen's side button (the barrel button) or the right mouse button: bit 2 in buttons, button 2 on a press
 const barrel = (e) => !!(e.buttons & 2) || e.button === 2;
-// the pen hovering (or a mouse moving), button or not, with the pen tool: a small ring on a handle within reach,
-// meaning "a touch here grabs this point"; out of reach, no ring
+// the selection's own grips at page point `at` (page at.id): 'rot' on its turn ring, a corner index 0..3, else null
+function selGrip(at, z) {
+  if (!SEL || SEL.page !== at.id || !SEL.box) return null;
+  const reach = GRAB / z;
+  if (SEL.rot && Math.hypot(SEL.rot[0] - at.x, SEL.rot[1] - at.y) <= reach) return 'rot';
+  const k = selCorners(SEL.box).findIndex((q) => Math.hypot(q[0] - at.x, q[1] - at.y) <= reach);
+  return k >= 0 ? k : null;
+}
+// the pen hovering (or a mouse moving), button or not, with the select tool: a small ring on a handle within reach,
+// meaning "a touch here grabs this point"; out of reach, or where the selection's ring or a corner would win, no ring.
+// The pen tool shows nothing: it only draws
 function hover(e) {
-  if (T.tool !== 'pen' || G) { hideHandle(); return; }
+  if (T.tool !== 'select' || G) { hideHandle(); return; }
   const at = pageAt(e.clientX, e.clientY), z = view().z;
-  const h = at && handleAt(at.id, at.x, at.y, HANDLE_REACH / z);
+  const h = at && selGrip(at, z) === null && handleAt(at.id, at.x, at.y, HANDLE_REACH / z);
   if (!h) { hideHandle(); return; }
   showHandle(e.clientX + (h.at[0] - at.x) * z, e.clientY + (h.at[1] - at.y) * z);
 }
@@ -1179,24 +1192,15 @@ function snapNow() {
 }
 
 function down(e) {
-  if (e.button === 2 && T.tool !== 'pen') return false;            // the right button / pen button: only the pen tool uses it
+  if (e.button === 2) return false;                                // the right button / pen button press: never a gesture (page.js flips the tool on its contextmenu)
+  if (T.tool === 'pen' && barrel(e)) return false;                 // the pen tip down with the button held: a harmless miss, as before
   const at = pageAt(e.clientX, e.clientY);
   if (!at) { if (T.tool === 'select') clearSelection(); return false; }
   const d = data(at.id);
   if (!d.svg) return false;
   hideHandle();
   const z = view().z;
-  if (T.tool === 'pen') {                                          // within reach of a shape handle: grab it, button or not
-    const h = handleAt(at.id, at.x, at.y, HANDLE_REACH / z);
-    if (h) {
-      G = { kind: 'grab', page: at.id, index: at.index, rec: h.rec, h: h.h, el: d.els.get(h.rec.id), now: h.rec, z,
-            off: [h.at[0] - at.x, h.at[1] - at.y] };                   // the handle keeps its offset from the pen: no jump
-      showHandle(e.clientX + (h.at[0] - at.x) * z, e.clientY + (h.at[1] - at.y) * z);
-      return true;
-    }
-    if (barrel(e)) return false;                                   // the button away from any handle: a harmless miss
-  }                                                                // anywhere else the pen draws
-  if (T.tool === 'pen' || T.tool === 'highlighter') {
+  if (T.tool === 'pen' || T.tool === 'highlighter') {              // the pen and the highlighter always draw, even on a shape's end
     const s = T.style;
     const style = T.tool === 'pen'
       ? { colour: s.colour, width: s.width, dash: s.dash || 'solid', opacity: 1 }
@@ -1214,20 +1218,28 @@ function down(e) {
     eraseTo(e.clientX, e.clientY);
     return true;
   }
-  if (T.tool === 'select') {
+  if (T.tool === 'select') {                                       // first match wins: ring, corner, shape handle, inside the box, a new box
+    const grip = selGrip(at, z);
+    if (grip === 'rot') {                                          // the ring: turn about the box's centre
+      const b = SEL.box, c = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
+      G = { kind: 'srotate', index: at.index, page: at.id, c, a0: Math.atan2(at.y - c[1], at.x - c[0]), a: 0, recs: selRecs() };
+      return true;
+    }
+    if (grip !== null) {                                           // a corner: scale about the opposite one
+      const q = selCorners(SEL.box), o = q[(grip + 2) % 4], c = q[grip];
+      G = { kind: 'sresize', index: at.index, page: at.id, o, c, s: 1, recs: selRecs() };
+      return true;
+    }
+    const h = handleAt(at.id, at.x, at.y, HANDLE_REACH / z);       // a shape's handle within reach, on any shape of the page
+    if (h) {
+      clearSelection();                                            // no box or chips on a shape being reshaped
+      G = { kind: 'grab', page: at.id, index: at.index, rec: h.rec, h: h.h, el: d.els.get(h.rec.id), now: h.rec, z,
+            off: [h.at[0] - at.x, h.at[1] - at.y], p0: [at.x, at.y], far: 0 };   // the handle keeps its offset from the pen: no jump
+      showHandle(e.clientX + (h.at[0] - at.x) * z, e.clientY + (h.at[1] - at.y) * z);
+      return true;
+    }
     if (SEL && SEL.page === at.id) {
-      const b = SEL.box, reach = GRAB / z;
-      if (SEL.rot && Math.hypot(SEL.rot[0] - at.x, SEL.rot[1] - at.y) <= reach) {   // the ring: turn about the box's centre
-        const c = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
-        G = { kind: 'srotate', index: at.index, page: at.id, c, a0: Math.atan2(at.y - c[1], at.x - c[0]), a: 0, recs: selRecs() };
-        return true;
-      }
-      const k = selCorners(b).findIndex((q) => Math.hypot(q[0] - at.x, q[1] - at.y) <= reach);
-      if (k >= 0) {                                                // a corner: scale about the opposite one
-        const o = selCorners(b)[(k + 2) % 4], c = selCorners(b)[k];
-        G = { kind: 'sresize', index: at.index, page: at.id, o, c, s: 1, recs: selRecs() };
-        return true;
-      }
+      const b = SEL.box;
       if (at.x >= b[0] && at.x <= b[2] && at.y >= b[1] && at.y <= b[3]) {   // inside: move
         G = { kind: 'smove', index: at.index, page: at.id, p0: [at.x, at.y], dx: 0, dy: 0, recs: selRecs() };
         return true;
@@ -1287,6 +1299,10 @@ function move(events) {
   if (G.kind === 'snapped') return;                                // a snapped shape stays put until the pen lifts
   if (G.kind === 'grab') {
     const [x, y] = pagePoint(G.index, ev.clientX, ev.clientY);
+    for (const e of events) {                                      // how far the pen ever got from where it landed (the tap rule)
+      const [qx, qy] = pagePoint(G.index, e.clientX, e.clientY);
+      G.far = Math.max(G.far, Math.hypot(qx - G.p0[0], qy - G.p0[1]));
+    }
     G.now = dragHandle(G.rec, G.h, x + G.off[0], y + G.off[1]);
     if (G.el) setGeom(G.el, G.now);
     showHandle(ev.clientX + G.off[0] * G.z, ev.clientY + G.off[1] * G.z);
@@ -1339,6 +1355,12 @@ function up(e, cancelled) {
   if (g.kind === 'grab') {
     hideHandle();
     const moved = JSON.stringify(g.now.data) !== JSON.stringify(g.rec.data);
+    if (e && Number.isFinite(e.clientX)) { const [qx, qy] = pagePoint(g.index, e.clientX, e.clientY); g.far = Math.max(g.far, Math.hypot(qx - g.p0[0], qy - g.p0[1])); }
+    if (!cancelled && g.far * g.z < 4) {                           // a tap on a handle (under 4 px on screen): no change, no undo step; it
+      if (g.el) setGeom(g.el, g.rec);                              // selects as any select tap does (topAt, so the pw-v4m tie-break holds),
+      makeSel(g.page, [topAt(g.page, g.p0[0], g.p0[1], GRAB / g.z) || g.rec.id]);   // else the shape whose handle it was
+      return;
+    }
     if (cancelled || !moved) { if (g.el) setGeom(g.el, g.rec); return; }
     doOp(changeOp([{ page: g.page, removed: [g.rec], added: [g.now] }]));
     return;

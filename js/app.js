@@ -1092,6 +1092,22 @@ async function enter(user) {
   await load();
 }
 
+// ---------------------------------------------------------------- the pen button (pw-v4v)
+// Her S Pen's button reaches Chrome only as one contextmenu on the desk per press (page.js passes it here, never a
+// finger's). It flips the tool: Select from anything else, and from Select back to the last ink tool (pen or
+// highlighter), through the tray, exactly like a tap on the tray button. It does nothing while the pen is on the paper,
+// or while the page list (tick mode included), a menu (the Paste menu too), a tray panel or a dialog is open.
+let rightOverOpen = false;
+function overlayOpen() {
+  return S.listOpen || !!S.tick || !$('menu').hidden || !!document.querySelector('[role="dialog"]:not([hidden])');
+}
+function penButton() {
+  const blocked = rightOverOpen; rightOverOpen = false;
+  if (blocked || overlayOpen() || ink.busy()) return;
+  const t = ink.tool();
+  chooseTool(t.tool === 'select' ? t.lastInk : 'select');
+}
+
 function wire() {
   applyTheme();
   darkQuery.addEventListener('change', applyTheme);
@@ -1105,10 +1121,13 @@ function wire() {
   });
   ink.initInk({ doOp, desk: $('desk'), onChange: (pageId) => { if (S.listOpen) refreshThumb(pageId); },
                 toast, openMenuAt: (x, y, items) => openMenu({ x, y }, items), selectTool: () => chooseTool('select') });
+  // a right mouse press that lands while something is open (the press itself closes it before its contextmenu):
+  // remembered here, before the tray's and the menu's own closers run, so that contextmenu does not flip the tool
+  document.addEventListener('pointerdown', (e) => { rightOverOpen = e.button === 2 && overlayOpen(); }, true);   // any other press forgets it
   initTray();
   initPage({ desk: $('desk'), stack: $('stack'), addBelow: $('addBelow'),
              onCurrent: (i) => { S.cur = Math.max(0, i); updateCount(); ink.clearSelection(); },   // a new page: the selection clears
-             onSheets: ink.attach, ink: ink.hook });
+             onSheets: ink.attach, ink: ink.hook, onPenButton: penButton });
   if (new URLSearchParams(location.search).get('dbg') === '1') import('./dbg.js').then((m) => m.startDbg($('desk'), ink));   // the pen readout, ?dbg=1 only
   $('loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
