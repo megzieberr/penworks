@@ -179,7 +179,7 @@ try:
         check("reload keeps all three", len(paths(pg, 2)) == 3 and len(paths(pg, 1)) == 0 and len(paths(pg, 3)) == 0, len(paths(pg, 2)))
         check("undo is empty after a reload", pg.locator("#undoBtn").is_disabled())
         go_page(pg, 2)
-        pg.click("#addPageBtn"); pg.wait_for_timeout(80)
+        pg.click("#addPageBtn"); pg.click("#menu button:text-is('Page')"); pg.wait_for_timeout(80)
         new_id = pg.evaluate(PAGES_JS)[2]
         draw(pg, 3, line(200))
         check("add a page below 2, draw on it", len(pg.evaluate(PAGES_JS)) == 4 and len(paths(pg, 3)) == 1 and strokes(pg, new_id)[0]["page_id"] == new_id)
@@ -495,7 +495,7 @@ try:
         check("the eye toggles password to text and back", a == "password" and c == ["text", "Hide password"] and d == "password", [a, c, d])
         check("the eye sits inside the field", eb["x"] >= lb["x"] and eb["x"] + eb["width"] <= lb["x"] + lb["width"] and eb["y"] >= lb["y"] - 1 and eb["y"] + eb["height"] <= lb["y"] + lb["height"] + 1, [eb, lb])
         group[0] = "pwa and house rules"
-        check("cache is pw-v5e", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v5e"] or "pw-v5e" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v6a", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v6a"] or "pw-v6a" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the new files are in the offline shell", all(f in swt for f in ("./js/ink.js", "./js/store.js", "./js/tray.js")))
         pg.evaluate(SEED_JS, False); pg.reload(); ready(pg)

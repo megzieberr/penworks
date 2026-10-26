@@ -12,13 +12,17 @@ const TABLES = ['folders', 'notes', 'pages'];
 const COLS = {
   folders: 'id,owner_id,parent_id,name,colour,position,deleted_at,created_at,updated_at',
   notes: 'id,owner_id,folder_id,name,pinned,cover_path,deleted_at,created_at,updated_at',
-  pages: 'id,owner_id,note_id,position,orientation,background,bookmark,snapshot_path,snapshot_at,flagged,deleted_at,created_at,updated_at',
+  pages: 'id,owner_id,note_id,position,orientation,background,bookmark,pdf_path,pdf_page,pdf_w,pdf_h,snapshot_path,snapshot_at,flagged,deleted_at,created_at,updated_at',
 };
+// U4a: pdf_w and pdf_h exist from migration 0005 on; until it is applied every loadAll above fails on the live project.
 // the signed-in person's own row (U3c): settings.tray = the pen tray's state (js/tray.js), settings.tray_at = when it was
 // saved (newer wins across devices). pen_colours is not used: her 13 colours are code in tray.js, only their order follows her.
 const PROFILE_COLS = 'id,username,display_name,pen_colours,settings';
 // page pictures (U3b): bucket `snapshots`, private, one object per page at <owner uuid>/<page id>.webp (js/snap.js)
 const SNAP_BUCKET = 'snapshots';
+// PDFs opened into notes (U4a): bucket `imports`, private, one object per opened file at <owner uuid>/<uuid>.pdf (js/pdfin.js).
+// The app never deletes one (a deleted page leaves its PDF where it is); only the tests' clean-up does.
+const IMPORT_BUCKET = 'imports';
 // strokes (U3a): only through strokesOf and putStrokes (js/store.js calls them); owner_id defaults to auth.uid()
 const STROKE_COLS = 'id,page_id,seq,kind,style,data';
 const STROKE_KEYS = STROKE_COLS.split(',');
@@ -200,6 +204,34 @@ const liveApi = {
     if (error) throw error;
   },
 
+  // ---------------------------------------------------------------- opened PDFs (U4a, js/pdfin.js)
+  // upsert: an upload that landed but whose answer was lost goes again harmlessly (the same bytes at the same path)
+  async putImport(path, blob) {
+    const c = await client();
+    const { error } = await c.storage.from(IMPORT_BUCKET).upload(path, blob,
+      { upsert: true, contentType: 'application/pdf', cacheControl: '3600' });
+    if (error) throw error;
+  },
+  async getImport(path) {
+    const c = await client();
+    const { data, error } = await c.storage.from(IMPORT_BUCKET).download(path);
+    if (error) throw error;
+    return data;
+  },
+  async removeImports(paths) {        // the tests' clean-up only
+    const c = await client();
+    const { error } = await c.storage.from(IMPORT_BUCKET).remove(paths);
+    if (error) throw error;
+  },
+  // the live test: false while migration 0005 is not applied (the columns pdf_w, pdf_h are missing)
+  async pdfColumns() {
+    const c = await client();
+    const { error } = await c.from('pages').select('pdf_w,pdf_h').limit(1);
+    if (error && (error.code === '42703' || /pdf_w|pdf_h/.test(error.message || ''))) return false;
+    if (error) throw error;
+    return true;
+  },
+
   // ---------------------------------------------------------------- her profile row (U3c)
   async profile() {
     const c = await client(), uid = await me(c);
@@ -284,7 +316,9 @@ export const api = {
   pinNote: (id, pinned) => base.update('notes', [id], { pinned }),
 
   // pages: numbered by position inside their note
-  createPage: (r) => base.insert('pages', pick(r, ['id', 'note_id', 'position', 'orientation', 'background', 'bookmark'])),
+  // U4a: a page made from a PDF page carries pdf_path, pdf_page (1-based), pdf_w and pdf_h (that page's size in points)
+  createPage: (r) => base.insert('pages', pick(r, ['id', 'note_id', 'position', 'orientation', 'background', 'bookmark',
+    ...(r.pdf_path ? ['pdf_path', 'pdf_page', 'pdf_w', 'pdf_h'] : [])])),
   reorderPages: (pairs) => eachPos('pages', pairs),
   setPages: (ids, patch) => base.update('pages', ids, pick(patch, ['orientation', 'background'])),
   // the bookmark (U3c, a column since 0004): not an edit, the note's "last edited" stays where it was

@@ -23,7 +23,8 @@ const ZMIN = 0.2, ZMAX = 4, MARGIN = 24, GAP = 24, BELOW = 90;   // BELOW: room 
 const SVGNS = 'http://www.w3.org/2000/svg';
 const FLICK = 0.25, STOP = 0.02, DECAY = 0.95, FRAME = 1000 / 60, WINDOW = 100;   // glide: px per ms, per 16.7 ms, ms
 
-let desk, stack, addBelow, onCurrent = () => {}, onSheets = () => {}, onPenButton = () => {}, ink = null;
+let desk, stack, addBelow, onCurrent = () => {}, onSheets = () => {}, onPenButton = () => {}, onView = () => {}, ink = null;
+let viewKey = '';     // U4a: the pages on screen and the zoom, as last told to onView
 const V = { x: 0, y: 0, z: 1 };
 const L = { tops: [], sizes: [], ids: [], w: A4.w, h: 0 };
 let R = null;        // the desk's place on screen, refreshed at every pen-down and resize
@@ -32,10 +33,20 @@ let pinned = null;   // a page asked for by number (arrows, page list) stays cur
 let raf = 0;         // a frame is asked for
 let glide = null;    // { vx, vy (px per ms on screen), t } while the stack glides after a flick
 let shown = '';      // the transform last written
+let movedAt = 0;     // U4a: when a frame last moved the stack (a pan, a glide, a pinch, the wheel)
 let bgN = 0;         // unique pattern ids, one set per page
 
-export function pageSize(orientation) {
-  return orientation === 'landscape' ? { w: A4.h, h: A4.w } : { ...A4 };
+// a page's size in page px at zoom 1. `p` is the page row (or, as before U4a, just its orientation). A normal page is A4
+// in its orientation. U4a: a page made from a PDF page (pdf_w, pdf_h = that page's size in PDF points) takes the PDF
+// page's own shape, no white bars: taller than wide (or square) = the A4 portrait width, wider than tall = the A4
+// landscape width, the height by the PDF page's aspect, rounded to a whole px (an A4 PDF page is exactly an A4 page).
+export function pageSize(p) {
+  const o = typeof p === 'string' ? p : (p && p.orientation);
+  if (p && typeof p === 'object' && p.pdf_w > 0 && p.pdf_h > 0) {
+    const w = p.pdf_w > p.pdf_h ? A4.h : A4.w;
+    return { w, h: Math.max(1, Math.round(w * p.pdf_h / p.pdf_w)) };
+  }
+  return o === 'landscape' ? { w: A4.h, h: A4.w } : { ...A4 };
 }
 
 // the paper pattern as its own <svg> (also drawn into a shared page, pw-v4t)
@@ -91,12 +102,28 @@ function apply() {
   if (t !== shown) { shown = t; stack.style.transform = t; stack.dataset.zoom = V.z.toFixed(3); }
   const c = findCurrent();
   if (c !== cur) { cur = c; onCurrent(cur); }
+  tellView();
+}
+// U4a: the first and last page with any of itself on screen, and the zoom; told only when one of them changes (cheap: the
+// PDF layer (js/pdfview.js) only takes note and renders later, never inside this frame)
+function tellView() {
+  const dh = desk.clientHeight;
+  let first = -1, last = -1;
+  for (let i = 0; i < L.tops.length; i++) {
+    const a = V.y + L.tops[i] * V.z, b = a + L.sizes[i].h * V.z;
+    if (b > 0 && a < dh) { if (first < 0) first = i; last = i; }
+  }
+  const key = first + ',' + last + ',' + V.z.toFixed(3);
+  if (key === viewKey) return;
+  viewKey = key;
+  onView(first, last, V.z);
 }
 
 // moves call this; the frame does the clamp, the one transform write and the current page
 function request() { if (!raf) raf = requestAnimationFrame(frame); }
 function frame(now) {
   raf = 0;
+  movedAt = performance.now();
   if (glide) {
     const dt = Math.min(50, Math.max(0, now - glide.t)); glide.t = now;
     const x = V.x + glide.vx * dt, y = V.y + glide.vy * dt;
@@ -128,7 +155,7 @@ function clampView() {
 export function showStack(pages) {
   stack.querySelectorAll('.sheet').forEach((e) => e.remove());
   L.tops = []; L.sizes = []; L.ids = []; L.w = 0;
-  pages.forEach((p) => { const s = pageSize(p.orientation); L.sizes.push(s); L.w = Math.max(L.w, s.w); });
+  pages.forEach((p) => { const s = pageSize(p); L.sizes.push(s); L.w = Math.max(L.w, s.w); });
   if (!pages.length) L.w = A4.w;
   let y = 0;
   pages.forEach((p, i) => {
@@ -140,6 +167,7 @@ export function showStack(pages) {
     el.dataset.id = p.id; el.dataset.index = String(i + 1);
     el.dataset.orientation = p.orientation; el.dataset.bg = p.background;
     el.appendChild(bgSvg(s.w, s.h, p.background));
+    if (p.pdf_path) { el.dataset.pdf = '1'; el.appendChild(Object.assign(document.createElement('div'), { className: 'pdfLayer' })); }   // U4a: under the ink
     if (p.bookmark) el.appendChild(bookmarkTab());
     stack.insertBefore(el, addBelow);
     L.tops.push(y); L.ids.push(p.id);
@@ -148,7 +176,7 @@ export function showStack(pages) {
   addBelow.style.top = Math.max(0, y - GAP) + 22 + 'px';
   L.h = Math.max(0, y - GAP) + BELOW;
   stack.style.width = L.w + 'px'; stack.style.height = L.h + 'px';
-  cur = -1;
+  cur = -1; viewKey = '';
   if (pinned !== null && pinned >= L.tops.length) pinned = L.tops.length - 1;
   stopGlide(); settle(); clampView(); apply();
   onSheets([...stack.querySelectorAll('.sheet')]);
@@ -201,6 +229,9 @@ export function unscroll() { if (desk.scrollTop || desk.scrollLeft) { desk.scrol
 export function deskScroll() { return [desk.scrollTop, desk.scrollLeft]; }
 
 export function current() { return cur; }
+// U4a: ms since the stack last moved; the PDF layer renders only once it has been still a moment (a render never runs
+// inside a pan, a glide or a pinch, where it could cost a frame)
+export function sinceMove() { return performance.now() - movedAt; }
 export function view() { if (raf) clampView(); return { ...V }; }
 
 // screen point to page px at zoom 1. pageAt: the page under the point (or null);
@@ -238,6 +269,7 @@ export function initPage(els) {
   if (els.onSheets) onSheets = els.onSheets;
   if (els.ink) ink = els.ink;                       // { down(e), move(events), up(e, cancelled), hover(e), fingerTap(cx, cy), holdMenu(cx, cy) }
   if (els.onPenButton) onPenButton = els.onPenButton;   // the pen button's contextmenu on the desk (pw-v4v): app.js flips the tool
+  if (els.onView) onView = els.onView;                  // U4a: (first, last, zoom) of the pages on screen, for the PDF layer
   const touches = new Map();
   let pinch = null, drag = null, penSeen = -1e9, inkId = null, chord = false, holdT = 0;
   const now = () => performance.now();

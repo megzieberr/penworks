@@ -1,5 +1,5 @@
 // PenWorks page pictures (U3b). A page's picture (what Claude reads later) is a WebP of the whole page at 1x
-// (794 x 1123 page px, landscape the other way round), quality 0.8, made by app.js renderPage, kept in the private
+// (794 x 1123 page px, landscape the other way round; U4a: a PDF page its own shape, the PDF under the ink), quality 0.8, made by app.js renderPage, kept in the private
 // bucket `snapshots` at <owner uuid>/<page id>.webp, and named on the page row (pages.snapshot_path, snapshot_at).
 // The first live page's picture is the note's cover (notes.cover_path), which the note grid shows.
 //
@@ -22,6 +22,10 @@
 // that lands during the render changes updated_at first: the update finds no row and the page is due again.
 
 const QUIET_MS = 4000;
+// U4a: a page made from a PDF page shows the PDF even with no ink, so it has something to picture (Claude and the phone
+// see the paper behind the ink); renderPage draws the PDF under the ink, and fails (tried again later) while this device
+// does not have the PDF yet
+const live0 = (p) => !!(p && p.pdf_path);
 const BACKOFF = [2000, 5000, 10000, 30000];
 const LIFT_POLL = 250;
 
@@ -173,7 +177,7 @@ async function one(pid) {
   try {
     const recs = cfg.store.known(pid) ? null : await cfg.api.strokesOf([pid]);   // a page this device has not read
     const count = recs ? recs.length : cfg.ink.strokesOf(pid).length;
-    if (!count && !p.snapshot_at) { stats.skipped++; return 'skip'; }   // nothing on it and no picture to replace
+    if (!count && !p.snapshot_at && !live0(p)) { stats.skipped++; return 'skip'; }   // nothing on it and no picture to replace
     const at = await cfg.api.pageStamp(pid);
     if (!at) return 'skip';                                    // its row is not there (deleted, or not made yet)
     await idleSlot();

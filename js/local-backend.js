@@ -21,6 +21,10 @@
 // fails like a fetch while the browser is offline (the device then opens from its tree snapshot, js/treeq.js); and
 // callLog() lists every write that landed, in order, so the tests can see that a note went up before its page and a
 // page before its strokes.
+// U4a: pages carry pdf_path, pdf_page, pdf_w, pdf_h (0005's check: the two sizes both null or both above 0, else 23514).
+// The `imports` bucket is this browser's IndexedDB penworks.twin.imports (path -> Blob), so it outlives a reload like the
+// real bucket (the tests' "phone" is a second browser context, given the bytes through putImport). 50 MB at most, as
+// the bucket's file_size_limit; importsList() and importReads() are test hooks.
 
 const KEY = 'penworks.local.v2';
 const TABLES = ['folders', 'notes', 'pages'];
@@ -28,8 +32,10 @@ const DEFAULTS = {
   folders: { parent_id: null, name: '', colour: null, position: 0, deleted_at: null },
   notes: { folder_id: null, name: 'Untitled', pinned: false, cover_path: null, deleted_at: null },
   pages: { note_id: null, position: 0, orientation: 'portrait', background: 'grid', bookmark: false,
+           pdf_path: null, pdf_page: null, pdf_w: null, pdf_h: null,
            snapshot_path: null, snapshot_at: null, flagged: false, deleted_at: null },
 };
+const IMPORT_MAX = 52428800;
 const PAGE_EDIT = ['position', 'orientation', 'background'];
 const STROKE_KEYS = ['id', 'page_id', 'seq', 'kind', 'style', 'data'];
 const PROFILE = () => ({ id: 'local', username: 'local', display_name: '', pen_colours: [], settings: {},
@@ -81,6 +87,25 @@ let refuseNext = 0; // test hook: the next n writes (stroke pushes and tree writ
 function maybeRefuse(table = 'strokes') {
   if (refuseNext > 0) { refuseNext--; refuse(`new row violates row-level security policy for table "${table}"`, '42501'); }
 }
+// U4a: 0005's pages_pdf_size_check
+function pdfSize(r) {
+  const w = r.pdf_w ?? null, h = r.pdf_h ?? null;
+  if (!((w === null && h === null) || (w > 0 && h > 0))) refuse('new row for relation "pages" violates check constraint "pages_pdf_size_check"');
+}
+// U4a: the imports bucket, kept in IndexedDB
+let importDb = null, importReads = 0;
+function imports(mode, fn) {
+  importDb ||= new Promise((ok, no) => {
+    const r = indexedDB.open('penworks.twin.imports', 1);
+    r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains('objects')) r.result.createObjectStore('objects'); };
+    r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error);
+  });
+  return importDb.then((db) => new Promise((ok, no) => {
+    const t = db.transaction(['objects'], mode), out = {};
+    fn(t.objectStore('objects'), out);
+    t.oncomplete = () => ok(out); t.onerror = t.onabort = () => no(t.error);
+  }));
+}
 const calls = [];   // U3e test hook: every write that landed, in order: { call, table, ids }
 function logged(call, table, ids) { calls.push({ call, table, ids }); if (calls.length > 5000) calls.splice(0, calls.length - 5000); }
 
@@ -122,6 +147,7 @@ export const localApi = {
     if (table === 'folders') twoLevels(d, id, row.parent_id);
     if (table === 'notes' && row.folder_id && !d.folders.some((f) => f.id === row.folder_id)) refuse('That folder does not exist.');
     if (table === 'pages' && !d.notes.some((n) => n.id === row.note_id)) refuse('That note does not exist.');
+    if (table === 'pages') pdfSize(row);
     const r = { ...DEFAULTS[table], ...row, id, owner_id: 'local', created_at: row.created_at || now, updated_at: now };
     d[table].push(r);
     if (table === 'pages') touchNotes(d, [r.note_id], now);
@@ -223,6 +249,24 @@ export const localApi = {
     write(d);
   },
   async removeSnapshots(paths) { paths.forEach((p) => storage.delete(p)); },
+
+  // ---------------------------------------------------------------- opened PDFs (U4a)
+  async putImport(path, blob) {
+    maybeFail();
+    if (!(blob instanceof Blob)) refuse('Not a file');
+    if (blob.size > IMPORT_MAX) { const e = new Error('The object exceeded the maximum allowed size'); e.statusCode = '413'; throw e; }
+    await imports('readwrite', (s) => { s.put(blob, path); });
+  },
+  async getImport(path) {
+    importReads++;
+    const out = await imports('readonly', (s, o) => { s.get(path).onsuccess = (e) => { o.v = e.target.result; }; });
+    if (!out.v) { const e = new Error('Object not found'); e.statusCode = '404'; throw e; }
+    return out.v;
+  },
+  async removeImports(paths) { await imports('readwrite', (s) => { paths.forEach((p) => s.delete(p)); }); },
+  async importsList() { return (await imports('readonly', (s, o) => { s.getAllKeys().onsuccess = (e) => { o.v = e.target.result; }; })).v || []; },
+  importReads() { return importReads; },
+  async pdfColumns() { return true; },
   storageList() { return [...storage.keys()]; },                         // test hook: every path in the bucket
   snapshotReads() { return reads; },                                     // test hook: how many getSnapshot calls
 

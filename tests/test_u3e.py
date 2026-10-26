@@ -142,7 +142,7 @@ try:
         offline(pg)
         frow(pg, "U3e").click(); pg.click("#newNote"); pg.wait_for_selector("#noteView:not([hidden])"); pg.wait_for_timeout(120)
         nid = pg.evaluate("window.__pw.S.openNote")
-        pg.click("#addPageBtn"); pg.wait_for_timeout(150)
+        pg.click("#addPageBtn"); pg.click("#menu button:text-is('Page')"); pg.wait_for_timeout(150)
         pids = pg.evaluate("(n) => window.__pw.S.pages.filter(p => p.note_id === n).sort((a, b) => a.position - b.position).map(p => p.id)", nid)
         go_page(pg, 2)
         draw(pg, 2, 200); pg.wait_for_timeout(400); draw(pg, 2, 320)
@@ -230,7 +230,7 @@ try:
         group[0] = "made and deleted offline"
         open_note(pg, "Retry name")
         offline(pg)
-        pg.click("#addPageBtn"); pg.wait_for_timeout(150)
+        pg.click("#addPageBtn"); pg.click("#menu button:text-is('Page')"); pg.wait_for_timeout(150)
         pid = pg.evaluate("() => window.__pw.S.pages.filter(p => p.note_id === 'n1').sort((a, b) => a.position - b.position)[1].id")
         thumb_menu(pg, 2); menu(pg, "Delete"); close_list(pg); pg.wait_for_timeout(100)
         calls = tcalls(pg)
@@ -279,7 +279,7 @@ try:
               [tlen(pg), qlen(pg), round(dt, 2)])
         open_note(pg, "Other device")
         mark = len(calllog(pg))
-        pg.click("#addPageBtn"); pg.wait_for_timeout(60)
+        pg.click("#addPageBtn"); pg.click("#menu button:text-is('Page')"); pg.wait_for_timeout(60)
         pid = pg.evaluate("() => window.__pw.S.pages.filter(p => p.note_id === 'n1').sort((a, b) => a.position - b.position)[1].id")
         go_page(pg, 2); draw(pg, 2, 200)
         idle(pg)
@@ -320,9 +320,9 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v5e" not in keys:
+        if "pw-v6a" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v5e", "pw-v5e" in keys, keys)
+        check("cache is pw-v6a", "pw-v6a" in keys, keys)
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the shell lists ./js/treeq.js", "./js/treeq.js" in swt)
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in

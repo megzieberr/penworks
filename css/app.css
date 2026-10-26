@@ -285,6 +285,11 @@ input.rename {
 }
 .sheet svg { position: absolute; inset: 0; display: block; }
 .sheet svg.ink { pointer-events: none; overflow: hidden; }
+/* U4a: a PDF page under the ink (js/pdfview.js); its canvas fills the page, the pinch scales it with the stack */
+.sheet > .pdfLayer { position: absolute; inset: 0; overflow: hidden; pointer-events: none; border-radius: inherit; }
+.sheet > .pdfLayer > canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.paper > img.pdfThumb { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
+.card .thumb .paper > img.pdfThumb { object-fit: cover; }
 #eraserRing {
   position: absolute; left: 0; top: 0; z-index: 4; border-radius: 50%; pointer-events: none;
   border: 1.5px solid rgba(38,42,48,.45); background: rgba(255,255,255,.35); box-shadow: 0 0 0 1px rgba(255,255,255,.6);

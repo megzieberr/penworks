@@ -13,14 +13,20 @@
 // comes back to the front after a minute (refreshTree).
 // U3e: tree writes (folders, notes, pages) go up through a persistent queue (js/treeq.js), like her ink: a page or note
 // made without wifi reaches the server when wifi is back, and the device opens offline from its tree snapshot.
+// U4a: PDF in. The folder grid's "Open PDF" tile (beside "New note") makes a new note from a PDF, named after the file;
+// in an open note the bar's + opens a small menu, Page (a page below, as before) or PDF (its pages at the end). Each PDF
+// page is a page of its own shape with the PDF under her ink (js/pdfin.js reads and keeps the file, js/pdfview.js draws it).
+// Opening a PDF is not an undo step: undo never removes the PDF (her ruling 26 Oct).
 import { api } from './api.js';
-import { initPage, showStack, fit, scrollToPage, relayout, current, bookmarkTab, markSheet, bgSvg, pageSize } from './page.js';
+import { initPage, showStack, fit, scrollToPage, relayout, current, bookmarkTab, markSheet, bgSvg, pageSize, A4 } from './page.js';
 import * as ink from './ink.js';
 import * as store from './store.js';
 import { initTray, closePanel, trayState, chooseTool, localTray, adopt as adoptTray } from './tray.js';
 import * as pics from './snap.js';
 import * as live from './live.js';
 import * as treeq from './treeq.js';
+import * as pdfin from './pdfin.js';
+import * as pdfview from './pdfview.js';
 
 const $ = (id) => document.getElementById(id);
 const S = { folders: [], notes: [], pages: [], sel: 'loose', openNote: null, cur: 0, fold: {}, renaming: null,
@@ -77,6 +83,7 @@ const SVG_BIN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stro
 const SVG_CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>';
 const SVG_PIN = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M14.5 2.5l7 7-2.2.7-3.6 3.6.6 4.6-1.6 1.6-4.3-4.3L5 21l-1-1 5.3-5.4L5 10.3l1.6-1.6 4.6.6 3.6-3.6z"/></svg>';
 const SVG_PLUS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
+const SVG_DOC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 15.5h6M9 19h4"/></svg>';
 
 let toastT = null;
 function toast(msg, ms = 2600) {
@@ -166,6 +173,50 @@ function createNote(fid) {
   save('createNote', n);
   save('createPage', p);
   openNote(n.id);
+}
+// U4a (js/pdfin.js): the note a PDF makes, named after the file; it has no page of its own, its pages are the PDF's
+function makePdfNote(fid, name) {
+  const t = nowIso();
+  const n = { id: uuid(), folder_id: fid || null, name, pinned: false, cover_path: null, deleted_at: null, created_at: t, updated_at: t };
+  S.notes.push(n);
+  save('createNote', n);
+  return n.id;
+}
+// one page row per PDF page, after the note's last page, through save() (offline-safe); not an undo step. A new note opens
+// on its first page; in the open note the stack shows them and goes to the first of them.
+function addPdfPages(nid, specs, isNew) {
+  if (!note(nid)) return [];
+  const t = nowIso(), start = nextPos(S.pages.filter((p) => p.note_id === nid && !p.deleted_at));
+  const rows = specs.map((sp, k) => ({ id: uuid(), note_id: nid, position: start + k, orientation: sp.orientation, background: 'blank',
+    bookmark: false, pdf_path: sp.pdf_path, pdf_page: sp.pdf_page, pdf_w: sp.pdf_w, pdf_h: sp.pdf_h,
+    snapshot_path: null, snapshot_at: null, deleted_at: null, created_at: t, updated_at: t }));
+  for (const r of rows) { S.pages.push(r); save('createPage', r); }
+  touchNote(nid);
+  pics.syncCover(nid);
+  if (rows.length && isNew) pics.changed(rows[0].id);      // U3b: the first page's picture (the PDF) becomes the note's cover
+  if (isNew) openNote(nid, 0);
+  else if (S.openNote === nid) { const i = pagesOf(nid).indexOf(rows[0]); render(); if (i >= 0) scrollToPage(i); }
+  else render();
+  return rows.map((r) => r.id);
+}
+// the file picker for a PDF: target = { folderId } (the folder view) or { noteId } (the open note)
+let pdfTarget = null;
+function pickPdf(target) {
+  pdfTarget = target;
+  const inp = $('pdfInput');
+  inp.value = '';
+  inp.click();
+}
+async function pdfPicked() {
+  const inp = $('pdfInput'), file = inp.files && inp.files[0];
+  const target = pdfTarget || (S.openNote ? { noteId: S.openNote } : { folderId: selKey() });
+  pdfTarget = null;
+  inp.value = '';
+  if (file) await pdfin.importPdf(file, target);
+}
+// the open note's + (the note bar): Page, as before, or PDF. Room for Image later (U4c).
+function addMenu(anchor) {
+  openMenu(anchor, [{ label: 'Page', fn: () => addPageBelow(S.cur) }, { label: 'PDF', fn: () => pickPdf({ noteId: S.openNote }) }]);
 }
 function renameNote(id, value) {
   const n = note(id), v = value.trim().slice(0, 120);
@@ -319,8 +370,9 @@ function shown(index) { render(); scrollToPage(index); }
 function addPageBelow(i) {
   const nid = S.openNote, list = pagesOf(nid), model = list[i] || list[list.length - 1];
   const at = Math.min(list.length, i + 1);
-  const snap = { id: uuid(), note_id: nid, orientation: model ? model.orientation : 'portrait',
-                 background: model ? model.background : 'grid', created_at: nowIso() };
+  const plain = model && !model.pdf_path;                  // U4a: next to a PDF page, a normal A4 grid page
+  const snap = { id: uuid(), note_id: nid, orientation: plain ? model.orientation : 'portrait',
+                 background: plain ? model.background : 'grid', created_at: nowIso() };
   doOp({ pages: [snap.id], redo: () => { insertPage(snap, at); shown(at); }, undo: () => { removePage(snap.id); shown(Math.max(0, at - 1)); } });
 }
 function deletePage(i) {
@@ -334,7 +386,10 @@ function deletePage(i) {
 // Delete, Paste puts it below the pressed page, Erase page clears its strokes. The page clipboard is a list
 // (pw-v4q): S.clip = [page, page, ...], one entry per page in list order; a single-page Copy makes a list of one.
 // It is not tied to a note, so pages cut in one note paste into another (her ruling, 26 Oct).
-const clipEntry = (p) => ({ orientation: p.orientation, background: p.background, bookmark: !!p.bookmark, strokes: ink.copyStrokes(p.id) });
+// U4a: a PDF page carries its PDF (pdf_path, pdf_page, pdf_w, pdf_h); the file in storage is shared, never copied
+const PDF_KEYS = ['pdf_path', 'pdf_page', 'pdf_w', 'pdf_h'];
+const pdfOf = (p) => (p && p.pdf_path ? Object.fromEntries(PDF_KEYS.map((k) => [k, p[k]])) : {});
+const clipEntry = (p) => ({ orientation: p.orientation, background: p.background, bookmark: !!p.bookmark, ...pdfOf(p), strokes: ink.copyStrokes(p.id) });
 function copyPage(i, quiet) {
   const p = pagesOf(S.openNote)[i];
   if (!p) return;
@@ -351,7 +406,7 @@ function pastePage(i) {
   if (!clip.length) return;
   const at = i + 1;
   const adds = clip.map((c) => {
-    const snap = { id: uuid(), note_id: nid, orientation: c.orientation, background: c.background, bookmark: !!c.bookmark, created_at: nowIso() };
+    const snap = { id: uuid(), note_id: nid, orientation: c.orientation, background: c.background, bookmark: !!c.bookmark, ...pdfOf(c), created_at: nowIso() };
     return { snap, recs: c.strokes.map((r) => ({ ...JSON.parse(JSON.stringify(r)), id: uuid(), page_id: snap.id })) };
   });
   doOp({ pages: adds.map((a) => a.snap.id),
@@ -365,7 +420,9 @@ function deletePages(ids) {
   const list = pagesOf(S.openNote), gone = list.map((p, k) => [k, { ...p }]).filter(([, p]) => ids.includes(p.id));
   if (!gone.length) return 0;
   const all = gone.length === list.length, first = gone[0][0], model = list[0];
-  const fresh = all ? { id: uuid(), note_id: S.openNote, orientation: model.orientation, background: model.background, created_at: nowIso() } : null;
+  const plain = !model.pdf_path;                            // U4a: never a copy of a PDF page, a normal A4 grid page then
+  const fresh = all ? { id: uuid(), note_id: S.openNote, orientation: plain ? model.orientation : 'portrait',
+                        background: plain ? model.background : 'grid', created_at: nowIso() } : null;
   const left = list.length - gone.length;
   doOp({ pages: [...gone.map(([, p]) => p.id), ...(fresh ? [fresh.id] : [])],
          redo: () => { gone.forEach(([, p]) => removePage(p.id)); if (fresh) insertPage(fresh, 0); shown(fresh ? 0 : Math.min(first, left - 1)); },
@@ -395,7 +452,7 @@ function erasePage(i) {
 }
 // orientation or paper, for the current page or all of them
 function setPaper(field, value, all) {
-  const list = pagesOf(S.openNote), targets = all ? list : [list[S.cur]].filter(Boolean);
+  const list = pagesOf(S.openNote), targets = (all ? list : [list[S.cur]].filter(Boolean)).filter((p) => !p.pdf_path);   // U4a: a PDF page keeps its shape
   const changes = targets.filter((p) => p[field] !== value).map((p) => ({ id: p.id, old: p[field] }));
   if (!changes.length) return;
   const at = S.cur;
@@ -509,17 +566,17 @@ function thumbMenu(i, anchor) {
   openMenu(anchor, items);
 }
 function paperMenu(anchor) {
-  const p = pagesOf(S.openNote)[S.cur] || {};
+  const p = pagesOf(S.openNote)[S.cur] || {}, pdf = !!p.pdf_path;    // U4a: on a PDF page the shape and paper are the PDF's (greyed)
   const ask = (field, value) => openMenu(anchor, [{ head: 'Change' },
     { label: 'Just this page', fn: () => setPaper(field, value, false) },
     { label: 'All pages', fn: () => setPaper(field, value, true) }]);
   openMenu(anchor, [{ head: 'Page' },
-    { label: 'Portrait', on: p.orientation === 'portrait', keep: true, fn: () => ask('orientation', 'portrait') },
-    { label: 'Landscape', on: p.orientation === 'landscape', keep: true, fn: () => ask('orientation', 'landscape') },
+    { label: 'Portrait', on: !pdf && p.orientation === 'portrait', disabled: pdf, keep: true, fn: () => ask('orientation', 'portrait') },
+    { label: 'Landscape', on: !pdf && p.orientation === 'landscape', disabled: pdf, keep: true, fn: () => ask('orientation', 'landscape') },
     { head: 'Paper' },
-    { label: 'Blank', on: p.background === 'blank', keep: true, fn: () => ask('background', 'blank') },
-    { label: 'Grid, 1 cm squares', on: p.background === 'grid', keep: true, fn: () => ask('background', 'grid') },
-    { label: 'Lined', on: p.background === 'lined', keep: true, fn: () => ask('background', 'lined') },
+    { label: 'Blank', on: !pdf && p.background === 'blank', disabled: pdf, keep: true, fn: () => ask('background', 'blank') },
+    { label: 'Grid, 1 cm squares', on: !pdf && p.background === 'grid', disabled: pdf, keep: true, fn: () => ask('background', 'grid') },
+    { label: 'Lined', on: !pdf && p.background === 'lined', disabled: pdf, keep: true, fn: () => ask('background', 'lined') },
     p.id ? { label: p.bookmark ? 'Remove bookmark' : 'Bookmark', fn: () => setBookmark(p.id, !p.bookmark) } : null,
     { head: 'Note' },
     { label: 'Bin this note', fn: () => binThing('note', S.openNote) }]);
@@ -632,6 +689,8 @@ function renderGrid() {
   G.className = 'grid';
   G.append(h('button', { class: 'card plus', type: 'button', id: 'newNote', 'aria-label': 'New note', onclick: () => createNote(fid) },
     h('div', { class: 'thumb', html: SVG_PLUS }), h('span', { class: 'cname' }, 'New note')));
+  G.append(h('button', { class: 'card plus', type: 'button', id: 'openPdf', 'aria-label': 'Open PDF', onclick: () => pickPdf({ folderId: fid }) },
+    h('div', { class: 'thumb', html: SVG_DOC }), h('span', { class: 'cname' }, 'Open PDF')));
   for (const n of notesIn(fid)) {
     const first = pagesOf(n.id)[0];
     const thumb = h('div', { class: 'thumb' }, paper(first), n.pinned ? h('span', { class: 'pin', html: SVG_PIN, title: 'Pinned' }) : null);
@@ -653,11 +712,12 @@ function renderGrid() {
 const coverUrl = new Map();        // note id -> { path, at, url } (one blob: URL per note while its picture stays)
 const coverGets = new Map();       // note id + path + at -> the download on its way
 function cardCover(thumb, n) {
-  thumb.querySelectorAll('img.cover, .paper > svg.thumbInk').forEach((e) => e.remove());
+  thumb.querySelectorAll('img.cover, .paper > svg.thumbInk, .paper > img.pdfThumb').forEach((e) => e.remove());
   const first = pagesOf(n.id)[0];
   if (!first) return;
+  if (first.pdf_path) pdfview.thumbInto(thumb.querySelector('.paper'), first);   // U4a: the PDF's first page, under the ink or the cover
   if (!isPhone() && store.known(first.id)) {
-    const svg = ink.thumbSvg(first.id, first.orientation);
+    const svg = ink.thumbSvg(first.id, first);
     svg.setAttribute('preserveAspectRatio', 'xMidYMid slice');
     thumb.querySelector('.paper').append(svg);
     return;
@@ -743,8 +803,10 @@ function renderPageList() {
         onclick: (e) => { e.stopPropagation(); thumbMenu(i, e.currentTarget); } }, '⋯'),
       h('button', { class: 'tick', type: 'button', 'aria-label': 'Tick page ' + (i + 1), 'aria-pressed': 'false', html: SVG_TICK,
         onclick: (e) => { e.stopPropagation(); if (S.tick && !S.tick.moving) toggleTick(p.id); } }));
-    if (p.bookmark) t.querySelector('.paper').append(bookmarkTab());           // the same ribbon tab as the page
-    t.querySelector('.paper').append(ink.thumbSvg(p.id, p.orientation));   // the page's ink on the paper
+    const pp = t.querySelector('.paper');
+    if (p.pdf_path) { const sz = pageSize(p); pp.style.aspectRatio = sz.w + ' / ' + sz.h; pdfview.thumbInto(pp, p); }   // U4a: its own shape, the PDF under the ink
+    if (p.bookmark) pp.append(bookmarkTab());           // the same ribbon tab as the page
+    pp.append(ink.thumbSvg(p.id, p));                   // the page's ink on the paper
     T.append(t);
   });
   renderTick();
@@ -864,22 +926,25 @@ function shareName(ids) {
 }
 // one page as an SVG document at 2x (the share; U3b's page picture asks for 1x): the viewBox is the page in page px, so
 // the paper and the ink keep their own numbers. `recs` given = those records instead of the page's own (U3b).
+// U4a: a PDF page's svg is the ink alone (see-through): renderPage draws the PDF under it first.
 function pageSvgText(p, scale = SHARE_SCALE, recs = null) {
-  const { w, h } = pageSize(p.orientation);
+  const { w, h } = pageSize(p);
   const svg = document.createElementNS(SVGNS, 'svg');
   svg.setAttribute('width', w * scale); svg.setAttribute('height', h * scale);
   svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
-  const white = document.createElementNS(SVGNS, 'rect');
-  white.setAttribute('width', w); white.setAttribute('height', h); white.setAttribute('fill', '#FFFFFF');
-  svg.append(white);
-  const bg = bgSvg(w, h, p.background);
-  while (bg.firstChild) svg.append(bg.firstChild);
-  const layer = ink.thumbSvg(p.id, p.orientation, recs);           // the page's ink, built from its records (hl below pen)
+  if (!p.pdf_path) {
+    const white = document.createElementNS(SVGNS, 'rect');
+    white.setAttribute('width', w); white.setAttribute('height', h); white.setAttribute('fill', '#FFFFFF');
+    svg.append(white);
+    const bg = bgSvg(w, h, p.background);
+    while (bg.firstChild) svg.append(bg.firstChild);
+  }
+  const layer = ink.thumbSvg(p.id, p, recs);           // the page's ink, built from its records (hl below pen)
   while (layer.firstChild) svg.append(layer.firstChild);
   return new XMLSerializer().serializeToString(svg);
 }
 async function renderPage(p, type, quality, scale = SHARE_SCALE, recs = null) {
-  const { w, h } = pageSize(p.orientation), W = w * scale, H = h * scale;
+  const { w, h } = pageSize(p), W = w * scale, H = h * scale;
   const url = URL.createObjectURL(new Blob([pageSvgText(p, scale, recs)], { type: 'image/svg+xml' }));
   try {
     const img = new Image();
@@ -888,10 +953,12 @@ async function renderPage(p, type, quality, scale = SHARE_SCALE, recs = null) {
     const c = document.createElement('canvas'); c.width = W; c.height = H;
     const g = c.getContext('2d');
     g.fillStyle = '#FFFFFF'; g.fillRect(0, 0, W, H);
+    if (p.pdf_path) await pdfview.paint(g, p, W, H);                 // U4a: the PDF under the ink (throws when it is not here yet)
     g.drawImage(img, 0, 0, W, H);
     return await new Promise((ok, no) => c.toBlob((b) => (b ? ok(b) : no(new Error('a page could not be drawn'))), type, quality));
   } finally { URL.revokeObjectURL(url); }
 }
+const A4_PT = [595.28, 841.89];   // A4 in PDF points (jsPDF's own 'a4')
 let jspdfLoad = null;
 function loadJsPdf() {
   if (window.jspdf) return Promise.resolve(window.jspdf);
@@ -917,9 +984,11 @@ async function shareFiles(ids, kind, name, progress) {
   const { jsPDF } = await loadJsPdf();
   let doc = null;
   for (let k = 0; k < n; k++) {
-    const o = list[k].orientation === 'landscape' ? 'landscape' : 'portrait';
-    if (!doc) doc = new jsPDF({ orientation: o, unit: 'pt', format: 'a4', compress: true });
-    else doc.addPage('a4', o);
+    // U4a: a PDF page goes out in its own shape (210 mm across, 297 mm when wider than tall, the height by its aspect)
+    const p = list[k], sz = pageSize(p), o = sz.w > sz.h ? 'landscape' : 'portrait';
+    const wpt = sz.w === A4.h ? A4_PT[1] : A4_PT[0], fmt = p.pdf_path ? [wpt, wpt * p.pdf_h / p.pdf_w] : 'a4';
+    if (!doc) doc = new jsPDF({ orientation: o, unit: 'pt', format: fmt, compress: true });
+    else doc.addPage(fmt, o);
     const pw = doc.internal.pageSize.getWidth(), ph = doc.internal.pageSize.getHeight();
     doc.addImage(new Uint8Array(await blobs[k].arrayBuffer()), 'JPEG', 0, 0, pw, ph, undefined, 'NONE');
   }
@@ -998,7 +1067,7 @@ function refreshThumb(pageId) {
     for (const id of ids) {
       const t = document.querySelector(`#plThumbs .thumbP[data-id="${CSS.escape(id)}"]`), p = t && page(id);
       if (!t || !p) continue;
-      const old = t.querySelector('.paper > svg.thumbInk'), svg = ink.thumbSvg(id, p.orientation);
+      const old = t.querySelector('.paper > svg.thumbInk'), svg = ink.thumbSvg(id, p);
       if (old) old.replaceWith(svg); else t.querySelector('.paper').append(svg);
     }
   });
@@ -1236,6 +1305,7 @@ async function enter(user) {
   // U3e: the tree queue first; the stroke queue waits for it (a new page's row reaches the database before its strokes)
   treeq.init({ mode: api.mode, userId: user.id, api, onState: dotFrom('tree'), onDrop: treeDropped });
   store.init({ mode: api.mode, userId: user.id, api, idle: () => treeq.gate(), onRemote: ink.replace, onState: dotFrom('ink'), onPushed: pics.pushed });
+  pdfin.initPdf({ mode: api.mode, userId: user.id, api, toast, makeNote: makePdfNote, addPages: addPdfPages, onBytes: () => pdfview.bytesArrived() });
   pics.initSnap({ api, store, ink, owner: () => user.id, pages: () => S.pages, page, note, pagesOf, liveNote, onCover: refreshCard,
                   render: (p, recs) => renderPage(p, 'image/webp', 0.8, 1, recs), idle: settledBoth });
   await load();
@@ -1411,7 +1481,9 @@ function wire() {
   initTray({ onKeep: (tray, at) => trayKeep(tray, at) });
   initPage({ desk: $('desk'), stack: $('stack'), addBelow: $('addBelow'),
              onCurrent: (i) => { S.cur = Math.max(0, i); updateCount(); ink.clearSelection(); },   // a new page: the selection clears
-             onSheets: ink.attach, ink: ink.hook, onPenButton: penButton });
+             onSheets: (sheets) => { ink.attach(sheets); pdfview.attach(sheets); }, onView: pdfview.view,
+             ink: ink.hook, onPenButton: penButton });
+  pdfview.initView({ page });
   if (new URLSearchParams(location.search).get('dbg') === '1') import('./dbg.js').then((m) => m.startDbg($('desk'), ink));   // the pen readout, ?dbg=1 only
   $('loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -1430,7 +1502,8 @@ function wire() {
   $('gridBack').addEventListener('click', () => { document.body.classList.remove('showGrid'); });
   $('backBtn').addEventListener('click', () => { if (history.state && history.state.note) history.back(); else closeNote(); });
   window.addEventListener('popstate', () => { if (S.openNote) closeNote(true); });
-  $('addPageBtn').addEventListener('click', () => addPageBelow(S.cur));
+  $('addPageBtn').addEventListener('click', (e) => addMenu(e.currentTarget));      // U4a: Page or PDF
+  $('pdfInput').addEventListener('change', pdfPicked);
   $('addBelow').addEventListener('click', () => addPageBelow(pagesOf(S.openNote).length - 1));
   $('listBtn').addEventListener('click', () => { S.listOpen = !S.listOpen; renderPageList(); });
   $('plClose').addEventListener('click', () => { S.listOpen = false; renderPageList(); });
@@ -1480,7 +1553,9 @@ window.__pw = { S, api, idle: settledBoth, failed: () => treeq.dropCount(), curr
                 trayPending: () => ({ next: !!trayNext, busy: trayBusy, timer: !!trayT }),
                 pageDrag: () => (pd ? { lifted: pd.lifted, from: pd.from, to: pd.to } : null),
                 tick: () => (S.tick ? { ids: ticked(), moving: S.tick.moving } : null),
-                live: { state: live.state, stats: live.liveStats, simulateDrop: live.simulateDrop }, refreshTree };
+                live: { state: live.state, stats: live.liveStats, simulateDrop: live.simulateDrop }, refreshTree,
+                pdf: { importPdf: (f, t) => pdfin.importPdf(f, t), stats: () => ({ ...pdfin.pdfStats(), ...pdfview.viewStats() }),
+                       cached: pdfin.cached, uploadsPending: pdfin.uploadsPending } };
 Object.defineProperty(window.__pw, 'lastLoad', { get: () => lastLoad, set: (v) => { lastLoad = v; } });   // U3d: the tree's age
 
 wire();

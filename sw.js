@@ -3,11 +3,13 @@
    Supabase calls are never cached. The supabase-js library and the fonts are cached network-first.
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v5e";
+const CACHE = "pw-v6a";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",
   "./js/local-backend.js", "./js/page.js", "./js/ink.js", "./js/store.js", "./js/treeq.js", "./js/snap.js", "./js/live.js", "./js/tray.js", "./js/dbg.js",
-  "./icons/icon-192.png", "./icons/icon-512.png", "./vendor/jspdf.umd.min.js"];
+  "./js/pdfin.js", "./js/pdfview.js",
+  "./icons/icon-192.png", "./icons/icon-512.png", "./vendor/jspdf.umd.min.js",
+  "./vendor/pdf.min.mjs", "./vendor/pdf.worker.min.mjs"];
 const CDN = ["cdn.jsdelivr.net", "fonts.googleapis.com", "fonts.gstatic.com"];
 
 self.addEventListener("install", (e) => {
