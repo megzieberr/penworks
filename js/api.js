@@ -12,8 +12,10 @@ const TABLES = ['folders', 'notes', 'pages'];
 const COLS = {
   folders: 'id,owner_id,parent_id,name,colour,position,deleted_at,created_at,updated_at',
   notes: 'id,owner_id,folder_id,name,pinned,cover_path,deleted_at,created_at,updated_at',
-  pages: 'id,owner_id,note_id,position,orientation,background,snapshot_path,flagged,deleted_at,created_at,updated_at',
+  pages: 'id,owner_id,note_id,position,orientation,background,snapshot_path,snapshot_at,flagged,deleted_at,created_at,updated_at',
 };
+// page pictures (U3b): bucket `snapshots`, private, one object per page at <owner uuid>/<page id>.webp (js/snap.js)
+const SNAP_BUCKET = 'snapshots';
 // strokes (U3a): only through strokesOf and putStrokes (js/store.js calls them); owner_id defaults to auth.uid()
 const STROKE_COLS = 'id,page_id,seq,kind,style,data';
 const STROKE_KEYS = STROKE_COLS.split(',');
@@ -133,6 +135,60 @@ const liveApi = {
         if (e && e.code !== '23505') throw e;
       }
     }
+  },
+
+  // ---------------------------------------------------------------- page pictures (U3b, js/snap.js)
+  // the picture itself, replacing the one already there. max-age 0: a download never gets an older copy from a cache.
+  async putSnapshot(path, blob) {
+    const c = await client();
+    const { error } = await c.storage.from(SNAP_BUCKET).upload(path, blob,
+      { upsert: true, contentType: blob.type || 'image/webp', cacheControl: '0' });
+    if (error) throw error;
+  },
+
+  // the picture as a Blob (the bucket is private: the download carries her login)
+  async getSnapshot(path) {
+    const c = await client();
+    const { data, error } = await c.storage.from(SNAP_BUCKET).download(path);
+    if (error) throw error;
+    return data;
+  },
+
+  // the page's updated_at as the database has it (null when the row is not there): taken before a render
+  async pageStamp(pageId) {
+    const c = await client();
+    const { data, error } = await c.from('pages').select('updated_at').eq('id', pageId).maybeSingle();
+    if (error) throw error;
+    return data ? data.updated_at : null;
+  },
+
+  // the picture is in the bucket: the page row says where. Only when the page's updated_at is still `at` (the stamp
+  // read before the render): a stroke that landed meanwhile leaves the row as it was and the answer is null.
+  // snapshot_at is the literal 'now', the database's own clock: the trigger pages_updated_at (0001) sets updated_at
+  // to now() on this very update, and in one transaction both are the same instant, so a fresh page reads
+  // updated_at = snapshot_at and any later stroke (strokes_touch_page) makes updated_at the newer one.
+  async setSnapshot(pageId, path, at) {
+    const c = await client();
+    let q = c.from('pages').update({ snapshot_path: path, snapshot_at: 'now' }).eq('id', pageId);
+    if (at) q = q.eq('updated_at', at);
+    const { data, error } = await q.select('snapshot_at');
+    if (error) throw error;
+    return data && data.length ? data[0].snapshot_at : null;
+  },
+
+  // the note's cover = its first page's picture (null: none yet). Not an edit: notes_updated_at fires on name only.
+  async setCover(noteId, path) {
+    const c = await client();
+    const { data, error } = await c.from('notes').update({ cover_path: path }).eq('id', noteId).select('id');
+    if (error) throw error;
+    if (!data || !data.length) throw new Error('The cover was not saved');
+  },
+
+  // the tests' clean-up (the app itself never deletes a picture; the bin purge will, later)
+  async removeSnapshots(paths) {
+    const c = await client();
+    const { error } = await c.storage.from(SNAP_BUCKET).remove(paths);
+    if (error) throw error;
   },
 
   failNext() { /* local twin only */ },

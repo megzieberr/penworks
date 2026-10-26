@@ -5,11 +5,13 @@
 // pw-v4q: the page list's Select (tick mode): tick several pages, then Delete, Copy, Cut or Move them together.
 // pw-v4r: page bookmarks (the page menu's Bookmark, a ribbon tab on the page and its thumb, a Bookmarks filter in the list).
 // pw-v4t: tick mode's Share: name the file first, then share the ticked pages as one PDF or as PNG images.
+// U3b: page pictures to storage a few seconds after she stops writing (js/snap.js); a note's card shows its first page.
 import { api } from './api.js';
 import { initPage, showStack, fit, scrollToPage, relayout, current, bookmarkTab, markSheet, bgSvg, pageSize } from './page.js';
 import * as ink from './ink.js';
 import * as store from './store.js';
 import { initTray, closePanel, trayState, chooseTool } from './tray.js';
+import * as pics from './snap.js';
 
 const $ = (id) => document.getElementById(id);
 const S = { folders: [], notes: [], pages: [], sel: 'loose', openNote: null, cur: 0, fold: {}, renaming: null,
@@ -273,10 +275,11 @@ function renumber(list) {
   const pairs = [];
   list.forEach((p, k) => { if (p.position !== k) { p.position = k; pairs.push([p.id, k]); } });
   if (pairs.length) save(() => api.reorderPages(pairs));
+  if (list.length) pics.syncCover(list[0].note_id);          // U3b: the cover follows the first page
 }
 function insertPage(snap, i) {
   const list = pagesOf(snap.note_id);
-  const p = { ...snap, position: i, deleted_at: null, bookmark: !!snap.bookmark };
+  const p = { ...snap, position: i, deleted_at: null, bookmark: !!snap.bookmark, snapshot_path: null, snapshot_at: null };   // a new row: no picture yet
   list.splice(i, 0, p);
   const pairs = [];                                         // the pages below it move down one
   list.forEach((x, k) => { if (x !== p && x.position !== k) { x.position = k; pairs.push([x.id, k]); } });
@@ -286,6 +289,7 @@ function insertPage(snap, i) {
   store.change(p.id, [], ink.strokesOf(p.id));              // U3a: undo of a delete: the database cascaded its strokes, send them again
   store.keepBookmark(p.id, p.bookmark);                     // undo of a delete brings the bookmark back with the page
   touchNote(p.note_id);
+  pics.syncCover(p.note_id);                                // U3b: a page at the top takes over the cover
 }
 function removePage(id) {
   const p = page(id), list = pagesOf(p.note_id).filter((x) => x !== p);
@@ -296,6 +300,7 @@ function removePage(id) {
   store.unqueue(id);                                        // U3a: its strokes cascade on the server; queued ops for it can never land
   renumber(list);
   touchNote(p.note_id);
+  pics.syncCover(p.note_id);                                // U3b: the first page gone: the next one's picture
 }
 function movePage(id, j) {
   const p = page(id), list = pagesOf(p.note_id), i = list.indexOf(p);
@@ -390,7 +395,7 @@ function setPaper(field, value, all) {
   const at = S.cur;
   const put = (pairs) => {
     const groups = new Map();
-    pairs.forEach(([id, v]) => { const p = page(id); if (!p) return; p[field] = v; groups.set(v, [...(groups.get(v) || []), id]); });
+    pairs.forEach(([id, v]) => { const p = page(id); if (!p) return; p[field] = v; groups.set(v, [...(groups.get(v) || []), id]); pics.changed(id); });   // U3b: a new paper, a new picture
     groups.forEach((ids, v) => save(() => api.setPages(ids, { [field]: v })));
     touchNote(S.openNote);
     shown(at);
@@ -623,14 +628,72 @@ function renderGrid() {
     h('div', { class: 'thumb', html: SVG_PLUS }), h('span', { class: 'cname' }, 'New note')));
   for (const n of notesIn(fid)) {
     const first = pagesOf(n.id)[0];
+    const thumb = h('div', { class: 'thumb' }, paper(first), n.pinned ? h('span', { class: 'pin', html: SVG_PIN, title: 'Pinned' }) : null);
+    cardCover(thumb, n);
     const card = h('div', { class: 'card' + (n.pinned ? ' pinned' : ''), 'data-id': n.id, onclick: () => openNote(n.id) },
-      h('div', { class: 'thumb' }, paper(first), n.pinned ? h('span', { class: 'pin', html: SVG_PIN, title: 'Pinned' }) : null),
+      thumb,
       h('div', { class: 'meta' },
         nameOrInput('note', n.id, n.name, 'card'),
         h('small', { class: 'when' }, edited(n.updated_at))));
     pressable(card, () => noteMenu(n.id, card.querySelector('.thumb'), 'card'));
     G.append(card);
   }
+}
+
+// U3b: a card shows its note's first page. On the tablet (anything wider than a phone), when that page's strokes are in
+// the mirror already (the note was opened this session), its ink is drawn over the paper: sharper, and no download.
+// Otherwise the cover picture (notes.cover_path), from this device's cover cache when it has the first page's current
+// picture (same path, same snapshot_at), else downloaded once and kept. Until it is there the card shows the paper.
+const coverUrl = new Map();        // note id -> { path, at, url } (one blob: URL per note while its picture stays)
+const coverGets = new Map();       // note id + path + at -> the download on its way
+function cardCover(thumb, n) {
+  thumb.querySelectorAll('img.cover, .paper > svg.thumbInk').forEach((e) => e.remove());
+  const first = pagesOf(n.id)[0];
+  if (!first) return;
+  if (!isPhone() && store.known(first.id)) {
+    const svg = ink.thumbSvg(first.id, first.orientation);
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid slice');
+    thumb.querySelector('.paper').append(svg);
+    return;
+  }
+  const path = n.cover_path, at = first.snapshot_at || null;
+  if (!path) return;
+  const put = (url) => {
+    if (!thumb.isConnected && thumb.parentNode) return;     // a card the grid has since replaced (a new one is still being built: no parent yet)
+    if (thumb.querySelector('img.cover, .paper > svg.thumbInk')) return;
+    thumb.querySelector('.paper').after(h('img', { class: 'cover', src: url, alt: n.name, draggable: 'false' }));
+  };
+  const m = coverUrl.get(n.id);
+  if (m && m.path === path && m.at === at) { put(m.url); return; }
+  coverBlob(n.id, path, at).then((blob) => {
+    const cur = note(n.id);
+    if (!blob || !cur || cur.cover_path !== path) return;
+    let k = coverUrl.get(n.id);
+    if (!k || k.path !== path || k.at !== at) {
+      if (k) URL.revokeObjectURL(k.url);
+      k = { path, at, url: URL.createObjectURL(blob) };
+      coverUrl.set(n.id, k);
+    }
+    put(k.url);
+  });
+}
+async function coverBlob(nid, path, at) {
+  const e = await store.coverGet(nid);
+  if (e && e.path === path && e.at === at && e.blob) return e.blob;
+  if (navigator.onLine === false) return null;
+  const key = nid + ' ' + path + ' ' + at;
+  if (!coverGets.has(key)) {
+    coverGets.set(key, api.getSnapshot(path)
+      .then(async (blob) => { await store.coverPut(nid, { path, at, blob }); return blob; })
+      .catch(() => null)                                     // not there yet, or no connection: the paper stays
+      .finally(() => coverGets.delete(key)));
+  }
+  return coverGets.get(key);
+}
+// js/snap.js: a note's cover changed (or its first page's picture did): just that card, never the whole grid
+function refreshCard(nid) {
+  const n = note(nid), card = n && document.querySelector(`#grid .card[data-id="${CSS.escape(nid)}"]`);
+  if (card) cardCover(card.querySelector('.thumb'), n);
 }
 
 // ---------------------------------------------------------------- the note view
@@ -793,24 +856,25 @@ function shareName(ids) {
   const a = nums[0], b = nums[nums.length - 1];
   return base + ' p' + (a === b ? a : a + '-' + b);
 }
-// one page as an SVG document at 2x: the viewBox is the page in page px, so the paper and the ink keep their own numbers
-function pageSvgText(p) {
+// one page as an SVG document at 2x (the share; U3b's page picture asks for 1x): the viewBox is the page in page px, so
+// the paper and the ink keep their own numbers. `recs` given = those records instead of the page's own (U3b).
+function pageSvgText(p, scale = SHARE_SCALE, recs = null) {
   const { w, h } = pageSize(p.orientation);
   const svg = document.createElementNS(SVGNS, 'svg');
-  svg.setAttribute('width', w * SHARE_SCALE); svg.setAttribute('height', h * SHARE_SCALE);
+  svg.setAttribute('width', w * scale); svg.setAttribute('height', h * scale);
   svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
   const white = document.createElementNS(SVGNS, 'rect');
   white.setAttribute('width', w); white.setAttribute('height', h); white.setAttribute('fill', '#FFFFFF');
   svg.append(white);
   const bg = bgSvg(w, h, p.background);
   while (bg.firstChild) svg.append(bg.firstChild);
-  const layer = ink.thumbSvg(p.id, p.orientation);                 // the page's ink, built from its records (hl below pen)
+  const layer = ink.thumbSvg(p.id, p.orientation, recs);           // the page's ink, built from its records (hl below pen)
   while (layer.firstChild) svg.append(layer.firstChild);
   return new XMLSerializer().serializeToString(svg);
 }
-async function renderPage(p, type, quality) {
-  const { w, h } = pageSize(p.orientation), W = w * SHARE_SCALE, H = h * SHARE_SCALE;
-  const url = URL.createObjectURL(new Blob([pageSvgText(p)], { type: 'image/svg+xml' }));
+async function renderPage(p, type, quality, scale = SHARE_SCALE, recs = null) {
+  const { w, h } = pageSize(p.orientation), W = w * scale, H = h * scale;
+  const url = URL.createObjectURL(new Blob([pageSvgText(p, scale, recs)], { type: 'image/svg+xml' }));
   try {
     const img = new Image();
     img.src = url;
@@ -1095,8 +1159,12 @@ async function enter(user) {
   S.user = user;
   $('login').hidden = true; $('app').hidden = false;
   if (api.mode === 'local') { $('modeNote').textContent = 'local copy'; $('logoutBtn').hidden = true; }
-  store.init({ mode: api.mode, userId: user.id, api, idle: () => chain, onRemote: ink.replace, onState: saveDot });
+  store.init({ mode: api.mode, userId: user.id, api, idle: () => chain, onRemote: ink.replace, onState: saveDot, onPushed: pics.pushed });
+  pics.initSnap({ api, store, ink, owner: () => user.id, pages: () => S.pages, page, note, pagesOf, liveNote, onCover: refreshCard,
+                  render: (p, recs) => renderPage(p, 'image/webp', 0.8, 1, recs),
+                  idle: async () => { await chain; await store.settled(); await chain; } });
   await load();
+  pics.scan();                                              // U3b rule (b): pages whose picture is older than their ink
 }
 
 // the save dot (U3a) beside the dark-mode toggle: grey saved, blue saving, amber waiting, red refused. No text, no toast.
@@ -1140,7 +1208,7 @@ function wire() {
     $('eyeBtn').setAttribute('aria-label', show ? 'Hide password' : 'Show password');
     $('eyeBtn').classList.toggle('on', show);
   });
-  ink.initInk({ doOp, desk: $('desk'), onChange: (pageId) => { if (S.listOpen) refreshThumb(pageId); },
+  ink.initInk({ doOp, desk: $('desk'), onChange: (pageId) => { if (S.listOpen) refreshThumb(pageId); pics.changed(pageId); },
                 toast, openMenuAt: (x, y, items) => openMenu({ x, y }, items), selectTool: () => chooseTool('select') });
   // a right mouse press that lands while something is open (the press itself closes it before its contextmenu):
   // remembered here, before the tray's and the menu's own closers run, so that contextmenu does not flip the tool
@@ -1206,6 +1274,7 @@ function wire() {
 
 // test hook: the checks wait for writes and clean up their rows through this
 window.__pw = { S, api, idle: async () => { await chain; await store.settled(); await chain; }, failed: () => failed, current, ink, store, tray: trayState,
+                snap: pics.snapStats, renderGrid, covers: coverUrl,
                 pageDrag: () => (pd ? { lifted: pd.lifted, from: pd.from, to: pd.to } : null),
                 tick: () => (S.tick ? { ids: ticked(), moving: S.tick.moving } : null) };
 

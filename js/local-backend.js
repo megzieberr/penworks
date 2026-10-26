@@ -5,6 +5,9 @@
 // "last edited" for a note (renamed, or a page added, deleted, moved or re-papered).
 // Strokes (U3a): a `strokes` array of rows (the strokes table's shape), reached only through strokesOf and putStrokes;
 // a page deleted for good takes its strokes with it, a stroke for a page that is not there is refused (23503).
+// Page pictures (U3b): the bucket is a Map in memory (path -> Blob), for this session only; nothing here deletes one.
+// A page update bumps its updated_at like the trigger pages_updated_at; setSnapshot writes snapshot_at = that same
+// instant (the database's 'now'), so a fresh picture reads updated_at = snapshot_at.
 
 const KEY = 'penworks.local.v2';
 const TABLES = ['folders', 'notes', 'pages'];
@@ -12,7 +15,7 @@ const DEFAULTS = {
   folders: { parent_id: null, name: '', colour: null, position: 0, deleted_at: null },
   notes: { folder_id: null, name: 'Untitled', pinned: false, cover_path: null, deleted_at: null },
   pages: { note_id: null, position: 0, orientation: 'portrait', background: 'grid',
-           snapshot_path: null, flagged: false, deleted_at: null },
+           snapshot_path: null, snapshot_at: null, flagged: false, deleted_at: null },
 };
 const PAGE_EDIT = ['position', 'orientation', 'background'];
 const STROKE_KEYS = ['id', 'page_id', 'seq', 'kind', 'style', 'data'];
@@ -54,6 +57,8 @@ let failNext = 0;   // test hook: make the next n writes fail, to prove the retr
 function maybeFail() {
   if (failNext > 0) { failNext--; throw new Error('Simulated failed write'); }
 }
+const storage = new Map();   // the snapshots bucket: path -> Blob
+let reads = 0;
 let refuseNext = 0; // test hook: the next n stroke pushes are refused the way RLS refuses them (code 42501)
 function maybeRefuse() {
   if (refuseNext > 0) { refuseNext--; refuse('new row violates row-level security policy for table "strokes"', '42501'); }
@@ -161,6 +166,40 @@ export const localApi = {
       write(d);
     }
   },
+
+  // ---------------------------------------------------------------- page pictures (U3b)
+  async putSnapshot(path, blob) {
+    maybeFail();
+    if (!(blob instanceof Blob)) refuse('Not a picture');
+    storage.set(path, blob);
+  },
+  async getSnapshot(path) {
+    reads++;
+    const b = storage.get(path);
+    if (!b) { const e = new Error('Object not found'); e.statusCode = '404'; throw e; }
+    return b;
+  },
+  async pageStamp(pageId) {
+    const p = read().pages.find((r) => r.id === pageId);
+    return p ? p.updated_at : null;
+  },
+  async setSnapshot(pageId, path, at) {
+    const d = read(), p = d.pages.find((r) => r.id === pageId);
+    if (!p || (at && p.updated_at !== at)) return null;
+    const now = new Date().toISOString();
+    p.snapshot_path = path; p.snapshot_at = now; p.updated_at = now;      // not a note edit: touch_note fires only when an update names position, orientation, background or updated_at
+    write(d);
+    return now;
+  },
+  async setCover(noteId, path) {
+    const d = read(), n = d.notes.find((r) => r.id === noteId);
+    if (!n) throw new Error('The cover was not saved');
+    n.cover_path = path;                                                  // never bumps updated_at
+    write(d);
+  },
+  async removeSnapshots(paths) { paths.forEach((p) => storage.delete(p)); },
+  storageList() { return [...storage.keys()]; },                         // test hook: every path in the bucket
+  snapshotReads() { return reads; },                                     // test hook: how many getSnapshot calls
 
   failNext(n) { failNext = n; },
   refuseNext(n) { refuseNext = n; },

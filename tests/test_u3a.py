@@ -286,9 +286,9 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v5a" not in keys:
+        if "pw-v5b" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v5a", "pw-v5a" in keys, keys)
+        check("cache is pw-v5b", "pw-v5b" in keys, keys)
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the shell lists ./js/store.js, not store-local.js", "./js/store.js" in swt and "store-local" not in swt)
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in
@@ -337,6 +337,7 @@ try:
                         idle(pg)
                         left = pg.evaluate("""async (ids) => {
                           const a = window.__pw.api;
+                          await a.removeSnapshots([window.__pw.S.user.id + '/' + ids.p + '.webp']).catch(() => {});   // U3b: its picture, if one was made
                           await a.remove('pages', [ids.p]);                     // its strokes cascade with it
                           const strokes = (await a.strokesOf([ids.p])).length;
                           await a.remove('notes', [ids.n]); await a.remove('folders', [ids.f]);

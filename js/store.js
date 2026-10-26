@@ -8,6 +8,8 @@
 // A stroke record is the strokes table's row minus owner_id and created_at: { id, page_id, seq, kind, style, data }.
 // Strokes from before U3 (localStorage pw.strokes.<page_id>) are taken over the first time their page is read: they go
 // into the cache and into the queue (so they reach the database), and the old key goes once the cache holds them.
+// U3b: onPushed(pageId) after each op lands (js/snap.js makes the page's picture), known / pending for it, and the note
+// covers' device cache (coverGet / coverPut / coverDrop).
 
 const LEGACY = 'pw.strokes.';
 const LOCAL_MARK = 'pw.cache.local';      // local mode only: the twin lives in localStorage, its cache lives with it
@@ -24,12 +26,14 @@ const recheck = new Set();    // pages a reconcile skipped while the queue held 
 const unchecked = new Set();  // pages whose reconcile could not reach the database: checked on the next trigger
 let Q = [];                   // the queue, oldest first: { key, page_id, removed, added, t, busy, fk, told }
 let nextKey = 1;
-const cfg = { mode: 'local', api: null, idle: () => Promise.resolve(), onRemote: () => {}, onState: () => {} };
+const cfg = { mode: 'local', api: null, idle: () => Promise.resolve(), onRemote: () => {}, onState: () => {}, onPushed: () => {} };
 let dbp = Promise.reject(new Error('store.init has not run'));
 dbp.catch(() => {});
 let opened = Promise.resolve();
 let writes = Promise.resolve();
 let pumping = null, retryT = null, tries = 0, state = 'saved';
+let coverDb = Promise.reject(new Error('store.init has not run'));   // U3b: the note covers, a database of their own
+coverDb.catch(() => {});
 
 // ---------------------------------------------------------------- IndexedDB, a tiny promise helper
 function openDb(name) {
@@ -84,10 +88,17 @@ export function init(o) {
   const name = `penworks.${o.mode}.${o.userId}`;
   let wipe = Promise.resolve();
   if (o.mode === 'local') {          // ?local=1: a cleared localStorage is a fresh twin database, so its cache starts fresh
-    try { if (localStorage.getItem(LOCAL_MARK) !== name) { wipe = dropDb(name); localStorage.setItem(LOCAL_MARK, name); } } catch (_) { /* ignore */ }
+    try {
+      if (localStorage.getItem(LOCAL_MARK) !== name) {
+        wipe = Promise.all([dropDb(name), dropDb(name + '.covers')]);
+        localStorage.setItem(LOCAL_MARK, name);
+      }
+    } catch (_) { /* ignore */ }
   }
   dbp = wipe.then(() => openDb(name));
   dbp.catch((e) => console.warn('No device cache for strokes', e));
+  coverDb = wipe.then(() => openCovers(name + '.covers'));
+  coverDb.catch(() => { /* no cover cache: the cards download, or show the paper */ });
   // the queue left from last time comes first; ops made before it was read keep their place after it
   opened = writes = writes.then(() => run(['queue'], 'readonly', (s, out) => {
     s.queue.getAll().onsuccess = (e) => { out.vals = e.target.result; };
@@ -314,6 +325,7 @@ function pump() {
       dropOp(op);
       const pid = op.page_id;
       if (recheck.has(pid) && !Q.some((o) => o.page_id === pid)) { recheck.delete(pid); reconcile([pid]); }
+      try { cfg.onPushed(pid); } catch (_) { /* the page picture (U3b) is only a picture */ }
     }
     show('saved');
   })().finally(() => { pumping = null; });
@@ -328,6 +340,39 @@ function failed(op, e) {
     show('refused');
   } else show('waiting');
   retryLater();
+}
+
+// ---------------------------------------------------------------- U3b: what the page pictures ask
+export function known(pageId) { return mirror.has(pageId); }                 // its strokes are in the mirror
+export function pending(pageId) { return Q.some((op) => op.page_id === pageId); }   // ops for it still to go up
+
+// the note covers (U3b): their own small database penworks.<mode>.<user id>.covers, store `covers`, key = note id,
+// value = { path, at (the first page's snapshot_at), blob }. Their own, not a store in the strokes database: adding a
+// store there means a version 2, and a tab still open on version 1 would hold the strokes database shut until it closes.
+function openCovers(name) {
+  return new Promise((resolve, reject) => {
+    const r = indexedDB.open(name, 1);
+    r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains('covers')) r.result.createObjectStore('covers'); };
+    r.onsuccess = () => { const db = r.result; db.onversionchange = () => db.close(); resolve(db); };
+    r.onerror = () => reject(r.error);
+  });
+}
+function coverRun(mode, fn) {
+  return coverDb.then((db) => new Promise((resolve, reject) => {
+    const t = db.transaction(['covers'], mode), out = {};
+    fn(t.objectStore('covers'), out);
+    t.oncomplete = () => resolve(out.v);
+    t.onerror = t.onabort = () => reject(t.error);
+  }));
+}
+export function coverGet(noteId) {
+  return coverRun('readonly', (s, out) => { s.get(noteId).onsuccess = (e) => { out.v = e.target.result || null; }; }).catch(() => null);
+}
+export function coverPut(noteId, v) {
+  return coverRun('readwrite', (s) => { s.put(v, noteId); }).then(() => true, () => false);
+}
+export function coverDrop(noteId) {
+  return coverRun('readwrite', (s) => { s.delete(noteId); }).then(() => true, () => false);
 }
 
 // ---------------------------------------------------------------- for the tests (window.__pw.store)

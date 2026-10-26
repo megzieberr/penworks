@@ -224,6 +224,9 @@ input.rename {
 }
 .card .thumb { container-type: inline-size; }
 .card .thumb .paper { position: absolute; inset: 0; --sq: calc(100cqw / 21); }
+/* U3b: the note's cover (its first page's picture), or on the tablet that page's ink over the paper */
+.card .thumb img.cover { position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: cover; border-radius: inherit; pointer-events: none; }
+.card .thumb .paper > svg.thumbInk { position: absolute; inset: 0; display: block; pointer-events: none; }
 .card.plus .thumb { display: grid; place-items: center; color: var(--muted); background: var(--veil); border: 1.5px dashed var(--dash-line); box-shadow: none; }
 .card.plus .thumb svg { width: 34px; height: 34px; }
 .card:hover .thumb { box-shadow: 0 1px 2px rgba(38,42,48,.12), 0 6px 18px rgba(38,42,48,.14); }

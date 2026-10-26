@@ -3,10 +3,10 @@
    Supabase calls are never cached. The supabase-js library and the fonts are cached network-first.
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v5a";
+const CACHE = "pw-v5b";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",
-  "./js/local-backend.js", "./js/page.js", "./js/ink.js", "./js/store.js", "./js/tray.js", "./js/dbg.js",
+  "./js/local-backend.js", "./js/page.js", "./js/ink.js", "./js/store.js", "./js/snap.js", "./js/tray.js", "./js/dbg.js",
   "./icons/icon-192.png", "./icons/icon-512.png", "./vendor/jspdf.umd.min.js"];
 const CDN = ["cdn.jsdelivr.net", "fonts.googleapis.com", "fonts.gstatic.com"];
 
@@ -37,7 +37,7 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(req.url);
   if (url.origin !== location.origin) {
     if (CDN.includes(url.hostname)) e.respondWith(networkFirst(req, false));
-    return;   // Supabase and everything else: straight to the network
+    return;   // Supabase (its database and /storage/ pictures) and everything else: straight to the network
   }
   if (/\.png$/.test(url.pathname)) {
     e.respondWith(caches.match(req).then((hit) => hit || fetch(req).then((res) => {

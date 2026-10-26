@@ -408,8 +408,10 @@ export function attach(sheets) {
 // page (makeEl + groupFor, in seq order, highlighter groups below the pen group), so a thumb shows what the page
 // shows. Never a clone of the live layer: a page that is not attached has none. viewBox = the page in page px
 // (the attached size, else its orientation's size); the thumb's .paper already has the page's aspect ratio.
-export function thumbSvg(pageId, orientation = 'portrait') {
-  const d = data(pageId), sz = d.w && d.h ? { w: d.w, h: d.h } : pageSize(orientation);
+// U3b: `recs` given = draw those records instead (a page picture made from the database's copy of a page this device
+// has not read); the page's own model is not touched then.
+export function thumbSvg(pageId, orientation = 'portrait', recs = null) {
+  const d = recs ? { strokes: recs.slice().sort(bySeq), w: 0, h: 0 } : data(pageId), sz = d.w && d.h ? { w: d.w, h: d.h } : pageSize(orientation);
   const svg = document.createElementNS(SVGNS, 'svg');
   svg.setAttribute('class', 'thumbInk');
   svg.setAttribute('viewBox', `0 0 ${sz.w} ${sz.h}`);
