@@ -36,6 +36,8 @@
 // of the last ink tool (T.lastInk); with no overlap across the layers it picks the topmost record, whatever is there.
 // Last stroke (pw-v4n): LAST remembers the raw points of the last finished pen or highlighter stroke (before any snap) and
 // lastStroke() returns it; ?dbg=1 shows and copies it (js/dbg.js), so a real pen stroke can be caught on the tablet.
+// Duplicate chip (pw-v4o): a + chip between Copy and Delete puts a copy of the selection 24 px right and down (kept inside
+// the page), selected, as one undo step; the clipboard is not touched.
 
 import * as store from './store-local.js';
 import { pageAt, pagePoint, view, pageSize } from './page.js';
@@ -66,9 +68,10 @@ let ring = null, hring = null, deskEl = null, deskBox = null;
 let SEL = null;                  // the selection: { page, ids, g, chips, deg, z }
 let CLIP = null;                 // the selection clipboard: { recs (deep copies, by seq), box (their selBox) }
 let toast = null, openMenuAt = null, selectTool = null;   // optional, from app.js: a toast, the menu at a point, the tray's select tool
-// the chips' two icons (the same drawing style as SVG_BIN in js/app.js)
+// the chips' three icons (the same drawing style as SVG_BIN in js/app.js)
 const ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">';
 const SVG_COPY = ICON + '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>';
+const SVG_PLUS = ICON + '<path d="M12 5v14M5 12h14"/></svg>';
 const SVG_BIN = ICON + '<path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13"/></svg>';
 
 const uuid = () => crypto.randomUUID();
@@ -726,7 +729,7 @@ function selXf(g) {
   return [(q) => turn(q, c, a), 1, a];
 }
 
-// ---------------------------------------------------------------- the selection: dashed box, corners, Copy and Delete
+// ---------------------------------------------------------------- the selection: dashed box, corners, Copy, Duplicate and Delete
 const selRecs = () => { const d = data(SEL.page); return [...SEL.ids].map((id) => d.byId.get(id)).filter(Boolean); };
 function selBox(recs) {
   const b = [Infinity, Infinity, -Infinity, -Infinity];
@@ -801,7 +804,7 @@ function makeSel(page, ids) {
     btn.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
     chips.appendChild(btn);
   };
-  chip('copy', 'Copy', SVG_COPY, copySel); chip('delete', 'Delete', SVG_BIN, deleteSel);
+  chip('copy', 'Copy', SVG_COPY, copySel); chip('duplicate', 'Duplicate', SVG_PLUS, duplicateSel); chip('delete', 'Delete', SVG_BIN, deleteSel);
   const deg = document.createElement('div'); deg.className = 'selDeg';   // the turn's degrees, shown only while turning
   SEL = { page, ids: new Set(ids), g, chips, deg, z: 0, box: null, rot: null, live: null };
   renderSel();
@@ -821,19 +824,36 @@ export function hasClip() { return !!CLIP; }
 export function pasteAt(pageId, x, y) {
   if (!CLIP) return false;
   const d = data(pageId), b = CLIP.box;
-  const fit = (lo, hi, at, W) => {                 // the shift along one axis: centre on at, then keep [lo, hi] on [0, W]
-    const v = at - (lo + hi) / 2;
-    if (!W) return v;
-    if (hi - lo > W) return W / 2 - (lo + hi) / 2;
-    return Math.min(W - hi, Math.max(-lo, v));
-  };
-  const dx = fit(b[0], b[2], x, d.w), dy = fit(b[1], b[3], y, d.h);
+  const fit = (lo, hi, at, W) => keepIn(lo, hi, at - (lo + hi) / 2, W, W / 2 - (lo + hi) / 2);   // centre on at, kept on the page
+  addCopies(pageId, CLIP.recs, fit(b[0], b[2], x, d.w), fit(b[1], b[3], y, d.h));
+  return true;
+}
+// the shift v along one axis, cut back so [lo, hi] stays on [0, W]; a span wider than W gets big instead (no page size: v)
+function keepIn(lo, hi, v, W, big) {
+  if (!W) return v;
+  if (hi - lo > W) return big;
+  return Math.min(W - hi, Math.max(-lo, v));
+}
+// Paste and Duplicate: copies of recs (by seq) on page pageId moved by (dx, dy), fresh ids, seq values above every stroke
+// on the page in the same order, one undo step; the copies become the selection with the select tool on
+function addCopies(pageId, recs, dx, dy) {
+  const d = data(pageId);
   const top = d.strokes.length ? d.strokes[d.strokes.length - 1].seq : 0, base = Math.max(Date.now(), top + 1);
-  const news = CLIP.recs.map((r, k) => ({ ...xform(r, (q) => [q[0] + dx, q[1] + dy], 1, 0), id: uuid(), page_id: pageId, seq: base + k }));
+  const news = recs.map((r, k) => ({ ...xform(r, (q) => [q[0] + dx, q[1] + dy], 1, 0), id: uuid(), page_id: pageId, seq: base + k }));
   doOp(changeOp([{ page: pageId, removed: [], added: news }]));
   if (T.tool !== 'select') { if (selectTool) selectTool(); else setTool('select'); }
   if (d.svg) makeSel(pageId, news.map((r) => r.id));
-  return true;
+  return news;
+}
+// Duplicate (pw-v4o): a copy of the selection 24 px right and down, pulled back inside the page where it would leave it
+// (along an axis where the box is wider than the page it keeps the plain 24 px); the copy is selected; CLIP stays as it was
+const DUP_STEP = 24;
+function duplicateSel() {
+  if (!SEL) return;
+  const page = SEL.page, d = data(page), recs = selRecs().sort(bySeq);
+  if (!recs.length) return;
+  const b = selBox(recs);
+  addCopies(page, recs, keepIn(b[0], b[2], DUP_STEP, d.w, DUP_STEP), keepIn(b[1], b[3], DUP_STEP, d.h, DUP_STEP));
 }
 // a finger held still on the desk (page.js): over a page, a small menu with Paste (disabled with nothing copied)
 function holdMenu(cx, cy) {

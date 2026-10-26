@@ -40,6 +40,9 @@
 # Overlap tie-break (pw-v4m): a select tap where a highlighter-layer and a pen-layer record overlap picks the one in the
 # layer of the last ink tool (pen or highlighter, restored after a reload); with no overlap across the layers, the
 # topmost record under the tap, whatever it is. The "overlap pick (pw-v4m)" group.
+# Duplicate chip (pw-v4o): a third chip (+, aria-label Duplicate) between Copy and Delete copies the selection 24 px right
+# and down, kept inside the page, selected, one undo step, the clipboard untouched; the "two chips" checks in "select" and
+# "select polish (pw-v4j)" now expect Copy, Duplicate, Delete. The "duplicate chip (pw-v4o)" group.
 import sys, subprocess, time, pathlib, re, json, math
 from playwright.sync_api import sync_playwright
 
@@ -524,7 +527,7 @@ try:
         check("a box around two of three: those two are selected", sl and sorted(sl["ids"]) == sorted([A, B]), sl)
         ui = selui(pg)
         check("a dashed blue box with four corner handles", ui["box"] and ui["dash"] and ui["corners"] == 4, ui)
-        check("two chips above it: Copy and Delete", ui["chips"] == ["Copy", "Delete"] and ui["chipsShown"], ui)
+        check("three chips above it: Copy, Duplicate and Delete (pw-v4o)", ui["chips"] == ["Copy", "Duplicate", "Delete"] and ui["chipsShown"], ui)
         cb = pg.locator(".selChips").bounding_box(); bb = pg.locator("svg.ink g.sel rect.selbox").bounding_box()
         check("the chips sit above the box", cb["y"] + cb["height"] <= bb["y"] + 1, [cb, bb])
         check("selecting is not an undo step", U(pg) == u0)
@@ -1701,9 +1704,9 @@ try:
 
             # the chips are icons
             cs = pg.evaluate(CHIP_JS)
-            check("two chips, copy then delete, no words, one svg each, aria-label and title Copy / Delete",
-                  [c_["act"] for c_ in cs] == ["copy", "delete"] and all(c_["text"] == "" and c_["svgs"] == 1 for c_ in cs)
-                  and [c_["label"] for c_ in cs] == ["Copy", "Delete"] and [c_["title"] for c_ in cs] == ["Copy", "Delete"], cs)
+            check("three chips, copy, duplicate, delete, no words, one svg each, aria-label and title Copy / Duplicate / Delete (pw-v4o)",
+                  [c_["act"] for c_ in cs] == ["copy", "duplicate", "delete"] and all(c_["text"] == "" and c_["svgs"] == 1 for c_ in cs)
+                  and [c_["label"] for c_ in cs] == ["Copy", "Duplicate", "Delete"] and [c_["title"] for c_ in cs] == ["Copy", "Duplicate", "Delete"], cs)
             check("each chip is a 38 px round button", all(c_["w"] == 38 and c_["h"] == 38 and c_["round"] == "50%" for c_ in cs), cs)
             n1 = len(strokes(pg, "p4"))
             pg.locator(".selChips .chip[aria-label='Copy']").click(); pg.wait_for_timeout(30)
@@ -1924,10 +1927,125 @@ try:
         check("no page errors in the clipboard group", not e23, e23)
         ctx.close()
 
+        # ------------------------------------------------------------ pw-v4o: the Duplicate chip
+        group[0] = "duplicate chip (pw-v4o)"
+        ctx, pg, e25 = fresh(b); errs += e25
+        open_note(pg, "Select")
+        PUTD_JS = "([pid, recs]) => import('./js/ink.js').then(m => m.put(pid, recs))"
+        CHIPS_JS = """() => { const c = document.querySelector('.selChips'); if (!c) return null; const r = c.getBoundingClientRect();
+          return { n: c.querySelectorAll('button').length, labels: [...c.querySelectorAll('button')].map(b => b.getAttribute('aria-label')),
+                   acts: [...c.querySelectorAll('button')].map(b => b.dataset.act), left: r.left, top: r.top, right: r.right, bottom: r.bottom,
+                   vw: window.innerWidth, vh: window.innerHeight }; }"""
+        DUPSTYLE_JS = """() => { const d = document.querySelector('.selChips .chip[data-act="duplicate"]'), c = document.querySelector('.selChips .chip[data-act="copy"]');
+          const k = (e) => { const s = getComputedStyle(e), v = e.querySelector('svg'); return [s.backgroundColor, s.color, s.width, s.height, s.borderRadius,
+            v.getAttribute('stroke-width'), v.getAttribute('viewBox'), getComputedStyle(v).width]; };
+          return d && c ? { dup: k(d), copy: k(c), title: d.title, svgs: d.querySelectorAll('svg').length, text: d.textContent.trim() } : null; }"""
+        RINGD_JS = """() => { const c = document.querySelector('svg.ink g.sel circle.selrot'); return c ? [+c.getAttribute('cx'), +c.getAttribute('cy')] : null; }"""
+        def byid(): return {s_["id"]: s_ for s_ in strokes(pg, "p4")}
+        def dup(): pg.locator(".selChips .chip[data-act='duplicate']").click(); pg.wait_for_timeout(40)
+        def selids(): s_ = sel(pg); return sorted(s_["ids"]) if s_ else None
+        def moved(o, n, d=24): return len(o) == len(n) and all(abs(q[0] - (p_[0] + d)) < 1e-6 and abs(q[1] - (p_[1] + d)) < 1e-6 for p_, q in zip(o, n))
+        def dbox(recs):
+            b_ = [1e9, 1e9, -1e9, -1e9]
+            for r in recs:
+                w = r["style"]["width"] / 2
+                for x, y in r["data"]["points"]: b_ = [min(b_[0], x - w), min(b_[1], y - w), max(b_[2], x + w), max(b_[3], y + w)]
+            return b_
+
+        # 1: three chips, Copy, Duplicate, Delete
+        draw(pg, 1, [(150, 200), (250, 220), (350, 200)])
+        draw(pg, 1, [(150, 280), (250, 300), (350, 280)])
+        draw(pg, 1, [(150, 600), (250, 620), (350, 600)])
+        A, B, C = [s_["id"] for s_ in strokes(pg, "p4")]
+        tool(pg, "select")
+        drag_page(pg, 1, (120, 170), (380, 330))
+        ch = pg.evaluate(CHIPS_JS)
+        check("two strokes selected: three chips, aria-labels in order Copy, Duplicate, Delete",
+              selids() == sorted([A, B]) and ch and ch["n"] == 3 and ch["labels"] == ["Copy", "Duplicate", "Delete"] and ch["acts"] == ["copy", "duplicate", "delete"], [sel(pg), ch])
+        ds = pg.evaluate(DUPSTYLE_JS)
+        check("the Duplicate chip looks like the Copy chip (colours, size, round, icon stroke and size), one svg, no words, title Duplicate",
+              ds and ds["dup"] == ds["copy"] and ds["svgs"] == 1 and ds["text"] == "" and ds["title"] == "Duplicate", ds)
+
+        # 2: Duplicate adds two copies 24 px right and down, selected, one undo step, the clipboard untouched
+        old = byid(); u0 = U(pg); clip0 = pg.evaluate("window.__pw.ink.hasClip()")
+        dup()
+        now_ = byid(); new_ids = [k for k in now_ if k not in old]
+        news = sorted([now_[k] for k in new_ids], key=lambda r: r["seq"]); origs = sorted([old[A], old[B]], key=lambda r: r["seq"])
+        check("Duplicate: the page has two more records with new ids", len(now_) == 5 and len(new_ids) == 2 and all(k in now_ for k in old), [len(now_), new_ids])
+        check("Duplicate: the copies' seq values are above every old one, in the originals' order",
+              len(news) == 2 and min(r["seq"] for r in news) > max(r["seq"] for r in old.values()) and news[0]["seq"] < news[1]["seq"], [r["seq"] for r in news])
+        check("Duplicate: each copy is its original with every point moved by exactly (+24, +24), same kind and style",
+              len(news) == 2 and all(moved(o["data"]["points"], n["data"]["points"]) and o["kind"] == n["kind"] and o["style"] == n["style"] and n["page_id"] == "p4" for o, n in zip(origs, news)),
+              [(o["data"]["points"][:2], n["data"]["points"][:2]) for o, n in zip(origs, news)])
+        check("Duplicate: the originals are unchanged", all(now_[k] == old[k] for k in old))
+        check("Duplicate: the selection is the two NEW ids, the tool stays select", selids() == sorted(new_ids) and pg.evaluate("window.__pw.ink.tool().tool") == "select", [sel(pg), new_ids])
+        check("Duplicate: one undo step", U(pg) == u0 + 1, [U(pg), u0])
+        check("Duplicate: hasClip() unchanged (false, nothing was copied)", clip0 is False and pg.evaluate("window.__pw.ink.hasClip()") is False)
+
+        # 3: undo takes the copies away (the selection clears), redo brings them back
+        undo(pg)
+        check("undo: the two copies are gone, the originals stay", sorted(byid()) == sorted(old), sorted(byid()))
+        check("undo: the selection is cleared (its strokes are gone)", sel(pg) is None and not selui(pg)["chips"], sel(pg))
+        redo(pg)
+        rd = byid()
+        check("redo: the two copies are back, same ids and points", len(rd) == 5 and all(r["id"] in rd and moved(r["data"]["points"], rd[r["id"]]["data"]["points"], 0) for r in news), sorted(rd))
+        undo(pg)
+
+        # 4: Duplicate twice in a row copies the copies (another +24, +24), four records added in all
+        drag_page(pg, 1, (120, 170), (380, 330))
+        check("the originals selected again", selids() == sorted([A, B]), sel(pg))
+        u1 = U(pg)
+        dup(); first = byid(); f_ids = [k for k in first if k not in old]
+        dup(); second = byid(); s_ids = [k for k in second if k not in first]
+        f_recs = sorted([first[k] for k in f_ids], key=lambda r: r["seq"]); s_recs = sorted([second[k] for k in s_ids], key=lambda r: r["seq"])
+        check("twice: four records added in all, two undo steps", len(second) == 7 and len(f_ids) == 2 and len(s_ids) == 2 and U(pg) == u1 + 2, [len(second), U(pg), u1])
+        check("twice: the second copies are the first copies moved by another (+24, +24)", len(s_recs) == 2 and all(moved(f["data"]["points"], s2["data"]["points"]) for f, s2 in zip(f_recs, s_recs)))
+        check("twice: the selection is the second copies", selids() == sorted(s_ids), [sel(pg), s_ids])
+        undo(pg); undo(pg)
+        check("two undos: back to the three strokes", sorted(byid()) == sorted(old))
+
+        # 5: a box touching the page's bottom-right corner: the duplicate stays inside the page
+        W, H = 794, 1123
+        st2 = {"colour": "#000000", "width": 2, "dash": "solid", "opacity": 1}
+        pg.evaluate(PUTD_JS, ["p4", [{"id": "dc1", "page_id": "p4", "seq": int(time.time() * 1000) + 5, "kind": "pen", "style": st2,
+                                      "data": {"points": [[700, 1040], [750, 1080], [793, 1122]]}}]])
+        tap_page(pg, 1, 400, 900)
+        drag_page(pg, 1, (680, 1020), (790, 1110))
+        bx0 = sel(pg)["box"] if sel(pg) else None
+        check("the corner stroke is selected, its box touches the page's bottom-right corner", selids() == ["dc1"] and bx0 and abs(bx0[2] - W) < 1e-6 and abs(bx0[3] - H) < 1e-6, [sel(pg)])
+        pre = byid(); dup(); cn = [r for k, r in byid().items() if k not in pre]
+        cb_ = dbox(cn) if cn else None
+        check("the duplicate of a corner box stays inside the page (right edge <= page width, bottom edge <= page height)",
+              len(cn) == 1 and cb_[2] <= W + 1e-6 and cb_[3] <= H + 1e-6 and cb_[0] >= 0 and cb_[1] >= 0, cb_)
+        check("... pulled back on both axes (the plain +24 would leave the page), selected", len(cn) == 1 and moved(pre["dc1"]["data"]["points"], cn[0]["data"]["points"], 0) and selids() == [cn[0]["id"]], [cn and cn[0]["data"]["points"]])
+        undo(pg)
+
+        # 6: three chips stay inside the viewport near the right edge and near the page top (the ring flip case)
+        pg.evaluate(PUTD_JS, ["p4", [{"id": "dr1", "page_id": "p4", "seq": int(time.time() * 1000) + 6, "kind": "pen", "style": st2, "data": {"points": [[780, 480], [782, 540], [784, 600]]}},
+                                     {"id": "dt1", "page_id": "p4", "seq": int(time.time() * 1000) + 7, "kind": "pen", "style": st2, "data": {"points": [[200, 8], [300, 30], [400, 12]]}}]])
+        def inside(c_): return c_ and c_["n"] == 3 and c_["left"] >= 0 and c_["top"] >= 0 and c_["right"] <= c_["vw"] and c_["bottom"] <= c_["vh"]
+        def ring_free():
+            rg = pg.evaluate(RINGD_JS)
+            if not rg: return False
+            rx_, ry_ = screen(pg, 1, rg[0], rg[1])
+            return not pg.evaluate("([x, y]) => { const e = document.elementFromPoint(x, y); return e ? !!e.closest('button') : true; }", [rx_, ry_])
+        tap_page(pg, 1, 400, 900)
+        drag_page(pg, 1, (770, 470), (792, 610))
+        c6 = pg.evaluate(CHIPS_JS)
+        check("near the right edge: the narrow stroke is selected, three chips inside the viewport", selids() == ["dr1"] and inside(c6), [sel(pg), c6])
+        check("near the right edge: the three chips do not cover the turn ring", ring_free())
+        tap_page(pg, 1, 400, 900)
+        drag_page(pg, 1, (180, 2), (420, 60))
+        c7 = pg.evaluate(CHIPS_JS); rg7 = pg.evaluate(RINGD_JS); bx7 = sel(pg)["box"] if sel(pg) else None
+        check("near the page top: the ring flips below the box, three chips inside the viewport",
+              selids() == ["dt1"] and rg7 and bx7 and rg7[1] > bx7[3] and inside(c7), [sel(pg), c7, rg7, bx7])
+        check("no page errors in the duplicate chip group", not e25, e25)
+        ctx.close()
+
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v4n", "pw-v4n" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v4o", "pw-v4o" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)
