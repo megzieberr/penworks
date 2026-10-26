@@ -34,6 +34,9 @@
 # the spot" checks, in "select" and "select polish (pw-v4j)", are flipped); a finger held still 500 ms on a page opens a
 # small menu with Paste (disabled "Nothing to paste" while the clipboard is empty), which pastes there, centred on the
 # finger, kept inside the page, selected, select tool on, one undo step, across pages and notes. The "clipboard (pw-v4k)" group.
+# Area eraser cuts shapes (pw-v4l): a shape the area eraser touches turns into pen or highlighter ink and is cut like a
+# stroke (one bite out of a closed shape leaves one open piece; an arrow becomes shaft and head ink); the stroke eraser
+# still removes a shape whole. The erasers group's "removes the whole circle" check is flipped; the "area eraser cuts shapes (pw-v4l)" group.
 import sys, subprocess, time, pathlib, re, json, math
 from playwright.sync_api import sync_playwright
 
@@ -617,7 +620,8 @@ try:
         tool(pg, "area")
         drag_page(pg, 1, (300 + 90, 280), (300 + 90, 320), steps=4)
         kinds = [(s["kind"], s["data"].get("type")) for s in strokes(pg, "p5")]
-        check("the area eraser over the circle removes the whole circle (no pieces)", kinds == [("shape", "line")], kinds)
+        # pw-v4l: flipped, the area eraser cuts a piece out of the circle and the rest stays as pen ink
+        check("the area eraser over the circle cuts it: the circle turns into one pen piece, the line stays", kinds == [("pen", None), ("shape", "line")], kinds)
         check("one undo step", U(pg) == u0 + 1)
         undo(pg)
         check("undo brings the circle back whole", [(s["kind"], s["data"].get("type")) for s in strokes(pg, "p5")] == [("shape", "circle"), ("shape", "line")])
@@ -625,6 +629,144 @@ try:
         tap_page(pg, 1, 300, 600 + 2)
         check("the stroke eraser removes the line whole", [(s["kind"], s["data"].get("type")) for s in strokes(pg, "p5")] == [("shape", "circle")])
         ctx.close()
+
+        # ------------------------------------------------------------ pw-v4l: the area eraser cuts a piece out of a shape
+        group[0] = "area eraser cuts shapes (pw-v4l)"
+        ctx, pg, e30 = fresh(b); errs += e30
+        open_note(pg, "Erase")
+        def ids(pid): return {s["id"] for s in strokes(pg, pid)}
+        def pbb(pts): xs = [q[0] for q in pts]; ys = [q[1] for q in pts]; return [min(xs), min(ys), max(xs), max(ys)]
+        def plen(pts): return sum(math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]) for i in range(1, len(pts)))
+        info_lines.append(f"area eraser cuts shapes: zoom {zoom(pg)}")
+        # 1. a pen circle bitten once on its right edge: one open piece, joined across the seam
+        draw(pg, 1, rough_circle(300, 300, 90), steps=2, hold=650)
+        draw(pg, 1, rough_line(600, 100, 500), hold=650)
+        s0 = strokes(pg, "p5")
+        check("a circle and a line to bite", [(s["kind"], s["data"].get("type")) for s in s0] == [("shape", "circle"), ("shape", "line")], [(s["kind"], s["data"].get("type")) for s in s0])
+        circ, ln = s0[0], s0[1]
+        cx, cy, r = circ["data"]["cx"], circ["data"]["cy"], circ["data"]["r"]
+        u0 = U(pg); before = ids("p5")
+        tool(pg, "area")
+        drag_page(pg, 1, (cx + r, cy - 40), (cx + r, cy + 40), steps=8)
+        s1 = strokes(pg, "p5"); new = [s for s in s1 if s["id"] not in before]
+        check("the circle shape is gone", not any(s["kind"] == "shape" and s["data"].get("type") == "circle" for s in s1), [(s["kind"], s["data"].get("type")) for s in s1])
+        pc = new[0] if len(new) == 1 else None
+        check("exactly ONE new record, kind pen, over 100 points", pc is not None and pc["kind"] == "pen" and len(pc["data"]["points"]) > 100,
+              [(s["kind"], len(s["data"].get("points", []))) for s in new])
+        if pc:
+            pts = pc["data"]["points"]
+            check("the piece is open: its ends are more than 3 px apart (joined across the seam)", not near(pts[0], pts[-1], 3), [pts[0], pts[-1]])
+            check("the bite: the piece's right edge is at least 8 px left of cx + r", pbb(pts)[2] <= cx + r - 8, [pbb(pts)[2], cx + r])
+            check("the piece keeps the circle's page, seq and style", pc["page_id"] == "p5" and pc["seq"] == circ["seq"] and pc["style"] == circ["style"], [pc["seq"], circ["seq"], pc["style"], circ["style"]])
+            on = all(abs(math.hypot(q[0] - cx, q[1] - cy) - r) < 0.6 for q in pts)
+            gaps = max(math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]) for i in range(1, len(pts)))
+            check("its points sit on the circle, no gap over 3 px (plus the 0.1 px rounding)", on and gaps <= 3.15, gaps)
+        lnow = [s for s in s1 if s["id"] == ln["id"]]
+        check("the line is untouched", len(lnow) == 1 and lnow[0] == ln)
+        check("exactly one undo step", U(pg) == u0 + 1, [u0, U(pg)])
+        e = elinfo(pg, 1, pc["id"]) if pc else None
+        check("the piece is a <path> in g.pen", e and e["tag"] == "path" and e["parent"] == "pen", e)
+        undo(pg)
+        s2 = strokes(pg, "p5")
+        check("undo: the circle is back as a shape with the same data", [(s["kind"], s["data"].get("type")) for s in s2] == [("shape", "circle"), ("shape", "line")] and s2[0]["data"] == circ["data"] and s2[0]["id"] == circ["id"],
+              [(s["kind"], s["data"].get("type")) for s in s2])
+        check("undo: its circle element is drawn again", (elinfo(pg, 1, circ["id"]) or {}).get("tag") == "circle")
+        redo(pg)
+        s3 = strokes(pg, "p5")
+        check("redo: the piece again", pc is not None and [s["id"] for s in s3] == [pc["id"], ln["id"]] and s3[0]["data"] == pc["data"], [s["id"] for s in s3])
+        check("the stored page matches", [s["id"] for s in (idle(pg) or stored(pg, "p5"))] == [s["id"] for s in s3])
+
+        # 2. a line bitten in its middle: two pen pieces, each shorter, both ends kept
+        u0 = U(pg); before = ids("p5")
+        mx = (ln["data"]["x1"] + ln["data"]["x2"]) / 2; my = (ln["data"]["y1"] + ln["data"]["y2"]) / 2
+        drag_page(pg, 1, (mx, my - 30), (mx, my + 30), steps=6)
+        s4 = strokes(pg, "p5"); new = [s for s in s4 if s["id"] not in before]
+        L0 = math.hypot(ln["data"]["x2"] - ln["data"]["x1"], ln["data"]["y2"] - ln["data"]["y1"])
+        check("the line shape is gone, two pen pieces in its place", not any(s["id"] == ln["id"] for s in s4) and len(new) == 2 and all(s["kind"] == "pen" for s in new),
+              [(s["kind"], s["data"].get("type")) for s in new])
+        if len(new) == 2:
+            check("each piece is shorter than the line", all(plen(s["data"]["points"]) < L0 - 10 for s in new), [plen(s["data"]["points"]) for s in new] + [L0])
+            ends = [s["data"]["points"][0] for s in new] + [s["data"]["points"][-1] for s in new]
+            check("both ends of the line are kept", any(near(q, (ln["data"]["x1"], ln["data"]["y1"]), 0.2) for q in ends) and any(near(q, (ln["data"]["x2"], ln["data"]["y2"]), 0.2) for q in ends), ends)
+        check("one undo step for the line", U(pg) == u0 + 1)
+
+        # 7. rubbing INSIDE a circle: nothing changes, no undo step
+        tool(pg, "pen")
+        draw(pg, 1, rough_circle(560, 860, 90), steps=2, hold=650)
+        c2 = last(pg, "p5")
+        check("a second circle to rub inside", c2["kind"] == "shape" and c2["data"]["type"] == "circle", [c2["kind"], c2["data"]])
+        u0 = U(pg); snap0 = strokes(pg, "p5")
+        tool(pg, "area")
+        drag_page(pg, 1, (c2["data"]["cx"] - 30, c2["data"]["cy"]), (c2["data"]["cx"] + 30, c2["data"]["cy"] + 10), steps=6)
+        check("rubbing inside the circle changes nothing", strokes(pg, "p5") == snap0)
+        check("and adds no undo step", U(pg) == u0, [u0, U(pg)])
+
+        # 6. the stroke eraser on a circle still removes it whole
+        tool(pg, "eraser")
+        u0 = U(pg); n0 = len(strokes(pg, "p5"))
+        tap_page(pg, 1, c2["data"]["cx"] + c2["data"]["r"], c2["data"]["cy"])
+        s5 = strokes(pg, "p5")
+        check("the stroke eraser removes the circle whole (one record gone, nothing added)", len(s5) == n0 - 1 and not any(s["id"] == c2["id"] for s in s5) and {s["id"] for s in s5} <= {s["id"] for s in snap0}, len(s5))
+        check("one undo step for the stroke eraser", U(pg) == u0 + 1)
+        check("no page errors in the pen part", not e30, e30)
+        ctx.close()
+
+        # 3. a highlighter circle: its piece is highlighter ink in the .hlo group
+        ctx, pg, e31 = fresh(b); errs += e31
+        open_note(pg, "Erase")
+        tool(pg, "highlighter")
+        draw(pg, 1, rough_circle(300, 300, 90), steps=2, hold=650)
+        h = last(pg, "p5")
+        check("a highlighter circle", h["kind"] == "shape" and h["data"]["type"] == "circle" and h["style"]["opacity"] < 1, [h["kind"], h["data"], h["style"]])
+        tool(pg, "area")
+        drag_page(pg, 1, (h["data"]["cx"] + h["data"]["r"], h["data"]["cy"] - 40), (h["data"]["cx"] + h["data"]["r"], h["data"]["cy"] + 40), steps=8)
+        s6 = strokes(pg, "p5")
+        hp = s6[0] if len(s6) == 1 else None
+        check("one piece, kind highlighter, same opacity and style", hp is not None and hp["kind"] == "highlighter" and hp["style"]["opacity"] == h["style"]["opacity"] and hp["style"] == h["style"],
+              [(s["kind"], s["style"]) for s in s6])
+        e = elinfo(pg, 1, hp["id"]) if hp else None
+        check("its path sits in the page's .hl .hlo group", e and e["tag"] == "path" and e["parent"] == "hlo" and e["gp"] == "hl" and e["opacity"] == str(h["style"]["opacity"]), e)
+        check("the .hlo path is in .hl .hlo (DOM query)", hp is not None and pg.evaluate(f"!!document.querySelector('#stack .sheet[data-index=\"1\"] svg.ink g.hl g.hlo path[data-id=\"{hp['id'] if hp else ''}\"]')"))
+
+        # 4. a dashed pen circle: the piece keeps the dash
+        pg.click("#tool-pen")
+        if pg.locator("#toolPanel").is_hidden(): pg.click("#tool-pen")
+        pg.click("#toolPanel .dash[data-dash='dashed']"); pg.click("#noteName"); pg.keyboard.press("Escape")
+        draw(pg, 1, rough_circle(560, 860, 90), steps=2, hold=650)
+        dc = last(pg, "p5")
+        check("a dashed pen circle", dc["kind"] == "shape" and dc["data"]["type"] == "circle" and dc["style"]["dash"] == "dashed", [dc["kind"], dc["data"], dc["style"]])
+        before = ids("p5")
+        tool(pg, "area")
+        drag_page(pg, 1, (dc["data"]["cx"] + dc["data"]["r"], dc["data"]["cy"] - 40), (dc["data"]["cx"] + dc["data"]["r"], dc["data"]["cy"] + 40), steps=8)
+        new = [s for s in strokes(pg, "p5") if s["id"] not in before]
+        check("its piece keeps style.dash (dashed), kind pen", len(new) == 1 and new[0]["kind"] == "pen" and new[0]["style"]["dash"] == "dashed", [(s["kind"], s["style"]) for s in new])
+        e = elinfo(pg, 1, new[0]["id"]) if len(new) == 1 else None
+        check("and draws dashed", e and e["dash"] not in (None, "none"), e)
+        pg.click("#tool-pen")
+        if pg.locator("#toolPanel").is_hidden(): pg.click("#tool-pen")
+        pg.click("#toolPanel .dash[data-dash='solid']"); pg.click("#noteName"); pg.keyboard.press("Escape")
+
+        # 5. an arrow bitten on its shaft: no shape left, shaft pieces plus the head as ink, through the tip
+        tool(pg, "pen")
+        draw(pg, 1, rough_arrow(), steps=3, hold=650)
+        ar = last(pg, "p5")
+        check("an arrow to bite", ar["kind"] == "shape" and ar["data"]["type"] == "arrow", [ar["kind"], ar["data"]])
+        u0 = U(pg); before = ids("p5")
+        tool(pg, "area")
+        ax = (ar["data"]["x1"] + ar["data"]["x2"]) / 2; ay = (ar["data"]["y1"] + ar["data"]["y2"]) / 2
+        drag_page(pg, 1, (ax, ay - 30), (ax, ay + 30), steps=6)
+        s7 = strokes(pg, "p5"); new = [s for s in s7 if s["id"] not in before]
+        check("the arrow shape is gone, no record of kind shape left", not any(s["kind"] == "shape" for s in s7), [(s["kind"], s["data"].get("type")) for s in s7])
+        check("at least 3 new records (two shaft pieces and the head), all pen", len(new) >= 3 and all(s["kind"] == "pen" for s in new), [(s["kind"], len(s["data"]["points"])) for s in new])
+        tip = (ar["data"]["x2"], ar["data"]["y2"])
+        heads = [s for s in new if any(near(q, tip, 1) for q in s["data"]["points"][1:-1])]
+        check("the head piece's points pass through the arrow's tip (within 1 px)", len(heads) == 1, [len(heads)])
+        check("one undo step for the arrow", U(pg) == u0 + 1)
+        undo(pg)
+        check("undo: the arrow is back as a shape", any(s["id"] == ar["id"] and s["data"] == ar["data"] for s in strokes(pg, "p5")))
+        check("no page errors in the highlighter, dash and arrow part", not e31, e31)
+        ctx.close()
+
 
 
         # ------------------------------------------------------------ fix round point 1: real pen events on a handle
@@ -1724,7 +1866,7 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v4k", "pw-v4k" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v4l", "pw-v4l" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)

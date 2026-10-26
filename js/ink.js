@@ -3,7 +3,7 @@
 // A stroke is one record, exactly the strokes table's shape:
 //   { id, page_id, seq, kind, style: { colour, width, dash, opacity }, data }
 //   pen / highlighter: data = { points: [[x, y], ...] } in page px at zoom 1 (A4 = 794 x 1123)
-//   shape (Part B):    data = { type, ...params }; the erasers already remove a shape whole
+//   shape (Part B):    data = { type, ...params }; the stroke eraser removes a shape whole; the area eraser turns it into ink and cuts it
 // Rendering: one <path> per stroke, so every stroke stays crisp at every zoom and can be hit on its own.
 // Each page's SVG holds two groups: <g class="hl"> (bottom) and <g class="pen"> (top, pen and shapes).
 // Inside .hl there is one <g class="hlo" data-opacity> per opacity used on the page; its paths are fully
@@ -29,6 +29,9 @@
 // Clipboard (pw-v4k): the Copy chip puts the selection on a clipboard (CLIP, kept while the app is open, across notes)
 // and adds nothing; a finger held still on a page (page.js) opens a small menu with Paste, which puts a copy there,
 // centred on the finger and kept inside the page, selected, as one undo step.
+// Area eraser cuts shapes (pw-v4l): a shape the area eraser's ring touches turns into plain ink (shapeToInk: pen or
+// highlighter records sampled every 3 px along its outline) and the ring cuts that ink like a stroke; one bite out of
+// a closed shape leaves one open piece. The stroke eraser still removes a shape whole.
 
 import * as store from './store-local.js';
 import { pageAt, pagePoint, view, pageSize } from './page.js';
@@ -100,22 +103,23 @@ function data(id) {
 export function strokesOf(pageId) { return data(pageId).strokes.slice(); }
 export function copyStrokes(pageId) { return JSON.parse(JSON.stringify(data(pageId).strokes)); }
 
-// a shape's outline as a polyline (hit tests now; Part B draws shapes with SVG primitives)
-export function outline(rec) {
+// a shape's outline as a polyline (hit tests now; Part B draws shapes with SVG primitives); n: how many points a
+// circle, ellipse or arc gets (48 for the hit tests, more when it turns into ink)
+export function outline(rec, n = 48) {
   const d = rec.data || {};
   if (d.type === 'line' || d.type === 'arrow') return [[d.x1, d.y1], [d.x2, d.y2]];
   if ((d.type === 'rect' || d.type === 'triangle') && d.points && d.points.length) return [...d.points, d.points[0]];
   if (d.type === 'circle' || d.type === 'ellipse') {
     const rx = d.type === 'circle' ? d.r : d.rx, ry = d.type === 'circle' ? d.r : d.ry, out = [];
     const tu = d.type === 'ellipse' ? d.angle || 0 : 0, c = [d.cx, d.cy];
-    for (let k = 0; k <= 48; k++) { const a = (k / 48) * 2 * Math.PI; out.push(turn([d.cx + rx * Math.cos(a), d.cy + ry * Math.sin(a)], c, tu)); }
+    for (let k = 0; k <= n; k++) { const a = (k / n) * 2 * Math.PI; out.push(turn([d.cx + rx * Math.cos(a), d.cy + ry * Math.sin(a)], c, tu)); }
     return out;
   }
-  if (d.type === 'arc') {                                          // 48 points from the start to the end
+  if (d.type === 'arc') {                                          // n points from the start to the end
     const g = arcGeom(d);
     if (!g) return [[d.x1, d.y1], [d.xm, d.ym], [d.x2, d.y2]];
-    const out = [[d.x1, d.y1]];
-    for (let k = 1; k < 47; k++) { const a = g.t1 + (g.sweep * k) / 47; out.push([g.ox + g.r * Math.cos(a), g.oy + g.r * Math.sin(a)]); }
+    const out = [[d.x1, d.y1]], m = n - 1;
+    for (let k = 1; k < m; k++) { const a = g.t1 + (g.sweep * k) / m; out.push([g.ox + g.r * Math.cos(a), g.oy + g.r * Math.sin(a)]); }
     out.push([d.x2, d.y2]);
     return out;
   }
@@ -135,6 +139,39 @@ function arcGeom(d) {
   return { ox, oy, r: Math.hypot(ax - ox, ay - oy), t1, sweep: nrmA(tm - t1) <= toEnd ? toEnd : toEnd - 2 * Math.PI };
 }
 const nrmA = (t) => ((t % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);   // an angle in [0, 2 pi)
+// a shape as plain ink (the area eraser, pw-v4l): one or two pen or highlighter records (the inHl rule picks the kind,
+// so a highlighter-born shape's ink stays in its .hlo group), same page, seq and style, fresh ids, points every 3 px
+// along the outline. Closed shapes give ONE closed polyline (its last point repeats the first); an arrow gives two,
+// the shaft and the head (the head's two lines through the tip, where makeEl draws them, solid like the drawn head).
+const INK_STEP = 3;
+function densify(poly, step) {                                     // every vertex kept, no gap over step
+  if (!poly.length) return [];
+  const out = [rp(poly[0])];
+  for (let i = 1; i < poly.length; i++) {
+    const a = poly[i - 1], b = poly[i], k = Math.max(1, Math.ceil(dist(a, b) / step));
+    for (let j = 1; j < k; j++) out.push(rp([a[0] + (b[0] - a[0]) * j / k, a[1] + (b[1] - a[1]) * j / k]));
+    out.push(rp(b));
+  }
+  return out;
+}
+function shapeToInk(rec) {
+  const d = rec.data || {}, kind = inHl(rec) ? 'highlighter' : 'pen';
+  const ink = (pts, style = rec.style) => ({ id: uuid(), page_id: rec.page_id, seq: rec.seq, kind, style: { ...style }, data: { points: pts } });
+  if (d.type === 'arrow') {
+    const h = arrowHeadPts(d, (rec.style && rec.style.width) || 2.5);
+    return [ink(densify([[d.x1, d.y1], [d.x2, d.y2]], INK_STEP)), ink(densify(h, INK_STEP), { ...rec.style, dash: 'solid' })];
+  }
+  let len = 0;                                                     // curves: enough points for a 3 px step
+  if (d.type === 'circle') len = 2 * Math.PI * d.r;
+  else if (d.type === 'ellipse') { const a = d.rx, b = d.ry; len = Math.PI * (3 * (a + b) - Math.sqrt((3 * a + b) * (a + 3 * b))); }
+  else if (d.type === 'arc') { const g = arcGeom(d); len = g ? g.r * Math.abs(g.sweep) : 0; }
+  const o = outline(rec, Math.max(48, Math.ceil(len / INK_STEP)));
+  if (o.length < 2) return [];
+  const closed = d.type === 'rect' || d.type === 'triangle' || d.type === 'circle' || d.type === 'ellipse';
+  const pts = densify(o, INK_STEP);
+  if (closed) pts[pts.length - 1] = pts[0].slice();
+  return [ink(pts)];
+}
 // the point q turned deg degrees about c (plus = clockwise on the page, the way SVG's rotate() turns)
 function turn(q, c, deg) {
   if (!deg) return q;
@@ -195,13 +232,14 @@ function styleEl(el, rec) {
 // shapes are SVG primitives: line, polygon (rect, triangle), circle, ellipse, path (arc); an arrow is a <g> of its
 // line and an open head (the head never dashed, so every arrow ends the same way)
 const SHAPE_TAG = { line: 'line', arrow: 'g', rect: 'polygon', triangle: 'polygon', circle: 'circle', ellipse: 'ellipse', arc: 'path' };
-function arrowHead(d, w) {
+function arrowHeadPts(d, w) {                                    // [one barb's end, the tip, the other barb's end]
   const dx = d.x2 - d.x1, dy = d.y2 - d.y1, L = Math.hypot(dx, dy) || 1, ux = dx / L, uy = dy / L;
   const len = Math.min(L * 0.45, Math.max(14, w * 4)), a = 28 * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
   const b1 = [d.x2 - len * (ux * c - uy * s), d.y2 - len * (uy * c + ux * s)];
   const b2 = [d.x2 - len * (ux * c + uy * s), d.y2 - len * (uy * c - ux * s)];
-  return 'M' + f1(b1[0]) + ' ' + f1(b1[1]) + 'L' + f1(d.x2) + ' ' + f1(d.y2) + 'L' + f1(b2[0]) + ' ' + f1(b2[1]);
+  return [b1, [d.x2, d.y2], b2];
 }
+function arrowHead(d, w) { return 'M' + arrowHeadPts(d, w).map((q) => f1(q[0]) + ' ' + f1(q[1])).join('L'); }
 function setGeom(el, rec) {
   const d = rec.data, at = (k, v) => el.setAttribute(k, f1(v));
   if (d.type === 'line') { at('x1', d.x1); at('y1', d.y1); at('x2', d.x2); at('y2', d.y2); }
@@ -418,6 +456,15 @@ function cut(pts, cx, cy, R) {
   }
   if (cur) runs.push(cur);
   return changed ? runs.filter((r) => r.length > 1 && polyLen(r) >= 1) : null;
+}
+// cut a shape's ink (pw-v4l): for a closed loop whose first and last runs both survive (the bite missed the seam),
+// the last run and the first run join into one piece, so one bite leaves one open piece
+function cutInk(pts, cx, cy, R) {
+  const runs = cut(pts, cx, cy, R), n = pts.length;
+  if (!runs || runs.length < 2 || n < 3) return runs;
+  const a = pts[0], z = pts[n - 1], first = runs[0], lastRun = runs[runs.length - 1];
+  if (a[0] !== z[0] || a[1] !== z[1] || first[0] !== a || lastRun[lastRun.length - 1] !== z) return runs;
+  return [[...lastRun, ...first.slice(1)], ...runs.slice(1, -1)];
 }
 
 // ---------------------------------------------------------------- hold-to-snap: which shape is this stroke?
@@ -906,7 +953,21 @@ function eraseHere(cx, cy) {
   const rad = AREA_SIZE / 2 / G.z, gone = [], pieces = [];
   for (const r of d.strokes) {
     const R = rad + (r.style.width || 0) / 2;
-    if (r.kind !== 'pen' && r.kind !== 'highlighter') {          // shapes (and later kinds) go whole
+    if (r.kind === 'shape') {                                      // the stroke eraser removes a shape whole; this ring turns it into ink and cuts it
+      if (!near(r, at.x, at.y, R)) continue;
+      const out = [];
+      let hit = false;
+      for (const k of shapeToInk(r)) {
+        const runs = cutInk(k.data.points, at.x, at.y, R);
+        if (!runs) { out.push(k); continue; }                      // a part the ring misses stays whole, as ink
+        hit = true;
+        for (const pts of runs) out.push({ ...k, id: uuid(), style: { ...k.style }, data: { points: pts } });
+      }
+      if (!hit) continue;
+      gone.push(r); pieces.push(...out);
+      continue;
+    }
+    if (r.kind !== 'pen' && r.kind !== 'highlighter') {          // later kinds go whole
       if (near(r, at.x, at.y, R)) gone.push(r);
       continue;
     }

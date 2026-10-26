@@ -317,7 +317,10 @@ try:
           style: { colour: '#1F2328', width: 2.5, dash: 'solid', opacity: 1 }, data: { type: 'line', x1: 100, y1: 450, x2: 500, y2: 450 } }])""")
         draw(pg, 1, [(300, 430), (300, 470)])
         ks = [r["kind"] for r in strokes(pg, "p4")]
-        check("a shape record is removed whole, not cut", "shape" not in ks and len(ks) == 3, ks)
+        # pw-v4l: flipped, the area eraser turns a shape into ink and cuts it (the line leaves two pen pieces)
+        cutl = [r for r in strokes(pg, "p4") if r["id"] not in three]
+        check("a shape record is cut like a stroke: no shape left, two pen pieces of the line", "shape" not in ks and len(ks) == 5 and len(cutl) == 2 and all(r["kind"] == "pen" for r in cutl)
+              and min(min(q[0] for q in r["data"]["points"]) for r in cutl) < 101 and max(max(q[0] for q in r["data"]["points"]) for r in cutl) > 499, ks)
         pg.click("#tool-pen")
         check("no page errors (panel, highlighter, erasers)", not errs, errs)
         if SHOTS: pg.screenshot(path=str(SHOTS / "u2a-ink.png"))
@@ -488,7 +491,7 @@ try:
         check("the eye toggles password to text and back", a == "password" and c == ["text", "Hide password"] and d == "password", [a, c, d])
         check("the eye sits inside the field", eb["x"] >= lb["x"] and eb["x"] + eb["width"] <= lb["x"] + lb["width"] and eb["y"] >= lb["y"] - 1 and eb["y"] + eb["height"] <= lb["y"] + lb["height"] + 1, [eb, lb])
         group[0] = "pwa and house rules"
-        check("cache is pw-v4k", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v4k"] or "pw-v4k" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v4l", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v4l"] or "pw-v4l" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the new files are in the offline shell", all(f in swt for f in ("./js/ink.js", "./js/store-local.js", "./js/tray.js")))
         pg.evaluate(SEED_JS, False); pg.reload(); ready(pg)

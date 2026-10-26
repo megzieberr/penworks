@@ -217,9 +217,9 @@ try:
         # ------------------------------------------------------------ 6. cache
         group[0] = "cache"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v4k" not in keys:
+        if "pw-v4l" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v4k", "pw-v4k" in keys, keys)
+        check("cache is pw-v4l", "pw-v4l" in keys, keys)
         ctx.close()
         b.close()
 finally:
