@@ -149,6 +149,12 @@ body:not(.noteMode) #tray { display: none; }
 #side .foot { flex: none; border-top: 1px solid var(--line); padding: 6px 8px 10px; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .themeBtn { width: 36px; height: 36px; color: var(--muted); }
 .themeBtn svg { width: 20px; height: 20px; }
+/* the save dot (U3a): fixed colours, the same in dark mode */
+.footR { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.saveDot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: #9a9a9a; }
+.saveDot[data-state="saving"] { background: #2F4BB8; }
+.saveDot[data-state="waiting"] { background: #e0a100; }
+.saveDot[data-state="refused"] { background: #c0392b; }
 
 .frow, .nrow {
   display: flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 4px 0 2px; border-radius: 8px;

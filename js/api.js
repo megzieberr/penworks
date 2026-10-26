@@ -14,6 +14,11 @@ const COLS = {
   notes: 'id,owner_id,folder_id,name,pinned,cover_path,deleted_at,created_at,updated_at',
   pages: 'id,owner_id,note_id,position,orientation,background,snapshot_path,flagged,deleted_at,created_at,updated_at',
 };
+// strokes (U3a): only through strokesOf and putStrokes (js/store.js calls them); owner_id defaults to auth.uid()
+const STROKE_COLS = 'id,page_id,seq,kind,style,data';
+const STROKE_KEYS = STROKE_COLS.split(',');
+const ROWS = 1000;     // the API hands back at most this many rows per request (Supabase's max rows): ask page by page
+const CHUNK = 100;     // ids per delete and rows per insert, so no request grows too big
 
 let sb = null;
 async function client() {
@@ -96,7 +101,42 @@ const liveApi = {
     if (error) throw error;
   },
 
+  // every stroke of these pages, in seq order (one query, read in pages of ROWS rows)
+  async strokesOf(pageIds) {
+    if (!pageIds.length) return [];
+    const c = await client(), out = [];
+    for (let from = 0; ; from += ROWS) {
+      const { data, error } = await c.from('strokes').select(STROKE_COLS).in('page_id', pageIds)
+        .order('seq').order('id').range(from, from + ROWS - 1);
+      if (error) throw error;
+      out.push(...data);
+      if (data.length < ROWS) return out;
+    }
+  },
+
+  // one queued change: delete these ids first, then insert these rows, so running it twice is harmless.
+  // An insert that meets an id already there (23505) counts as done: a batch that does is sent again row by row.
+  async putStrokes(removedIds, added) {
+    const c = await client();
+    for (let i = 0; i < removedIds.length; i += CHUNK) {
+      const { error } = await c.from('strokes').delete().in('id', removedIds.slice(i, i + CHUNK));
+      if (error) throw error;
+    }
+    const rows = added.map((r) => Object.fromEntries(STROKE_KEYS.map((k) => [k, r[k]])));
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const part = rows.slice(i, i + CHUNK);
+      const { error } = await c.from('strokes').insert(part);
+      if (!error) continue;
+      if (error.code !== '23505') throw error;
+      for (const r of part) {
+        const { error: e } = await c.from('strokes').insert(r);
+        if (e && e.code !== '23505') throw e;
+      }
+    }
+  },
+
   failNext() { /* local twin only */ },
+  refuseNext() { /* local twin only */ },
 };
 
 const base = new URLSearchParams(location.search).has('local') ? localApi : liveApi;

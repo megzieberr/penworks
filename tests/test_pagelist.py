@@ -2,7 +2,7 @@
 # pw-v4q: tick mode (Select in the header): tick several pages, then Delete, Copy, Cut or Move them together.
 # Run: python tests/test_pagelist.py              (local mode only: ?local=1, Supabase is never touched)
 # Headless Playwright (Python), same harness as tests/test_pagedrag.py. Strokes are seeded straight into the
-# local store (pw.strokes.<page_id>, the records store-local.js reads); the mouse draws the rest on the desk.
+# local store (pw.strokes.<page_id>, the pre-U3 keys js/store.js takes over); the mouse draws the rest on the desk.
 # A thumb's ink is one <svg class="thumbInk"> inside its .paper, always there (an empty page: an svg with no paths).
 # A pen landing on the desk closes the panel (her "until I click on the page again"), so the live refresh is checked
 # through the stroke funnel with the panel open: ink.put (the same apply every stroke lands through) and the tray's
@@ -560,9 +560,9 @@ try:
         # ------------------------------------------------------------ 8. cache
         group[0] = "cache"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v4x" not in keys:
+        if "pw-v5a" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v4x", "pw-v4x" in keys, keys)
+        check("cache is pw-v5a", "pw-v5a" in keys, keys)
         sw_src = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("sw.js lists vendor/jspdf.umd.min.js", "./vendor/jspdf.umd.min.js" in sw_src)
         ctx.close()

@@ -1,14 +1,14 @@
 // PenWorks U1b + U2 A: Samsung Notes' flow. Folder view (folders two levels deep, note names showing under
 // each folder, Loose, Bin), the grid of notes, the note view (every page stacked), page list, the one
 // undo/redo stack per note (page operations and ink together), full screen, autosave, dark mode.
-// Ink lives in js/ink.js (strokes), js/store-local.js (kept on the device) and js/tray.js (the pen tray).
+// Ink lives in js/ink.js (strokes), js/store.js (the device cache and the queue to the database) and js/tray.js (the pen tray).
 // pw-v4q: the page list's Select (tick mode): tick several pages, then Delete, Copy, Cut or Move them together.
 // pw-v4r: page bookmarks (the page menu's Bookmark, a ribbon tab on the page and its thumb, a Bookmarks filter in the list).
 // pw-v4t: tick mode's Share: name the file first, then share the ticked pages as one PDF or as PNG images.
 import { api } from './api.js';
 import { initPage, showStack, fit, scrollToPage, relayout, current, bookmarkTab, markSheet, bgSvg, pageSize } from './page.js';
 import * as ink from './ink.js';
-import * as store from './store-local.js';
+import * as store from './store.js';
 import { initTray, closePanel, trayState, chooseTool } from './tray.js';
 
 const $ = (id) => document.getElementById(id);
@@ -223,8 +223,12 @@ function binItems() {
 }
 
 // ---------------------------------------------------------------- the open note
-function openNote(id, index = 0) {
+let openTok = 0;
+async function openNote(id, index = 0) {
   if (!liveNote(note(id))) return;
+  const tok = ++openTok;
+  await store.ensure(pagesOf(id).map((p) => p.id));        // the pages' strokes from the device cache before the sheets attach
+  if (tok !== openTok || !liveNote(note(id))) return;       // another note was opened meanwhile
   S.openNote = id; S.cur = index; S.listOpen = false; S.renaming = null; remember();
   document.body.classList.add('noteMode');
   if (!(history.state && history.state.note)) history.pushState({ note: id }, '');
@@ -279,6 +283,7 @@ function insertPage(snap, i) {
   if (pairs.length) save(() => api.reorderPages(pairs));
   S.pages.push(p);
   save(() => api.createPage(p));
+  store.change(p.id, [], ink.strokesOf(p.id));              // U3a: undo of a delete: the database cascaded its strokes, send them again
   store.keepBookmark(p.id, p.bookmark);                     // undo of a delete brings the bookmark back with the page
   touchNote(p.note_id);
 }
@@ -288,6 +293,7 @@ function removePage(id) {
   store.keepBookmark(id, false);                            // the op's snapshot still holds it, for undo
   orphans.add(id);
   save(() => api.deletePage(id));
+  store.unqueue(id);                                        // U3a: its strokes cascade on the server; queued ops for it can never land
   renumber(list);
   touchNote(p.note_id);
 }
@@ -1075,13 +1081,13 @@ async function load() {
   try { d = await api.loadAll(); }
   catch (_) { toast('Could not load your notes. Check the connection, then reload.', 8000); return; }
   S.folders = d.folders; S.notes = d.notes; S.pages = d.pages;
-  S.pages.forEach((p) => { p.bookmark = store.bookmarked(p.id); });       // kept on the device until U3 (store-local.js)
+  S.pages.forEach((p) => { p.bookmark = store.bookmarked(p.id); });       // kept on the device until U3c (store.js)
   try { S.fold = JSON.parse(localStorage.getItem(PREF + 'fold') || '{}') || {}; } catch (_) { S.fold = {}; }
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(PREF + 'open') || '{}') || {}; } catch (_) { /* ignore */ }
   if (saved.sel === 'loose' || saved.sel === 'bin' || liveFolder(folder(saved.sel))) S.sel = saved.sel;
   render();
-  if (saved.note && liveNote(note(saved.note))) openNote(saved.note);
+  if (saved.note && liveNote(note(saved.note))) await openNote(saved.note);
   document.body.dataset.ready = '1';
 }
 
@@ -1089,7 +1095,22 @@ async function enter(user) {
   S.user = user;
   $('login').hidden = true; $('app').hidden = false;
   if (api.mode === 'local') { $('modeNote').textContent = 'local copy'; $('logoutBtn').hidden = true; }
+  store.init({ mode: api.mode, userId: user.id, api, idle: () => chain, onRemote: ink.replace, onState: saveDot });
   await load();
+}
+
+// the save dot (U3a) beside the dark-mode toggle: grey saved, blue saving, amber waiting, red refused. No text, no toast.
+const DOT_TITLE = { saved: () => 'All saved', saving: () => 'Saving', refused: () => 'A change was refused, see the console',
+                    waiting: (n) => `Waiting for a connection, ${n} ${n === 1 ? 'change' : 'changes'} to send` };
+// Two dots, the same state: one in the folder view's footer, one in the note bar (the footer is hidden while she writes).
+function saveDot(state, count) {
+  if (!DOT_TITLE[state]) return;
+  const title = DOT_TITLE[state](count);
+  document.querySelectorAll('.saveDot').forEach((d) => {
+    d.dataset.state = state;
+    d.title = title;
+    d.setAttribute('aria-label', title);
+  });
 }
 
 // ---------------------------------------------------------------- the pen button (pw-v4v)
@@ -1184,7 +1205,7 @@ function wire() {
 }
 
 // test hook: the checks wait for writes and clean up their rows through this
-window.__pw = { S, api, idle: () => chain, failed: () => failed, current, ink, tray: trayState,
+window.__pw = { S, api, idle: async () => { await chain; await store.settled(); await chain; }, failed: () => failed, current, ink, store, tray: trayState,
                 pageDrag: () => (pd ? { lifted: pd.lifted, from: pd.from, to: pd.to } : null),
                 tick: () => (S.tick ? { ids: ticked(), moving: S.tick.moving } : null) };
 

@@ -8,7 +8,7 @@
 // Each page's SVG holds two groups: <g class="hl"> (bottom) and <g class="pen"> (top, pen and shapes).
 // Inside .hl there is one <g class="hlo" data-opacity> per opacity used on the page; its paths are fully
 // opaque and the group's opacity makes them see-through, so going over a spot again stays one flat colour.
-// Storage goes through js/store-local.js only.
+// Storage goes through js/store.js only (the device cache, and the queue to the database).
 // Part B: hold the pen still at the end of a pen stroke and it snaps into a line, arrow, arc, triangle, rect,
 // circle or ellipse (SVG primitives); with the select tool a shape's handles can be grabbed and dragged; the restyle
 // tool gives strokes the restyle colour and the pen's (or the highlighter's) width, dash or opacity; rectangle
@@ -59,7 +59,7 @@
 // Drawn as a <g> of the arc's path and the head's path (the head never dashed); three handles, the arc's; the area eraser
 // turns it into the arc's ink plus the head's ink. A highlighter curved arrow becomes an arc (no highlighter arrows).
 
-import * as store from './store-local.js';
+import * as store from './store.js';
 import { pageAt, pagePoint, view, pageSize } from './page.js';
 
 // snap: the pen held still this long (ms) at the end of a stroke; ?hold=400 in the address overrides it
@@ -436,16 +436,17 @@ addEventListener('pagehide', flush);
 document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
 
 function apply(pageId, removeIds, adds) {
-  const d = data(pageId);
+  const d = data(pageId), gone = [], added = [];
   if (removeIds.length) {
     const rm = new Set(removeIds.filter((id) => d.byId.has(id)));
     if (rm.size) {
       d.strokes = d.strokes.filter((r) => !rm.has(r.id));
-      for (const id of rm) { d.byId.delete(id); const el = d.els.get(id); if (el) { unplace(d, el); d.els.delete(id); } }
+      for (const id of rm) { d.byId.delete(id); gone.push(id); const el = d.els.get(id); if (el) { unplace(d, el); d.els.delete(id); } }
     }
   }
   for (const rec of adds) {
     if (d.byId.has(rec.id)) continue;
+    added.push(rec);
     let lo = 0, hi = d.strokes.length;                     // after every stroke with the same or an earlier seq
     while (lo < hi) { const m = (lo + hi) >> 1; if (d.strokes[m].seq <= rec.seq) lo = m + 1; else hi = m; }
     d.strokes.splice(lo, 0, rec); d.byId.set(rec.id, rec);
@@ -456,6 +457,7 @@ function apply(pageId, removeIds, adds) {
     }
   }
   schedule(pageId);
+  store.change(pageId, gone, added);                   // U3a: the exact change joins the queue for the database
   if (SEL && SEL.page === pageId) syncSel();          // an undo, redo or move: the box follows its strokes
   if (onChange) onChange(pageId);                      // the page list refreshes that page's thumb
 }
@@ -475,7 +477,22 @@ export function erasePageOp(pageId) {
   const all = data(pageId).strokes.slice();
   return all.length ? changeOp([{ page: pageId, removed: all, added: [] }]) : null;
 }
-export function forget(pageId) { P.delete(pageId); dirty.delete(pageId); store.clear(pageId); }
+export function forget(pageId) { P.delete(pageId); dirty.delete(pageId); store.forget(pageId); }
+
+// U3a: the database holds a different set of records for this page (js/store.js reconcile). Swap them in and redraw the
+// page's layer; no undo step, nothing to save (they came from the store). An open selection on the page clears first.
+export function replace(pageId, recs) {
+  if (SEL && SEL.page === pageId) clearSelection();
+  const d = P.get(pageId);
+  if (!d) return;                                      // not read yet: the next data() reads the store
+  const strokes = recs.slice().sort(bySeq);
+  d.strokes = strokes; d.byId = new Map(strokes.map((r) => [r.id, r]));
+  if (d.svg) {
+    d.els.clear(); d.hlo = new Map(); d.hl.replaceChildren(); d.pen.replaceChildren();
+    for (const rec of strokes) { const el = makeEl(rec); d.els.set(rec.id, el); groupFor(d, rec).appendChild(el); }
+  }
+  if (onChange) onChange(pageId);                      // the page list's thumb follows
+}
 
 // ---------------------------------------------------------------- geometry
 function segDist2(px, py, a, b) {

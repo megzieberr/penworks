@@ -88,7 +88,7 @@ SEED_JS = """() => {
     pages: [P('p1', 'n1', 0), P('p2', 'n2', 0), P('p3', 'n3', 0), P('p4', 'n4', 0), P('p4b', 'n4', 1), P('p5', 'n5', 0)] }));
 }"""
 STROKES_JS = "(id) => window.__pw.ink.strokesOf(id)"
-STORED_JS = "(id) => JSON.parse(localStorage.getItem('pw.strokes.' + id) || 'null')"
+STORED_JS = "(id) => window.__pw.store.cached(id)"   # U3a: the device cache (IndexedDB), null when the page has none
 EL_JS = """([i, id]) => { const e = document.querySelector(`#stack .sheet[data-index="${i}"] svg.ink [data-id="${id}"]`);
   if (!e) return null;
   const a = (k) => e.getAttribute(k);
@@ -2836,7 +2836,7 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v4x", "pw-v4x" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v5a", "pw-v5a" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)
