@@ -38,6 +38,7 @@
 // lastStroke() returns it; ?dbg=1 shows and copies it (js/dbg.js), so a real pen stroke can be caught on the tablet.
 // Duplicate chip (pw-v4o): a + chip between Copy and Delete puts a copy of the selection 24 px right and down (kept inside
 // the page), selected, as one undo step; the clipboard is not touched.
+// Select all (pw-v4p): the finger hold menu has Select all above Paste; it selects every stroke on the page under the finger.
 
 import * as store from './store-local.js';
 import { pageAt, pagePoint, view, pageSize } from './page.js';
@@ -857,13 +858,25 @@ function duplicateSel() {
   const step = (lo, hi, W) => { const v = keepIn(lo, hi, DUP_STEP, W, DUP_STEP), u = keepIn(lo, hi, -DUP_STEP, W, -DUP_STEP); return Math.abs(v) >= Math.abs(u) ? v : u; };
   addCopies(page, recs, step(b[0], b[2], d.w), step(b[1], b[3], d.h));
 }
-// a finger held still on the desk (page.js): over a page, a small menu with Paste (disabled with nothing copied)
+// Select all (pw-v4p): every stroke on page pageId (pen, highlighter and shapes, both layers) becomes the selection with
+// the select tool on, the way a paste does; no undo step (a selection is not a change). False when the page is empty.
+export function selectAll(pageId) {
+  const d = data(pageId);
+  if (!d.strokes.length || !d.svg) return false;
+  if (T.tool !== 'select') { if (selectTool) selectTool(); else setTool('select'); }
+  makeSel(pageId, d.strokes.map((r) => r.id));
+  return true;
+}
+// a finger held still on the desk (page.js): over a page, a small menu with Select all (disabled on an empty page)
+// and Paste (disabled with nothing copied)
 function holdMenu(cx, cy) {
   if (G || !openMenuAt) return;
   const at = pageAt(cx, cy);
   if (!at) return;                                 // off every page: nothing opens
   const pageId = at.id, x = at.x, y = at.y;
-  openMenuAt(cx, cy, [CLIP ? { label: 'Paste', fn: () => pasteAt(pageId, x, y) }
+  openMenuAt(cx, cy, [data(pageId).strokes.length ? { label: 'Select all', fn: () => selectAll(pageId) }
+                                                  : { label: 'Nothing to select', disabled: true, fn: () => {} },
+                      CLIP ? { label: 'Paste', fn: () => pasteAt(pageId, x, y) }
                            : { label: 'Nothing to paste', disabled: true, fn: () => {} }]);
 }
 function deleteSel() {
