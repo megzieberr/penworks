@@ -526,6 +526,7 @@ body.full #noteBar, body.full #counter { display: none; }
 .dlgBtn:hover:not(:disabled) { background: var(--hover); }
 .dlgBtn.main:hover:not(:disabled) { background: var(--ink-soft); box-shadow: inset 0 0 0 1px var(--ink); }
 .dlgBtn:disabled { color: var(--faint); cursor: default; }
+.dlgReady { font-size: 14px; overflow-wrap: anywhere; }   /* pw-v6b: "Ready: <name>.pdf" over Send and Save */
 
 /* ---------- tablet portrait ---------- */
 @media (max-width: 900px) {

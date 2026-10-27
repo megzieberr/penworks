@@ -563,6 +563,7 @@ function thumbMenu(i, anchor) {
   if (S.clip.length) items.push({ label: S.clip.length > 1 ? `Paste ${S.clip.length} pages` : 'Paste', fn: () => pastePage(i) });
   if (n > 1) items.push({ label: 'Delete', fn: () => deletePage(i) });
   items.push({ label: 'Erase page', fn: () => erasePage(i) });     // to move a page: hold it and drag (no Move up / down)
+  items.push({ label: 'Share page', fn: () => sharePage(i) });     // pw-v6b: this page, no ticking
   openMenu(anchor, items);
 }
 function paperMenu(anchor) {
@@ -579,7 +580,8 @@ function paperMenu(anchor) {
     { label: 'Lined', on: !pdf && p.background === 'lined', disabled: pdf, keep: true, fn: () => ask('background', 'lined') },
     p.id ? { label: p.bookmark ? 'Remove bookmark' : 'Bookmark', fn: () => setBookmark(p.id, !p.bookmark) } : null,
     { head: 'Note' },
-    { label: 'Bin this note', fn: () => binThing('note', S.openNote) }]);
+    { label: 'Share note', fn: shareNote },                           // pw-v6b: every page, no ticking
+    { label: 'Bin this note', fn: () => binThing('note', S.openNote) }]);   // Bin stays last (Fable: never beside a routine tap)
 }
 
 // long-press on touch, right-click on a laptop
@@ -910,9 +912,14 @@ function renderTick() {
 // closes it. Every ticked page is drawn off-screen at 2x page px: one SVG (white paper, its paper pattern, both ink
 // layers with the highlighter groups' opacity) through a Blob URL into an <img>, onto a <canvas>, then toBlob. The PDF
 // (vendor/jspdf.umd.min.js, loaded the first time) gets one A4 page per page in note order, in that page's orientation,
-// a JPEG 0.92 at full bleed; images are one PNG per page. navigator.share takes the files when it can (Android: the
-// system share sheet); otherwise, or when it fails with anything but a cancel, every file downloads. Tick mode ends
-// after a share. Her ask (26 Oct): Samsung Notes never lets her name the PDF before it goes.
+// a JPEG 0.92 at full bleed; images are one PNG per page. Her ask (26 Oct): Samsung Notes never lets her name the PDF
+// before it goes.
+// pw-v6b: the files are made first, then the dialog shows "Ready: <name>.pdf" with Send and Save. Android's Chrome lets
+// navigator.share run only inside a tap, and only for about 5 s after it; on her tablet the share sheet was refused
+// and the file quietly downloaded ("it just saves it on my tablet", 27 Oct; a 2-page note renders in 0.2 s headless,
+// so the exact cause is not proven: the Send step makes a refusal visible instead of silent). Send is its own
+// tap and calls navigator.share straight away. Save downloads. No Send where the share sheet cannot take the files
+// (her laptop, Firefox). The way in: tick mode's Share, Share note (the note's menu), Share page (the page's menu).
 const SVGNS = 'http://www.w3.org/2000/svg';
 const SHARE_SCALE = 2;
 const fileName = (t) => String(t).replace(/[^\p{L}\p{N} _\-()[\]]/gu, '').trim() || 'PenWorks';
@@ -995,63 +1002,102 @@ async function shareFiles(ids, kind, name, progress) {
   doc.setProperties({ title: name });
   return [new File([doc.output('blob')], name + '.pdf', { type: 'application/pdf' })];
 }
-// the share sheet when it takes files, else one download per file (150 ms apart); '' when she cancelled the sheet
-async function deliver(files, name) {
-  let can = false;
-  try { can = typeof navigator.share === 'function' && !!navigator.canShare && navigator.canShare({ files }); } catch (_) { can = false; }
-  if (can) {
-    try { await navigator.share({ files, title: name }); return 'Shared'; }
-    catch (e) { if (e && e.name === 'AbortError') return ''; }      // any other refusal: download instead
-  }
+// Save: one download per file (150 ms apart)
+async function saveFiles(files) {
   for (let k = 0; k < files.length; k++) {
     if (k) await new Promise((r) => setTimeout(r, 150));
     const url = URL.createObjectURL(files[k]), a = h('a', { href: url, download: files[k].name });
     document.body.append(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   }
-  return 'Saved to downloads';
 }
-// the dialog: centred on a veil, the app's card look. While it works its buttons are off (and, past 3 pages, the
-// pressed one counts "Rendering 2 / 12"); Cancel, Escape and a tap outside do nothing until it is done.
+// can this browser's share sheet take these files? Asked with the real files (an empty list proves nothing)
+function canSend(files) {
+  try { return typeof navigator.share === 'function' && typeof navigator.canShare === 'function' && !!navigator.canShare({ files }); }
+  catch (_) { return false; }
+}
+// the dialog: centred on a veil, the app's card look. Step one: the Name box, Share as PDF / Share as images. While it
+// renders its buttons are off (and, past 3 pages, the pressed one counts "Rendering 2 / 12"); Cancel, Escape and a tap
+// outside do nothing until it is done. Step two (ready): "Ready: <name>.pdf", Send and Save, Cancel; Escape and a tap
+// outside are Cancel. `title` = the dialog's title (tick mode: "Share <n> pages").
 let shareDlg = null;
 function closeShare() { if (shareDlg) { shareDlg.remove(); shareDlg = null; } }
-function openShare(ids) {
+function openShare(ids, title) {
   closeShare(); closeMenu();
   let busy = false;
   const inp = h('input', { class: 'dlgName', id: 'shareName', value: shareName(ids), 'aria-label': 'Name', autocomplete: 'off', spellcheck: 'false' });
+  const close = () => { if (shareDlg === veil) closeShare(); };
   const go = async (kind, btn) => {
     if (busy) return;
     busy = true;
-    const name = fileName(inp.value), label = btn.textContent;
+    const name = fileName(inp.value), was = btn.textContent;
     btns.forEach((b) => { b.disabled = true; }); inp.disabled = true;
+    let files;
     try {
-      const files = await shareFiles(ids, kind, name, (k, n) => { if (n > 3) btn.textContent = `Rendering ${k} / ${n}`; });
-      btn.textContent = label;
-      const said = await deliver(files, name);
-      closeShare();
-      if (said) { endTick(); toast(said); }
+      files = await shareFiles(ids, kind, name, (k, n) => { if (n > 3) btn.textContent = `Rendering ${k} / ${n}`; });
     } catch (e) {
-      closeShare();
+      close();
       toast('Could not share: ' + ((e && e.message) || e));
+      return;
     }
+    btn.textContent = was;
+    if (shareDlg !== veil) return;
+    busy = false;
+    readyStep(kind, name, files);
+  };
+  // step two: the files are made; Send is its own tap, so the share sheet is allowed
+  const readyStep = (kind, name, files) => {
+    const pages = ids.filter((id) => page(id)).length;
+    const what = kind === 'pdf' ? files[0].name + (pages > 1 ? ', ' + pagesWord(pages) : '')
+      : files.length === 1 ? files[0].name : files.length + ' images';
+    const can = canSend(files);
+    let sending = false;
+    const send = () => {
+      if (sending) return;
+      sending = true;
+      let asked;
+      try { asked = navigator.share({ files, title: name }); }          // no await before this line: it would spend the tap
+      catch (e) { asked = Promise.reject(e); }
+      Promise.resolve(asked).then(() => { sending = false; close(); endTick(); toast('Shared'); },
+        (e) => {
+          sending = false;
+          if (e && e.name === 'AbortError') return;                      // she closed the share sheet: the ready panel stays
+          toast('Could not open the share sheet, Save instead');        // never a quiet download from Send
+        });
+    };
+    const save = async () => {
+      if (busy) return;
+      busy = true;
+      await saveFiles(files);
+      close(); endTick(); toast('Saved to downloads');
+    };
+    const sendBtn = can ? h('button', { type: 'button', class: 'dlgBtn main', 'data-share': 'send', onclick: send }, 'Send') : null;
+    const saveBtn = h('button', { type: 'button', class: 'dlgBtn' + (can ? '' : ' main'), 'data-share': 'save', onclick: save }, 'Save');
+    cancel.disabled = false;
+    label.remove(); inp.remove(); first.remove();
+    cancel.parentNode.before(h('p', { class: 'dlgReady', id: 'shareReady' }, 'Ready: ' + what), h('div', { class: 'dlgRow' }, sendBtn, saveBtn));
+    (sendBtn || saveBtn).focus();
   };
   const pdfBtn = h('button', { type: 'button', class: 'dlgBtn main', 'data-share': 'pdf', onclick: () => go('pdf', pdfBtn) }, 'Share as PDF');
   const imgBtn = h('button', { type: 'button', class: 'dlgBtn main', 'data-share': 'images', onclick: () => go('images', imgBtn) }, 'Share as images');
-  const cancel = h('button', { type: 'button', class: 'dlgBtn', 'data-share': 'cancel', onclick: () => { if (!busy) closeShare(); } }, 'Cancel');
+  const cancel = h('button', { type: 'button', class: 'dlgBtn', 'data-share': 'cancel', onclick: () => { if (!busy) close(); } }, 'Cancel');
   const btns = [pdfBtn, imgBtn, cancel];
+  const label = h('label', { class: 'dlgLbl', for: 'shareName' }, 'Name'), first = h('div', { class: 'dlgRow' }, pdfBtn, imgBtn);
   const box = h('div', { class: 'dlg', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'shareTitle' },
-    h('b', { class: 'dlgTitle', id: 'shareTitle' }, 'Share ' + pagesWord(ids.length)),
-    h('label', { class: 'dlgLbl', for: 'shareName' }, 'Name'), inp,
-    h('div', { class: 'dlgRow' }, pdfBtn, imgBtn), h('div', { class: 'dlgRow end' }, cancel));
-  shareDlg = h('div', { class: 'dlgVeil', id: 'shareDlg' }, box);
-  shareDlg.addEventListener('pointerdown', (e) => { if (e.target === shareDlg && !busy) closeShare(); });
-  shareDlg.addEventListener('keydown', (e) => {
+    h('b', { class: 'dlgTitle', id: 'shareTitle' }, title || 'Share ' + pagesWord(ids.length)),
+    label, inp, first, h('div', { class: 'dlgRow end' }, cancel));
+  const veil = shareDlg = h('div', { class: 'dlgVeil', id: 'shareDlg' }, box);
+  veil.addEventListener('pointerdown', (e) => { if (e.target === veil && !busy) close(); });
+  veil.addEventListener('keydown', (e) => {
     e.stopPropagation();                                            // the app's own keys (Escape ends tick mode) wait
-    if (e.key === 'Escape' && !busy) closeShare();
+    if (e.key === 'Escape' && !busy) close();
   });
-  document.body.append(shareDlg);
+  document.body.append(veil);
   inp.focus(); inp.select();
 }
+// pw-v6b: the whole note (the note's menu) and one page (the page's menu), no ticking
+function shareNote() { const ids = pagesOf(S.openNote).map((p) => p.id); if (ids.length) openShare(ids, 'Share note'); }
+function sharePage(i) { const p = pagesOf(S.openNote)[i]; if (p) openShare([p.id], 'Share page ' + (i + 1)); }
 
 // the thumb of a page whose ink changed (ink.js apply: drawing, erasing, undo, redo): rebuild just its svg, once per
 // frame, so a stroke that lands in many pieces rebuilds once

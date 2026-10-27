@@ -435,8 +435,9 @@ try:
 
         # 1. page 2's menu: Bookmark, right after the paper items; tap it
         items = page_menu(2)
-        check("page 2's menu has 'Bookmark' right after the paper items (Lined), before 'Bin this note'",
-              "Bookmark" in items and items.index("Bookmark") == items.index("Lined") + 1 and items.index("Bin this note") == items.index("Bookmark") + 1
+        check("page 2's menu has 'Bookmark' right after the paper items (Lined), then 'Share note', then 'Bin this note'",
+              "Bookmark" in items and items.index("Bookmark") == items.index("Lined") + 1 and items.index("Share note") == items.index("Bookmark") + 1
+              and items.index("Bin this note") == items.index("Share note") + 1
               and "Remove bookmark" not in items, items)
         u0, r0 = U4(), R4()
         menu_click(pg, "Bookmark"); idle(pg)
@@ -565,9 +566,9 @@ try:
         # ------------------------------------------------------------ 8. cache
         group[0] = "cache"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v6a" not in keys:
+        if "pw-v6b" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v6a", "pw-v6a" in keys, keys)
+        check("cache is pw-v6b", "pw-v6b" in keys, keys)
         sw_src = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("sw.js lists vendor/jspdf.umd.min.js", "./vendor/jspdf.umd.min.js" in sw_src)
         ctx.close()
@@ -639,13 +640,18 @@ try:
             if all_: p.click("#plAll"); p.wait_for_timeout(40)
             for k in ticks: thumb(p, k).click(); p.wait_for_timeout(30)
             p.click("#plBar button[data-act='share']"); p.wait_for_selector("#shareDlg")
-        def share_go(p, kind, name=None):
+        # pw-v6b: Share as PDF / images makes the files, the dialog turns to "Ready", then Send is its own tap
+        def share_ready(p, kind, name=None):
             if name is not None: p.fill("#shareName", name)
-            p.evaluate("window.__shared = null")
             t0 = p.evaluate("performance.now()")
             p.click(f"#shareDlg button[data-share='{kind}']")
+            p.wait_for_selector("#shareReady", timeout=30000)
+            return p.evaluate("performance.now()") - t0
+        def share_go(p, kind, name=None):
+            p.evaluate("window.__shared = null")
+            ms = share_ready(p, kind, name)
+            p.click("#shareDlg button[data-share='send']")
             p.wait_for_function("window.__shared", timeout=30000)
-            ms = p.evaluate("window.__sharedAt") - t0
             p.wait_for_selector("#shareDlg", state="detached"); p.wait_for_timeout(40)
             return p.evaluate(SHARED_JS), ms
 
@@ -707,19 +713,23 @@ try:
         share_start(p2, (1,)); sh, _ = share_go(p2, "images", " Wiskunde/ê-toets: (V1) [b]? ")
         check("'Wiskunde/ê-toets: (V1) [b]?' keeps letters, digits, spaces, dashes, brackets: 'Wiskundeê-toets (V1) [b].png'",
               sh and [f["name"] for f in sh["files"]] == ["Wiskundeê-toets (V1) [b].png"], brief(sh))
-        # a cancelled share sheet says nothing; any other refusal downloads
+        # a cancelled share sheet says nothing and the ready panel stays; any other refusal says so, never a quiet download (pw-v6b)
         p2.evaluate("() => { navigator.share = async () => { throw new DOMException('cancelled', 'AbortError'); }; }")
         dls = []; p2.on("download", lambda d: dls.append(d))
         p2.evaluate("document.getElementById('toast').textContent = 'x'")
-        share_start(p2, (1,)); p2.click("#shareDlg button[data-share='pdf']"); p2.wait_for_selector("#shareDlg", state="detached"); p2.wait_for_timeout(400)
-        check("a cancelled share sheet (AbortError): no toast, no download", p2.evaluate("document.getElementById('toast').textContent") == "x" and not dls,
-              [p2.evaluate("document.getElementById('toast').textContent"), len(dls)])
+        share_start(p2, (1,)); share_ready(p2, "pdf"); p2.click("#shareDlg button[data-share='send']"); p2.wait_for_timeout(400)
+        check("a cancelled share sheet (AbortError): no toast, no download, the ready panel stays", p2.evaluate("document.getElementById('toast').textContent") == "x"
+              and not dls and p2.locator("#shareReady").count() == 1, [p2.evaluate("document.getElementById('toast').textContent"), len(dls)])
         p2.evaluate("() => { navigator.share = async () => { throw new DOMException('no gesture', 'NotAllowedError'); }; }")
-        share_start(p2, (1,))
-        with p2.expect_download() as dl: p2.click("#shareDlg button[data-share='pdf']")
+        p2.click("#shareDlg button[data-share='send']"); p2.wait_for_timeout(400)
+        check("any other refusal (NotAllowedError): toast 'Could not open the share sheet, Save instead', no download, the ready panel stays",
+              p2.evaluate("document.getElementById('toast').textContent") == "Could not open the share sheet, Save instead" and not dls
+              and p2.locator("#shareReady").count() == 1, [p2.evaluate("document.getElementById('toast').textContent"), len(dls)])
+        with p2.expect_download() as dl: p2.click("#shareDlg button[data-share='save']")
         p2.wait_for_selector("#shareDlg", state="detached"); p2.wait_for_timeout(60)
-        check("any other refusal (NotAllowedError): the file downloads, toast 'Saved to downloads'", dl.value.suggested_filename == "Test note p1.pdf"
-              and p2.evaluate("document.getElementById('toast').textContent") == "Saved to downloads", [dl.value.suggested_filename])
+        check("... and Save still works: 'Test note p1.pdf' downloads, toast 'Saved to downloads', tick mode off", dl.value.suggested_filename == "Test note p1.pdf"
+              and p2.evaluate("document.getElementById('toast').textContent") == "Saved to downloads" and p2.evaluate("window.__pw.tick()") is None,
+              [dl.value.suggested_filename])
         p2.evaluate("() => { navigator.share = async (d) => { window.__shared = d; window.__sharedAt = performance.now(); }; }")
         # 4. one landscape page
         go_page(p2, 4); p2.click("#noteMore"); p2.wait_for_timeout(40); menu_click(p2, "Landscape"); menu_click(p2, "Just this page"); idle(p2)
@@ -753,8 +763,8 @@ try:
               "Rendering 1 / 12" in texts and "Rendering 12 / 12" in texts and all(d_ for t_, d_ in prog if t_.startswith("Rendering")), texts)
         pi = pdf_info(sh["files"][0]) if sh else {}
         check("the 12-page PDF has 12 pages", pi.get("pages") == 12, pi)
-        check("12 A4 pages at 2x render and share in under 6 s", 0 < ms12 < 6000, round(ms12))
-        info_lines.append(f"share: 12 A4 pages (60 strokes each) at 2x to one PDF in {round(ms12)} ms, {round(sh['files'][0]['size'] / 1024) if sh else '?'} KB")
+        check("12 A4 pages at 2x render to ready in under 6 s", 0 < ms12 < 6000, round(ms12))
+        info_lines.append(f"share: 12 A4 pages (60 strokes each) at 2x to one PDF, tap to ready, in {round(ms12)} ms, {round(sh['files'][0]['size'] / 1024) if sh else '?'} KB")
         share_start(p2, all_=True); sh, msi = share_go(p2, "images", "Twelve pages")
         info_lines.append(f"share: the same 12 pages as PNGs in {round(msi)} ms")
         check("no page errors (share)", not e2, e2)
@@ -767,14 +777,19 @@ try:
         def wait_dl(n, ms=15000):
             t0 = time.time()
             while len(dl3) < n and (time.time() - t0) * 1000 < ms: p3.wait_for_timeout(50)
-        share_start(p3, (2, 3)); p3.fill("#shareName", "Homework week 3"); p3.click("#shareDlg button[data-share='pdf']"); wait_dl(1); p3.wait_for_timeout(300)
-        check("no navigator.share: Share as PDF downloads one file 'Homework week 3.pdf'", [d.suggested_filename for d in dl3] == ["Homework week 3.pdf"],
+        share_start(p3, (2, 3)); share_ready(p3, "pdf", "Homework week 3")
+        btns3 = p3.evaluate("[...document.querySelectorAll('#shareDlg button')].map(b => [b.textContent, b.classList.contains('main')])")
+        check("no navigator.share: the ready panel has Save (the main button) and Cancel, no Send", btns3 == [["Save", True], ["Cancel", False]], btns3)
+        p3.click("#shareDlg button[data-share='save']"); wait_dl(1); p3.wait_for_timeout(300)
+        check("Save downloads one file 'Homework week 3.pdf'", [d.suggested_filename for d in dl3] == ["Homework week 3.pdf"],
               [d.suggested_filename for d in dl3])
         check("toast 'Saved to downloads', tick mode off", p3.evaluate("document.getElementById('toast').textContent") == "Saved to downloads"
               and p3.evaluate("window.__pw.tick()") is None, p3.evaluate("document.getElementById('toast').textContent"))
         dl3.clear()
-        share_start(p3, (2, 3)); p3.fill("#shareName", "Homework week 3"); p3.click("#shareDlg button[data-share='images']"); wait_dl(2); p3.wait_for_timeout(400)
-        check("and Share as images downloads two: '-1.png', '-2.png'", [d.suggested_filename for d in dl3] == ["Homework week 3-1.png", "Homework week 3-2.png"],
+        share_start(p3, (2, 3)); share_ready(p3, "images", "Homework week 3")
+        rd3 = p3.evaluate("document.getElementById('shareReady').textContent")
+        p3.click("#shareDlg button[data-share='save']"); wait_dl(2); p3.wait_for_timeout(400)
+        check("and Share as images ('Ready: 2 images'), Save downloads two: '-1.png', '-2.png'", rd3 == "Ready: 2 images" and [d.suggested_filename for d in dl3] == ["Homework week 3-1.png", "Homework week 3-2.png"],
               [d.suggested_filename for d in dl3])
         check("no page errors (downloads)", not e3, e3)
         c3.close()

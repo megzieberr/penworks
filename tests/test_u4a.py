@@ -325,6 +325,7 @@ try:
         pg.locator("#plThumbs .thumbP[data-index='1']").click(); pg.locator("#plThumbs .thumbP[data-index='3']").click()
         pg.click("#plBar button[data-act='share']"); pg.wait_for_selector("#shareDlg")
         pg.evaluate("window.__shared = null"); pg.click("#shareDlg button[data-share='pdf']")
+        pg.wait_for_selector("#shareDlg button[data-share='send']", timeout=30000); pg.click("#shareDlg button[data-share='send']")   # pw-v6b: Send is its own tap
         pg.wait_for_function("window.__shared", timeout=30000)
         sh = pg.evaluate(SHARED_JS)
         f0 = sh["files"][0] if sh and sh["files"] else None
@@ -473,12 +474,12 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v6a" not in keys:
+        if "pw-v6b" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v6a", "pw-v6a" in keys, keys)
+        check("cache is pw-v6b", "pw-v6b" in keys, keys)
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the shell lists pdfin.js, pdfview.js and both pdf.js files", all(x in swt for x in ["./js/pdfin.js", "./js/pdfview.js", "./vendor/pdf.min.mjs", "./vendor/pdf.worker.min.mjs"]))
-        shell = pg.evaluate("""async () => { const c = await caches.open('pw-v6a'); const out = [];
+        shell = pg.evaluate("""async () => { const c = await caches.open('pw-v6b'); const out = [];
           for (const u of ['./vendor/pdf.min.mjs', './vendor/pdf.worker.min.mjs', './js/pdfin.js', './js/pdfview.js']) out.push(!!(await c.match(u))); return out; }""")
         check("... and they are in the cache (PDF pages draw offline)", shell == [True] * 4, shell)
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in

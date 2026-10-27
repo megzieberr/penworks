@@ -164,7 +164,7 @@ try:
         group[0] = "menus"
         open_list(pg)
         thumb(pg, 2).click(button="right"); items = menu_items(pg); pg.keyboard.press("Escape")
-        check("page menu: no Move up, no Move down", items == ["Add page", "Copy", "Cut", "Delete", "Erase page"], items)
+        check("page menu: no Move up, no Move down", items == ["Add page", "Copy", "Cut", "Delete", "Erase page", "Share page"], items)
         thumb(pg, 2).locator(".more").click(); items2 = menu_items(pg); pg.keyboard.press("Escape")
         check("the dots under a thumb open the same menu", items2 == items, items2)
         check("the dots do not go to the page", pg.locator("#pageList").is_visible() and pg.evaluate(COUNTERS_JS)[0] == "1 / 8")
