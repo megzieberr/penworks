@@ -17,6 +17,10 @@
 // in an open note the bar's + opens a small menu, Page (a page below, as before) or PDF (its pages at the end). Each PDF
 // page is a page of its own shape with the PDF under her ink (js/pdfin.js reads and keeps the file, js/pdfview.js draws it).
 // Opening a PDF is not an undo step: undo never removes the PDF (her ruling 26 Oct).
+// U4b (pw-v7a): a PDF shared to PenWorks (WhatsApp's share button) lands on ./?share=1 (sw.js keeps the file); once she
+// is logged in a small sheet asks "Open <name> as": New note in Loose, or Add to a note (the grid of every note's card),
+// or Cancel. The installed app runs full screen itself (manifest display "fullscreen"), so the full-screen button there
+// only hides PenWorks' own header: no requestFullscreen, no Chrome "you're in full screen" notice.
 import { api } from './api.js';
 import { initPage, showStack, fit, scrollToPage, relayout, current, bookmarkTab, markSheet, bgSvg, pageSize, A4 } from './page.js';
 import * as ink from './ink.js';
@@ -482,10 +486,15 @@ function setBookmark(id, on) {
   toast(on ? 'Bookmarked' : 'Bookmark removed');
 }
 
-// ---------------------------------------------------------------- full screen (the real Fullscreen API, so the Android bar goes)
+// ---------------------------------------------------------------- full screen
+// In a browser tab: the real Fullscreen API, so the Android bar goes. U4b: the installed app already runs full screen
+// (manifest display "fullscreen", no Android bar anywhere, her OK 27 Oct); there requestFullscreen would only bring back
+// Chrome's own "you're in full screen" notice, which a page cannot hide, so the button just hides PenWorks' header.
+const appFull = () => matchMedia('(display-mode: fullscreen)').matches;
 async function enterFull() {
   document.body.classList.add('full'); $('exitFs').hidden = false;
   relayout();
+  if (appFull()) return;
   try {
     const el = document.documentElement;
     if (el.requestFullscreen) await el.requestFullscreen({ navigationUI: 'hide' });
@@ -699,9 +708,7 @@ function renderGrid() {
   G.append(h('button', { class: 'card plus', type: 'button', id: 'openPdf', 'aria-label': 'Open PDF', onclick: () => pickPdf({ folderId: fid }) },
     h('div', { class: 'thumb', html: SVG_DOC }), h('span', { class: 'cname' }, 'Open PDF')));
   for (const n of notesIn(fid)) {
-    const first = pagesOf(n.id)[0];
-    const thumb = h('div', { class: 'thumb' }, paper(first), n.pinned ? h('span', { class: 'pin', html: SVG_PIN, title: 'Pinned' }) : null);
-    cardCover(thumb, n);
+    const thumb = cardThumb(n);
     const card = h('div', { class: 'card' + (n.pinned ? ' pinned' : ''), 'data-id': n.id, onclick: () => openNote(n.id) },
       thumb,
       h('div', { class: 'meta' },
@@ -710,6 +717,13 @@ function renderGrid() {
     pressable(card, () => noteMenu(n.id, card.querySelector('.thumb'), 'card'));
     G.append(card);
   }
+}
+
+// a note card's picture: its first page's paper, the pin, the cover over it (the grid, and U4b's Add to a note)
+function cardThumb(n) {
+  const thumb = h('div', { class: 'thumb' }, paper(pagesOf(n.id)[0]), n.pinned ? h('span', { class: 'pin', html: SVG_PIN, title: 'Pinned' }) : null);
+  cardCover(thumb, n);
+  return thumb;
 }
 
 // U3b: a card shows its note's first page. On the tablet (anything wider than a phone), when that page's strokes are in
@@ -1113,6 +1127,78 @@ function openShare(ids, title) {
 function shareNote() { const ids = pagesOf(S.openNote).map((p) => p.id); if (ids.length) openShare(ids, 'Share note'); }
 function sharePage(i) { const p = pagesOf(S.openNote)[i]; if (p) openShare([p.id], 'Share page ' + (i + 1)); }
 
+// ---------------------------------------------------------------- U4b: a PDF shared to PenWorks
+// ./?share=1 (sw.js answered the share): once she is logged in and the tree is loaded, one sheet over the app in the
+// share dialog's look. Step one: "Open <name> as", New note in Loose (main), Add to a note, Cancel. Add to a note: the
+// card of every note (all folders, last edited first, its folder's name under it, Back and Cancel below); a tap puts the
+// PDF's pages at the END of that note and opens it on the first of them. Cancel and Escape drop the file; a tap outside
+// does nothing (a stray tap would lose the share). ?share=1 leaves the address once she has answered, before the note
+// opens, so a reload never asks again.
+const SHARED = new URLSearchParams(location.search).get('share') === '1';
+const LEFTOVER = 10 * 60e3;          // a normal start drops a shared file nobody answered for ten minutes
+let shareInDlg = null;
+function unshare() {
+  const u = new URL(location.href);
+  if (!u.searchParams.has('share')) return;
+  u.searchParams.delete('share');
+  history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+}
+async function shareLanding() {
+  if (!SHARED) { pdfin.dropShared(LEFTOVER); return; }
+  const file = await pdfin.sharedFile();
+  if (!file) { unshare(); toast('Nothing to open: share a PDF to PenWorks', 5000); return; }
+  openShareIn(file);
+}
+function openShareIn(file) {
+  closeShare(); closeMenu();
+  if (shareInDlg) shareInDlg.remove();
+  let done = false;
+  const box = h('div', { class: 'dlg', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'shareInTitle' });
+  const veil = shareInDlg = h('div', { class: 'dlgVeil', id: 'shareIn' }, box);
+  const close = () => { if (shareInDlg === veil) { veil.remove(); shareInDlg = null; } };
+  const cancel = () => { if (done) return; done = true; close(); unshare(); pdfin.dropShared(); };
+  const go = async (target) => {
+    if (done) return;
+    done = true; close(); unshare();
+    const n = target.noteId ? note(target.noteId) : null;
+    S.sel = n ? keyOf(n.folder_id) : 'loose'; remember();        // Back from the note lands where the note lives
+    const r = await pdfin.importPdf(file, target);              // too big or broken: its one toast, nothing made
+    await pdfin.dropShared();
+    if (!r) { render(); return; }
+    if (n && S.openNote !== n.id) { const i = pagesOf(n.id).findIndex((p) => p.id === r.pageIds[0]); await openNote(n.id, Math.max(0, i)); }
+  };
+  const title = (a, b) => h('b', { class: 'dlgTitle', id: 'shareInTitle' }, a, h('span', { class: 'dlgFile' }, file.name), b);
+  const cancelBtn = h('button', { type: 'button', class: 'dlgBtn', 'data-share-in': 'cancel', onclick: cancel }, 'Cancel');
+  const first = () => {
+    box.classList.remove('wide'); box.textContent = '';
+    const newBtn = h('button', { type: 'button', class: 'dlgBtn main', 'data-share-in': 'new', onclick: () => go({ folderId: null }) }, 'New note in Loose');
+    const addBtn = h('button', { type: 'button', class: 'dlgBtn', 'data-share-in': 'add', onclick: pick }, 'Add to a note');
+    box.append(title('Open ', ' as'), h('div', { class: 'dlgRow' }, newBtn, addBtn), h('div', { class: 'dlgRow end' }, cancelBtn));
+    newBtn.focus();
+  };
+  const pick = () => {
+    box.classList.add('wide'); box.textContent = '';
+    const notes = S.notes.filter(liveNote).sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
+    const grid = h('div', { class: 'shareGrid', id: 'shareInGrid' });
+    for (const n of notes) {
+      grid.append(h('button', { type: 'button', class: 'card', 'data-id': n.id, onclick: () => go({ noteId: n.id }) },
+        cardThumb(n),
+        h('div', { class: 'meta' }, h('span', { class: 'name' }, n.name),
+          h('small', { class: 'where' }, n.folder_id ? folderPath(folder(n.folder_id)) : 'Loose'))));
+    }
+    if (!notes.length) grid.append(h('p', { class: 'empty' }, 'No notes yet.'));
+    const backBtn = h('button', { type: 'button', class: 'dlgBtn', 'data-share-in': 'back', onclick: first }, 'Back');
+    box.append(title('Add ', ' to'), grid, h('div', { class: 'dlgRow end' }, backBtn, cancelBtn));
+    backBtn.focus();
+  };
+  veil.addEventListener('keydown', (e) => {
+    e.stopPropagation();                                            // the app's own keys wait
+    if (e.key === 'Escape') cancel();
+  });
+  document.body.append(veil);
+  first();
+}
+
 // the thumb of a page whose ink changed (ink.js apply: drawing, erasing, undo, redo): rebuild just its svg, once per
 // frame, so a stroke that lands in many pieces rebuilds once
 const thumbDue = new Set();
@@ -1373,6 +1459,7 @@ async function enter(user) {
   live.initLive({ api, userId: user.id, onRow: remoteRow, onGap: liveGap });   // U3d: after load(), one channel per login
   document.addEventListener('visibilitychange', () => { if (!document.hidden) maybeRefreshTree(); });
   addEventListener('online', maybeRefreshTree);
+  shareLanding();                                           // U4b: a PDF shared to PenWorks, after the login and the tree
 }
 
 // ---------------------------------------------------------------- the live mirror (U3d)
@@ -1615,7 +1702,8 @@ window.__pw = { S, api, idle: settledBoth, failed: () => treeq.dropCount(), curr
                 tick: () => (S.tick ? { ids: ticked(), moving: S.tick.moving } : null),
                 live: { state: live.state, stats: live.liveStats, simulateDrop: live.simulateDrop }, refreshTree,
                 pdf: { importPdf: (f, t) => pdfin.importPdf(f, t), stats: () => ({ ...pdfin.pdfStats(), ...pdfview.viewStats() }),
-                       cached: pdfin.cached, uploadsPending: pdfin.uploadsPending, budget: pdfview.setBudget } };
+                       cached: pdfin.cached, uploadsPending: pdfin.uploadsPending, budget: pdfview.setBudget,
+                       shared: () => pdfin.sharedFile().then((f) => (f ? { name: f.name, size: f.size } : null)) } };
 Object.defineProperty(window.__pw, 'lastLoad', { get: () => lastLoad, set: (v) => { lastLoad = v; } });   // U3d: the tree's age
 
 wire();

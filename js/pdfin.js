@@ -1,7 +1,7 @@
 // PenWorks PDF in (U4a): the + button opens a PDF as note pages, her ink on top (js/pdfview.js draws them).
 // importPdf(file, target) is the one way in: target = { folderId } makes a NEW note named after the file (the name
-// without .pdf) in that folder (null = Loose), target = { noteId } puts the PDF's pages at the END of that note. A
-// share-target handler (U4b) can call it the same way with the File it is handed.
+// without .pdf) in that folder (null = Loose), target = { noteId } puts the PDF's pages at the END of that note. U4b's
+// share target calls it the same way with the File sw.js kept for it (sharedFile, at the end of this file).
 //
 // The file is read once. Over 50 MB (the imports bucket's limit), a broken file or a password-protected one: ONE plain
 // toast and nothing made. Otherwise its bytes are kept on this device at once (IndexedDB, a database of its own,
@@ -217,6 +217,42 @@ async function pumpUploads() {
       await putRec({ ...rec, up: true });
     }
   } finally { upBusy = false; }
+}
+
+// ---------------------------------------------------------------- U4b: a PDF shared to PenWorks
+// sw.js keeps the shared file in IndexedDB penworks.share (store `files`, key `pending` = { blob, name, at }) and sends
+// the app to ./?share=1; app.js asks for it once she is logged in, imports it with importPdf like any other, and drops
+// it when she has answered the sheet. Not per user: the file waits before anyone is logged in.
+const SHARE_DB = 'penworks.share';
+async function shareRun(mode, fn) {
+  const db = await openDb(SHARE_DB);
+  try {
+    return await new Promise((resolve, reject) => {
+      const t = db.transaction(['files'], mode), out = {};
+      fn(t.objectStore('files'), out);
+      t.oncomplete = () => resolve(out);
+      t.onerror = t.onabort = () => reject(t.error);
+    });
+  } finally { db.close(); }
+}
+// the file waiting, as a File named as it was shared; null when there is none
+export async function sharedFile() {
+  try {
+    const v = (await shareRun('readonly', (s, out) => { s.get('pending').onsuccess = (e) => { out.v = e.target.result || null; }; })).v;
+    if (!v || !v.blob) return null;
+    return new File([v.blob], v.name || 'Shared.pdf', { type: 'application/pdf' });
+  } catch (e) { console.warn('PenWorks: the shared PDF could not be read', e); return null; }
+}
+// drop it; olderThan (ms): only a file waiting longer than that (a share she never answered)
+export async function dropShared(olderThan = 0) {
+  try {
+    await shareRun('readwrite', (s) => {
+      s.get('pending').onsuccess = (e) => {
+        const v = e.target.result;
+        if (v && (!olderThan || !(Date.now() - Date.parse(v.at) < olderThan))) s.delete('pending');
+      };
+    });
+  } catch (_) { /* nothing to drop */ }
 }
 
 // ---------------------------------------------------------------- for the tests (window.__pw.pdf)

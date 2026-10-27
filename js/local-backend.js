@@ -112,8 +112,10 @@ function logged(call, table, ids) { calls.push({ call, table, ids }); if (calls.
 export const localApi = {
   mode: 'local',
 
-  async session() { return { id: 'local', username: 'local' }; },
-  async signIn() { return { ok: true }; },
+  // U4b: localStorage penworks.local.out = '1' stands in for a logged-out start (the tests' share before the login);
+  // signIn clears it
+  async session() { try { if (localStorage.getItem('penworks.local.out') === '1') return null; } catch (_) { /* ignore */ } return { id: 'local', username: 'local' }; },
+  async signIn() { try { localStorage.removeItem('penworks.local.out'); } catch (_) { /* ignore */ } return { ok: true }; },
   async signOut() { /* nothing to end */ },
 
   async purgeBin(days = 30) {
