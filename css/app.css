@@ -288,6 +288,7 @@ input.rename {
 /* U4a: a PDF page under the ink (js/pdfview.js); its canvas fills the page, the pinch scales it with the stack */
 .sheet > .pdfLayer { position: absolute; inset: 0; overflow: hidden; pointer-events: none; border-radius: inherit; }
 .sheet > .pdfLayer > canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.sheet > .pdfLayer > img.pdfPh { position: absolute; inset: 0; width: 100%; height: 100%; display: block; image-rendering: auto; }   /* the small thumb until the sharp canvas lands (pw-v6d) */
 .paper > img.pdfThumb { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
 .card .thumb .paper > img.pdfThumb { object-fit: cover; }
 #eraserRing {

@@ -71,6 +71,34 @@ ROWS_JS = """(nid) => window.__pw.S.pages.filter(p => p.note_id === nid && !p.de
 B64_PUT_JS = """async ([path, b64]) => { const s = atob(b64), u = new Uint8Array(s.length);
   for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i);
   await window.__pw.api.putImport(path, new Blob([u], { type: 'application/pdf' })); }"""
+# pw-v6d: one wheel gesture over n frames that lands sheet `to` just past the top of the desk (40 px of it scrolled off,
+# so it is the only page on screen)
+WHEEL_JS = """async ([to, frames]) => {
+  const desk = document.getElementById('desk'), r = desk.getBoundingClientRect();
+  const step = (document.querySelector(`#stack .sheet[data-index="${to}"]`).getBoundingClientRect().top - (r.top - 40)) / frames;
+  for (let k = 0; k < frames; k++) {
+    desk.dispatchEvent(new WheelEvent('wheel', { deltaY: step, clientX: r.left + 300, clientY: r.top + 300, bubbles: true, cancelable: true }));
+    await new Promise((ok) => requestAnimationFrame(ok));
+  }
+  return 1; }"""
+# pw-v6d: the same gesture, watching sheet `to` every frame: the frame its thumb showed (a decoded img.pdfPh), the sharp
+# renders by then, the frame its canvas came, and what its layer holds at the end
+PH_JS = """async ([to, frames]) => {
+  const desk = document.getElementById('desk'), r = desk.getBoundingClientRect();
+  const sheet = () => document.querySelector(`#stack .sheet[data-index="${to}"]`), st = () => window.__pw.pdf.stats();
+  const step = (sheet().getBoundingClientRect().top - (r.top - 40)) / frames, r0 = st().renders;
+  let ph = null, cv = null, rph = null;
+  const look = (k) => { const L = sheet().querySelector(':scope > .pdfLayer'), im = L.querySelector('img.pdfPh'), c = L.querySelector('canvas');
+    if (ph === null && im && im.complete && im.naturalWidth > 0) { ph = k; rph = st().renders - r0; }
+    if (cv === null && c && c.width > 0) cv = k; };
+  for (let k = 0; k < frames; k++) {
+    desk.dispatchEvent(new WheelEvent('wheel', { deltaY: step, clientX: r.left + 300, clientY: r.top + 300, bubbles: true, cancelable: true }));
+    await new Promise((ok) => requestAnimationFrame(ok)); look(k);
+  }
+  const t0 = performance.now(); let k = frames;
+  while (cv === null && performance.now() - t0 < 4000) { await new Promise((ok) => requestAnimationFrame(ok)); look(k++); }
+  await new Promise((ok) => setTimeout(ok, 50));
+  return { ph, cv, rph, frames, after: [...sheet().querySelector(':scope > .pdfLayer').children].map((c) => c.tagName.toLowerCase()) }; }"""
 STUB_JS = "navigator.canShare = () => true; navigator.share = async (d) => { window.__shared = d; };"
 SHARED_JS = """async () => { const d = window.__shared; if (!d) return null;
   const b64 = async (f) => { const u = new Uint8Array(await f.arrayBuffer()); let s = '';
@@ -430,9 +458,37 @@ try:
         check("the 40-page PDF opens as a note of 40 pages", ok and len(rows(pg, big)) == 40 and pg.evaluate(
               "(id) => window.__pw.S.notes.find(n => n.id === id).name", big) == "u4a-40", len(rows(pg, big)))
         until(pg, lambda: dark(pix(pg, 1)), 8000)
+        until(pg, lambda: pix(pg, 3) is not None, 3000); pg.wait_for_timeout(200)
         s0 = stats(pg)
-        check("at the top: only the pages in view and next to them have a canvas", 1 <= s0["canvases"] <= 3, s0)
-        peak = s0["canvases"]
+        check("at the top: the page in view, the one after it and the page ahead (3) have a canvas, nothing else",
+              s0["canvases"] == 3 and all(pix(pg, i) is not None for i in (1, 2, 3)), s0)
+        sharp_ev = lambda evs: [e for e in evs if e.split()[0] in ("sharp", "ahead")]
+        check("... the page in view first, the page ahead last", sharp_ev(s0["events"])[-3:] == ["sharp 1", "sharp 2", "ahead 3"], s0["events"][-6:])
+
+        # ------------------------------------------------------------ pw-v6d: the thumb first, render ahead, keep more
+        group[0] = "thumb first, render ahead (pw-v6d)"
+        since = lambda s_a, s_b: s_b["events"][len(s_b["events"]) - (s_b["evN"] - s_a["evN"]):] if s_b["evN"] > s_a["evN"] else []
+        th0 = stats(pg)
+        m = pg.evaluate(PH_JS, [8, 60])
+        th1 = stats(pg)
+        check("a long scroll down to page 8: page 8 shows its thumb while the stack still moves", m["ph"] is not None and m["ph"] < m["frames"], m)
+        check("... before any sharp render (none while moving)", m["rph"] == 0, m)
+        check("... a thumb made then (pdf.js), not before", th1["thumbs"] > th0["thumbs"] and th1["placeholders"] > th0["placeholders"], [th0["thumbs"], th1["thumbs"]])
+        check("then the sharp canvas lands and replaces it (only the canvas in the layer)", m["cv"] is not None and m["cv"] > m["ph"] and m["after"] == ["canvas"], m)
+        ev = since(th0, stats(pg))
+        check("events: 'ph 8' before 'sharp 8'", "ph 8" in ev and "sharp 8" in ev and ev.index("ph 8") < ev.index("sharp 8"), ev)
+        until(pg, lambda: pix(pg, 10) is not None, 3000); pg.wait_for_timeout(200)
+        ev = sharp_ev(since(th0, stats(pg)))
+        check("landed on 8 going down: page 8 sharp first, page 10 (the page ahead) last", ev[:1] == ["sharp 8"] and ev[-1:] == ["ahead 10"], ev)
+        th2 = stats(pg)
+        pg.evaluate(WHEEL_JS, [7, 12])
+        until(pg, lambda: pix(pg, 5) is not None, 3000); pg.wait_for_timeout(200)
+        th3 = stats(pg); ev = sharp_ev(since(th2, th3))
+        check("one page back up to 7: the page ahead is now page 5 (the way she moved)", th3["dir"] == -1 and ev[-1:] == ["ahead 5"], [th3["dir"], ev])
+        check("nothing seen a moment ago rendered again (8, 9, 10 kept)", not [e for e in ev if e in ("sharp 8", "sharp 9", "sharp 10")], ev)
+
+        pg.evaluate("window.__pw.pdf.budget(5e6)")    # about 5.6 of these pages (794 x 1123 at 1 device px), so the budget bites
+        peak = stats(pg)["canvases"]
         desk = pg.locator("#desk").bounding_box()
         pg.mouse.move(desk["x"] + desk["width"] / 2, desk["y"] + desk["height"] / 2)
         for step in range(36):
@@ -440,12 +496,28 @@ try:
             peak = max(peak, stats(pg)["canvases"])
         pg.wait_for_timeout(500)
         s1 = stats(pg)
-        check("scrolling through all 40: never more than 4 live canvases", peak <= 4, [peak, s1])
-        check("further down: page 1's canvas is freed", pix(pg, 1) is None and s1["freed"] > 0, s1)
+        check("scrolling through all 40 with a 5 Mpx budget: never more than 7 live canvases", peak <= 7, [peak, s1])
+        check("further down: page 1's canvas is freed (least recently seen first)", pix(pg, 1) is None and s1["freed"] > 0, s1)
         go_page(pg, 40)
         check("page 40 draws when it comes into view", until(pg, lambda: dark(pix(pg, 40)), 8000), pix(pg, 40))
+        pg.wait_for_timeout(300)
         s2 = stats(pg)
-        check("at the end: still at most 3 live canvases", s2["canvases"] <= 3, s2)
+        check("at the end: the kept pages and what fits the budget, at most 6 canvases", s2["canvases"] <= 6 and pix(pg, 39) is not None, s2)
+        pg.evaluate("window.__pw.pdf.budget(0)")      # the real budget again (60 Mpx: all 40 of these would fit)
+        go_page(pg, 20); until(pg, lambda: dark(pix(pg, 20)), 6000); pg.wait_for_timeout(300)
+        go_page(pg, 27); until(pg, lambda: dark(pix(pg, 27)), 6000); pg.wait_for_timeout(300)
+        k0 = stats(pg)
+        check("past the two each side, page 20 (seen a moment ago) keeps its canvas under the budget", pix(pg, 20) is not None, k0)
+        go_page(pg, 20); pg.wait_for_timeout(300)
+        ev = since(k0, stats(pg))
+        check("back to page 20: it shows at once, never rendered again", dark(pix(pg, 20)) and "sharp 20" not in ev, ev)
+        pg.evaluate("window.__pw.pdf.budget(2e6)")
+        s4 = stats(pg)
+        check("a smaller budget: the far pages go (27 freed), the kept pages stay even past it (19 to 21)",
+              pix(pg, 27) is None and all(pix(pg, i) is not None for i in (19, 20, 21)) and s4["pixels"] > 2e6, s4)
+        pg.evaluate("window.__pw.pdf.budget(0)")
+        check("a page seen once leaves its thumb behind (a scaled copy of the sharp canvas, no second render)", s4["seeded"] > 0, s4)
+        group[0] = "40 pages, lazy"
         # nothing renders while the stack moves: a 1 s burst of wheel steps, one per frame
         go_page(pg, 10); pg.wait_for_timeout(900)
         m = pg.evaluate("""async () => {
@@ -474,18 +546,18 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v6c" not in keys:
+        if "pw-v6d" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v6c", "pw-v6c" in keys, keys)
+        check("cache is pw-v6d", "pw-v6d" in keys, keys)
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the shell lists pdfin.js, pdfview.js and both pdf.js files", all(x in swt for x in ["./js/pdfin.js", "./js/pdfview.js", "./vendor/pdf.min.mjs", "./vendor/pdf.worker.min.mjs"]))
-        shell = pg.evaluate("""async () => { const c = await caches.open('pw-v6c'); const out = [];
+        shell = pg.evaluate("""async () => { const c = await caches.open('pw-v6d'); const out = [];
           for (const u of ['./vendor/pdf.min.mjs', './vendor/pdf.worker.min.mjs', './js/pdfin.js', './js/pdfview.js']) out.push(!!(await c.match(u))); return out; }""")
         check("... and they are in the cache (PDF pages draw offline)", shell == [True] * 4, shell)
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in
                        ["./js/pdfin.js", "./js/pdfview.js", "./js/page.js", "./js/app.js", "./js/api.js", "./js/local-backend.js", "./js/snap.js",
                         "./js/treeq.js", "./js/ink.js", "./css/app.css", "./sw.js", "./index.html", "./vendor/README.md",
-                        "./supabase/migrations/0005_pdf_pages.sql", "./tests/test_u4a.py"])
+                        "./supabase/migrations/0005_pdf_pages.sql", "./tests/test_u4a.py", "./tests/measure_pdf.py"])
         check("no em-dashes in the changed files", chr(0x2014) not in srcs)
         mig = pg.evaluate("fetch('./supabase/migrations/0005_pdf_pages.sql').then(r => r.text())")
         check("0005 adds pdf_w, pdf_h (real) and the both-null-or-both-positive check, and says pdf_page is 1-based",

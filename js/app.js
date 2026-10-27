@@ -1615,7 +1615,7 @@ window.__pw = { S, api, idle: settledBoth, failed: () => treeq.dropCount(), curr
                 tick: () => (S.tick ? { ids: ticked(), moving: S.tick.moving } : null),
                 live: { state: live.state, stats: live.liveStats, simulateDrop: live.simulateDrop }, refreshTree,
                 pdf: { importPdf: (f, t) => pdfin.importPdf(f, t), stats: () => ({ ...pdfin.pdfStats(), ...pdfview.viewStats() }),
-                       cached: pdfin.cached, uploadsPending: pdfin.uploadsPending } };
+                       cached: pdfin.cached, uploadsPending: pdfin.uploadsPending, budget: pdfview.setBudget } };
 Object.defineProperty(window.__pw, 'lastLoad', { get: () => lastLoad, set: (v) => { lastLoad = v; } });   // U3d: the tree's age
 
 wire();
