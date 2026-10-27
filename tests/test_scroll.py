@@ -4,6 +4,8 @@
 # the S Pen through CDP mouse input with pointerType "pen", and a burst of moves through synthetic
 # PointerEvents. The stack's place is read from its transform; an in-page frame recorder logs every frame.
 # pw-v4n: the "dbg last stroke (pw-v4n)" group: ?dbg=1 shows the last stroke's line and a Copy last stroke button (ink.lastStroke()).
+# pw-v7b: the "zoom lock (pw-v7b)" group: a resize or full screen never resets the zoom (only opening a note fits), and the
+# zoom lock chip (#zoomLock): locked, the zoom stays, one finger only taps and holds, two fingers move the stack.
 import sys, subprocess, time, pathlib, re, io, json, math
 from playwright.sync_api import sync_playwright
 from PIL import Image
@@ -43,9 +45,13 @@ def rec_on(pg): pg.evaluate("window.__f = []; window.__rec = true; window.__w = 
 def rec_off(pg): return pg.evaluate("window.__rec = false; window.__f")
 def ready(pg): pg.wait_for_selector("body[data-ready='1']", timeout=20000)
 
-def touch(cdp, kind, x=None, yy=None):
-    pts = [] if kind == "touchEnd" else [{"x": x, "y": yy}]
-    cdp.send("Input.dispatchTouchEvent", {"type": kind, "touchPoints": pts})
+def touch(cdp, kind, x=None, yy=None, pts=None):
+    """one finger at (x, yy); or pts = [(x, y), ...] for several fingers at once (pw-v7b), each keeping its id by its place
+    in the list. CDP lifts the fingers only all together (touchEnd): a touchMove that leaves one out keeps it down."""
+    if kind == "touchEnd": tp = []
+    elif pts is not None: tp = [{"x": px, "y": py, "id": k} for k, (px, py) in enumerate(pts)]
+    else: tp = [{"x": x, "y": yy}]
+    cdp.send("Input.dispatchTouchEvent", {"type": kind, "touchPoints": tp})
 def drag(cdp, x, y0, dy, n, pause, lift=True):
     """one finger from (x, y0), n moves of dy each, `pause` seconds between moves"""
     touch(cdp, "touchStart", x, y0)
@@ -244,7 +250,7 @@ try:
         ctx2 = b.new_context(viewport={"width": 1280, "height": 800}, has_touch=True); pg2 = ctx2.new_page()
         pg2.goto(LOCAL + "&dbg=1"); ready(pg2); pg2.evaluate(SEED); pg2.reload(); ready(pg2)
         pg2.locator(".nrow").first.click(); pg2.wait_for_selector("#noteView:not([hidden])"); pg2.wait_for_timeout(400)
-        vline = pg2.evaluate("document.getElementById('dbgView').textContent")
+        vline = pg2.evaluate("document.getElementById('dbgView').textContent").split("\n")[0]   # pw-v7b: a second line follows
         check("?dbg=1 shows a view line 'scroll 0 0 | view x y zN | drift 0 0'", re.fullmatch(r"scroll 0 0 \| view -?\d+ -?\d+ z\d\.\d\d \| drift -?0 -?0", vline) is not None, vline)
         check("the view line sits in its own box above the events box, inside the desk", pg2.evaluate("""() => { const v = document.getElementById('dbgView'), e = document.getElementById('dbg');
           return v.parentNode.id === 'desk' && v.getBoundingClientRect().bottom <= e.getBoundingClientRect().top && getComputedStyle(v).pointerEvents === 'none'; }"""))
@@ -318,6 +324,246 @@ try:
         check("without ?dbg=1: ink.lastStroke() is still there (always kept)", pg.evaluate("typeof window.__pw.ink.lastStroke === 'function'"))
         group[0] = prev_group
         check("no page errors", not errs, errs)
+
+        # ------------------------------------------------------------ pw-v7b: the zoom never resets by itself; the zoom lock
+        # Her tablet (27 Oct): zoomed in and explaining, the page shot back to a fitted view about 30 times in a day. Every
+        # window resize (and full screen) ran relayout() = fit(): the zoom thrown away. Now only opening a note fits, and the
+        # lock chip (#zoomLock, bottom-left) keeps the zoom fixed: one finger only taps and holds, two fingers move the stack.
+        group[0] = "zoom lock (pw-v7b)"
+        ctx4 = b.new_context(viewport={"width": 1280, "height": 800}, has_touch=True)
+        pg4 = ctx4.new_page(); errs4 = []
+        pg4.on("pageerror", lambda e: errs4.append(str(e)))
+        pg4.goto(LOCAL); ready(pg4); pg4.evaluate(SEED); pg4.reload(); ready(pg4)
+        pg4.locator(".nrow").first.click(); pg4.wait_for_selector("#noteView:not([hidden])"); pg4.wait_for_timeout(200)
+        cdp4 = ctx4.new_cdp_session(pg4)
+        VIEW = """() => import('./js/page.js').then((m) => { const d = document.getElementById('desk'), s = document.getElementById('stack');
+          return { ...m.view(), ...m.viewStats(), cur: m.current(), dw: d.clientWidth, dh: d.clientHeight,
+                   w: parseFloat(s.style.width), h: parseFloat(s.style.height), top: s.getBoundingClientRect().top }; })"""
+        vw = lambda: pg4.evaluate(VIEW)
+        def inside(v):     # the view inside page.js's clamp (MARGIN 24): a stack narrower than the desk centred, else within the edges
+            w, h = v["w"] * v["z"], v["h"] * v["z"]
+            okx = abs(v["x"] - (v["dw"] - w) / 2) < 0.01 if w <= v["dw"] - 48 else v["dw"] - w - 24.01 <= v["x"] <= 24.01
+            oky = abs(v["y"] - 24) < 0.01 if h <= v["dh"] - 48 else v["dh"] - h - 24.01 <= v["y"] <= 24.01
+            return okx and oky
+        def same(a, c): return abs(a["x"] - c["x"]) < 0.01 and abs(a["y"] - c["y"]) < 0.01 and a["z"] == c["z"]
+        def lerp(a, c, f): return (a[0] + (c[0] - a[0]) * f, a[1] + (c[1] - a[1]) * f)
+        def two(a0, b0, a1, b1, n=10, lift=True):          # two fingers down together, moved in n steps, lifted together
+            touch(cdp4, "touchStart", pts=[a0, b0]); pg4.wait_for_timeout(30)
+            for k in range(1, n + 1):
+                touch(cdp4, "touchMove", pts=[lerp(a0, a1, k / n), lerp(b0, b1, k / n)]); pg4.wait_for_timeout(16)
+            if lift: touch(cdp4, "touchEnd"); pg4.wait_for_timeout(80)
+        def one(x0, y0, dx, dy, n=10, pause=0.03):         # one finger dragged in n steps, `pause` s apart, then lifted
+            touch(cdp4, "touchStart", x0, y0)
+            for k in range(1, n + 1):
+                if pause: time.sleep(pause)
+                touch(cdp4, "touchMove", x0 + dx * k / n, y0 + dy * k / n)
+            touch(cdp4, "touchEnd")
+        def still4(quiet=250, limit=6000):                 # until the view has not changed for `quiet` ms
+            last, quiet_for, t0 = vw(), 0, time.time()
+            while time.time() - t0 < limit / 1000:
+                pg4.wait_for_timeout(50); now = vw()
+                quiet_for = quiet_for + 50 if same(now, last) else 0
+                last = now
+                if quiet_for >= quiet: break
+            return last
+        def wheel(dy, ctrl):
+            pg4.evaluate("""([dy, ctrl]) => document.getElementById('desk').dispatchEvent(new WheelEvent('wheel',
+              { deltaY: dy, ctrlKey: ctrl, clientX: 640, clientY: 400, bubbles: true, cancelable: true }))""", [dy, ctrl])
+            pg4.wait_for_timeout(80)
+        lockbtn = pg4.locator("#zoomLock")
+        pressed = lambda: lockbtn.get_attribute("aria-pressed")
+        toast4 = lambda: pg4.evaluate("document.getElementById('toast').textContent")
+        strokes4 = lambda: pg4.evaluate("(ids) => ids.reduce((k, id) => k + window.__pw.ink.strokesOf(id).length, 0)", ids)
+        GEO = """() => { const c = document.getElementById('zoomLock'), r = c.getBoundingClientRect(), nb = document.getElementById('noteBody').getBoundingClientRect(), cs = getComputedStyle(c);
+          const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+          return { w: r.width, h: r.height, left: r.left - nb.left, bottom: nb.bottom - r.bottom, parent: c.parentNode.id, inDesk: !!c.closest('#desk'),
+                   label: c.getAttribute('aria-label'), bg: cs.backgroundColor, round: cs.borderRadius === '50%', z: cs.zIndex, hit: hit === c,
+                   open: getComputedStyle(c.querySelector('.lockOpen')).display, shut: getComputedStyle(c.querySelector('.lockShut')).display }; }"""
+
+        v0 = vw()
+        check("a note opens fitted (zoom 1 at 1280 x 800) and unlocked: one fit, its cause 'open'",
+              abs(v0["z"] - 1) < 1e-9 and v0["lock"] is False and v0["fits"] == 1 and v0["cause"] == "open" and pressed() == "false", v0)
+        g = pg4.evaluate(GEO)
+        check("(l) #zoomLock: a round 44 x 44 chip in #noteBody (not the desk), 12 px from the left and bottom, z-index 6, 'Lock zoom', nothing over it",
+              g["w"] == 44 and g["h"] == 44 and g["round"] and g["parent"] == "noteBody" and not g["inDesk"] and abs(g["left"] - 12) < 0.5
+              and abs(g["bottom"] - 12) < 0.5 and g["z"] == "6" and g["label"] == "Lock zoom" and g["hit"] and lockbtn.is_visible(), g)
+        check("(l) unlocked: the translucent graphite chip with the open padlock", g["bg"] == "rgba(38, 42, 48, 0.35)" and g["open"] != "none" and g["shut"] == "none", g)
+
+        # (k) + (a): a pinch zooms (unlocked), then a resize keeps that zoom
+        two((590, 400), (690, 400), (540, 400), (740, 400)); pg4.wait_for_timeout(150)
+        v1 = vw()
+        check("(k) unlocked: a pinch of two points moving apart zooms as before (100 to 200 px apart: zoom 2.0), no fit",
+              abs(v1["z"] - 2) < 0.01 and v1["fits"] == 1, v1)
+        pg4.set_viewport_size({"width": 1100, "height": 700}); pg4.wait_for_timeout(250)
+        v2 = vw()
+        check("(a) a viewport resize (1280 x 800 to 1100 x 700) keeps the zoom at 2.0 and the place, the fit count unchanged",
+              same(v1, v2) and v2["fits"] == 1 and v2["resizes"] > v1["resizes"] and inside(v2), [v1, v2])
+        pg4.set_viewport_size({"width": 1280, "height": 800}); pg4.wait_for_timeout(250)
+        v3 = vw()
+        check("(a) and back to 1280 x 800: zoom 2.0, the place, still the one fit from opening", same(v1, v3) and v3["fits"] == 1, v3)
+
+        # (b) full screen and back
+        bar_h = pg4.evaluate("document.getElementById('noteBar').offsetHeight")
+        pg4.click("#fsBtn"); pg4.wait_for_timeout(400)
+        vf = vw(); chip_full = lockbtn.is_visible()
+        check("(b) the full-screen button keeps the zoom (2.0) and the place, no fit", same(v3, vf) and vf["fits"] == 1 and inside(vf), [v3, vf])
+        check("(b) the desk grew up by the note bar: the page moved up with it, by the bar's height and no more",
+              bar_h > 0 and abs((v3["top"] - vf["top"]) - bar_h) < 0.6, [bar_h, v3["top"], vf["top"]])
+        check("(l) full screen (body.full): the note bar and the counter hide, the chip stays",
+              pg4.evaluate("document.body.classList.contains('full')") and pg4.locator("#noteBar").is_hidden() and pg4.locator("#counter").is_hidden() and chip_full)
+        pg4.click("#exitFs"); pg4.wait_for_timeout(400)
+        vx = vw()
+        check("(b) leaving full screen keeps the zoom (2.0) and the place, no fit", same(v3, vx) and vx["fits"] == 1 and abs(vx["top"] - v3["top"]) < 0.6, [v3, vx])
+
+        # (c) a resize with the zoomed stack wider than the desk: the clamp holds
+        one(1000, 500, -700, 0, n=14, pause=0.03); vc0 = still4()
+        check("(c) set-up: a one-finger pan to the zoomed stack's right edge (24 px in from the desk's)",
+              abs(vc0["x"] - (vc0["dw"] - vc0["w"] * vc0["z"] - 24)) < 0.01 and vc0["z"] == v1["z"], vc0)
+        pg4.set_viewport_size({"width": 1500, "height": 800}); pg4.wait_for_timeout(250)
+        vc1 = vw()
+        check("(c) the window grows wider: the stack's right edge comes back to 24 px from the desk's, zoom 2.0, no fit",
+              abs(vc1["x"] - (vc1["dw"] - vc1["w"] * vc1["z"] - 24)) < 0.01 and vc1["z"] == v1["z"] and vc1["fits"] == 1 and inside(vc1), [vc0, vc1])
+        pg4.set_viewport_size({"width": 1000, "height": 700}); pg4.wait_for_timeout(250)
+        vc2 = vw()
+        check("(c) narrower: the stack stays where it was, inside the clamp", inside(vc2) and abs(vc2["x"] - vc1["x"]) < 0.01 and vc2["z"] == v1["z"], [vc1, vc2])
+        pg4.set_viewport_size({"width": 1720, "height": 800}); pg4.wait_for_timeout(250)
+        vc3 = vw()
+        check("(c) so wide the zoomed stack fits across: it is centred, zoom still 2.0",
+              inside(vc3) and abs(vc3["x"] - (vc3["dw"] - vc3["w"] * vc3["z"]) / 2) < 0.01 and vc3["z"] == v1["z"], vc3)
+        pg4.set_viewport_size({"width": 1280, "height": 800}); pg4.wait_for_timeout(250)
+        vc4 = vw()
+        check("(c) back to 1280 x 800: inside the clamp, zoom 2.0, still the one fit", inside(vc4) and vc4["z"] == v1["z"] and vc4["fits"] == 1, vc4)
+        one(640, 500, -200, 0, n=20, pause=0.08); still4()           # a slow pan: the stack away from the edges for the lock checks
+
+        # locking stops a glide where it is
+        one(640, 650, 0, -400, n=10, pause=0.004); pg4.wait_for_timeout(60)
+        ga, n_before = vw(), strokes4()
+        lockbtn.click(); pg4.wait_for_timeout(30); gb = vw(); pg4.wait_for_timeout(250); gc = vw()
+        check("a tap on the chip during a glide stops it where it is (and the tap draws nothing)", same(gb, gc) and strokes4() == n_before, [ga, gb, gc])
+
+        # (d) locked: a pinch only moves the stack by its midpoint
+        vd0 = vw(); g2 = pg4.evaluate(GEO)
+        check("(d) a tap on the chip locks: aria-pressed true, the toast 'Zoom locked', solid graphite with the closed padlock",
+              pressed() == "true" and vd0["lock"] is True and toast4() == "Zoom locked" and g2["bg"] == "rgb(38, 42, 48)" and g2["shut"] != "none" and g2["open"] == "none", [g2, toast4()])
+        pg4.evaluate("document.documentElement.setAttribute('data-theme', 'dark')")
+        dk = pg4.evaluate("[getComputedStyle(document.getElementById('zoomLock')).backgroundColor, getComputedStyle(document.getElementById('zoomLock')).color]")
+        pg4.evaluate("document.documentElement.removeAttribute('data-theme')")
+        check("(d) dark mode: the same chip (solid #262A30, white padlock), it sits on the light desk", dk == ["rgb(38, 42, 48)", "rgb(255, 255, 255)"], dk)
+        two((540, 400), (740, 400), (430, 360), (930, 360))            # 200 to 500 px apart; the midpoint (640, 400) to (680, 360)
+        vd1 = vw()
+        check("(d) locked: a pinch of two points moving apart (200 to 500 px) leaves the zoom at 2.0", vd1["z"] == vd0["z"] and vd1["fits"] == 1, [vd0, vd1])
+        check("(d) ... and moves the stack by the midpoint's move (+40, -40)", abs((vd1["x"] - vd0["x"]) - 40) < 0.6 and abs((vd1["y"] - vd0["y"]) + 40) < 0.6, [vd0, vd1])
+        # one of the two lifts: the other finger then does nothing (no pan, no glide). CDP cannot lift one finger of two (see
+        # touch()), so this one runs on synthetic touch PointerEvents fired on the desk, as in "one move per frame"
+        PEV = """([type, id, x, y]) => { const desk = document.getElementById('desk'), r = desk.getBoundingClientRect();
+          desk.dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: 'touch', isPrimary: id === 81, bubbles: true, cancelable: true,
+                                                      clientX: r.left + x, clientY: r.top + y })); }"""
+        pev = lambda t, i, x, yy: pg4.evaluate(PEV, [t, i, x, yy])
+        vq0 = vw()
+        pev("pointerdown", 81, 500, 400); pev("pointerdown", 82, 700, 400)
+        for k in range(1, 7): pev("pointermove", 81, 500, 400 - 10 * k); pev("pointermove", 82, 700, 400 - 10 * k); pg4.wait_for_timeout(16)
+        pev("pointerup", 82, 700, 340); pg4.wait_for_timeout(40); vq1 = vw()                       # the second finger lifts
+        for k in range(1, 11): pev("pointermove", 81, 500, 340 - 30 * k)                            # the first flicks on alone
+        pev("pointerup", 81, 500, 40); pg4.wait_for_timeout(400); vq2 = vw()
+        check("locked: two fingers move the stack 60 px; when one lifts, the other neither pans nor glides",
+              abs((vq0["y"] - vq1["y"]) - 60) < 0.6 and same(vq1, vq2) and vq2["z"] == vq0["z"], [vq0, vq1, vq2])
+
+        # (e) locked: one finger moves nothing
+        ve0 = vw()
+        one(640, 500, 0, -200, n=10, pause=0.05); pg4.wait_for_timeout(300); ve1 = vw()
+        check("(e) locked: a one-finger drag of 200 px moves nothing", same(ve0, ve1), [ve0, ve1])
+        one(640, 650, 0, -400, n=10, pause=0.004); pg4.wait_for_timeout(500); ve2 = vw()
+        check("(e) locked: a fast one-finger flick glides nothing", same(ve1, ve2), [ve1, ve2])
+
+        # (f) locked: two fingers pan
+        vf0 = vw()
+        two((500, 560), (760, 560), (500, 410), (760, 410)); vf1 = vw(); pg4.wait_for_timeout(300); vf2 = vw()
+        check("(f) locked: a two-finger drag of 150 px moves the stack 150 px, the zoom unchanged",
+              abs((vf0["y"] - vf1["y"]) - 150) < 0.6 and abs(vf1["x"] - vf0["x"]) < 0.6 and vf1["z"] == vf0["z"], [vf0, vf1])
+        check("(f) ... and stops on the lift (no glide)", same(vf1, vf2), [vf1, vf2])
+
+        # (g) locked: Ctrl + wheel does nothing, the plain wheel scrolls
+        vg0 = vw()
+        wheel(-300, True); vg1 = vw()
+        check("(g) locked: Ctrl + wheel leaves the zoom (and the place)", same(vg0, vg1), [vg0, vg1])
+        pg4.mouse.move(640, 400); pg4.mouse.wheel(0, 300); pg4.wait_for_timeout(150); vg2 = vw()
+        check("(g) locked: the plain wheel still scrolls (300 px), the zoom unchanged", abs((vg1["y"] - vg2["y"]) - 300) < 0.6 and vg2["z"] == vg0["z"], [vg1, vg2])
+
+        # (h) locked: a page-list jump
+        go_page(pg4, 6); vh = vw()
+        check("(h) locked: a page-list jump to page 6 lands on page 6 (its top 24 px down) at the same zoom, still locked",
+              vh["cur"] == 5 and vh["z"] == vg0["z"] and abs(vh["y"] - (24 - 5 * (1123 + 24) * vh["z"])) < 0.6 and vh["lock"] and pressed() == "true", vh)
+
+        # (i) locked: the pen draws, a finger tap clears a selection, a finger hold opens the menu
+        pen4 = lambda t, x, yy: cdp4.send("Input.dispatchMouseEvent", {"type": t, "x": x, "y": yy, "button": "left", "buttons": 1, "clickCount": 1, "pointerType": "pen"})
+        vi0, n0 = vw(), strokes4()
+        pen4("mousePressed", 400, 300)
+        for k in range(1, 9): pen4("mouseMoved", 400 + 25 * k, 300 + 3 * k)
+        pen4("mouseReleased", 600, 324); pg4.wait_for_timeout(200)
+        check("(i) locked: the S Pen still draws (one new stroke) and moves nothing", strokes4() == n0 + 1 and same(vi0, vw()), [n0, strokes4()])
+        pg4.click("#tool-select"); pg4.wait_for_timeout(30)
+        pg4.mouse.move(370, 260); pg4.mouse.down(); pg4.mouse.move(640, 370, steps=8); pg4.mouse.up(); pg4.wait_for_timeout(100)
+        s1 = pg4.evaluate("window.__pw.ink.selection()")
+        check("(i) set-up: the Select tool's box around the stroke selects it", bool(s1) and len(s1["ids"]) == 1, s1)
+        pg4.wait_for_timeout(700)                                    # past the pen's palm time
+        touch(cdp4, "touchStart", 900, 620); pg4.wait_for_timeout(40); touch(cdp4, "touchEnd"); pg4.wait_for_timeout(100)
+        check("(i) locked: a finger tap outside the selection clears it, nothing moved", pg4.evaluate("window.__pw.ink.selection()") is None and same(vi0, vw()))
+        touch(cdp4, "touchStart", 700, 560); pg4.wait_for_timeout(650)
+        menu4 = pg4.evaluate("() => { const m = document.getElementById('menu'); return !m.hidden && m.getBoundingClientRect().height > 0; }")
+        touch(cdp4, "touchEnd"); pg4.wait_for_timeout(60)
+        check("(i) locked: a finger held 500 ms still opens the hold menu, nothing moved", menu4 and same(vi0, vw()), [menu4, vw()])
+        pg4.keyboard.press("Escape"); pg4.wait_for_timeout(30)
+        pg4.click("#tool-pen"); pg4.wait_for_timeout(30)
+
+        # (j) + (l): close the note (chip hidden, lock off), open it again: unlocked and fitted
+        pg4.click("#backBtn"); pg4.wait_for_selector("#listView:not([hidden])"); pg4.wait_for_timeout(100)
+        vj0 = vw()
+        check("(l) outside a note the chip is hidden", lockbtn.is_hidden())
+        check("(j) closing the note turns the lock off", vj0["lock"] is False and pressed() == "false", vj0)
+        pg4.locator(".nrow").first.click(); pg4.wait_for_selector("#noteView:not([hidden])"); pg4.wait_for_timeout(200)
+        vj = vw()
+        check("(j) opened again: unlocked (aria-pressed false), fitted (zoom back to the fit value, page 1), the second fit, cause 'open'",
+              vj["lock"] is False and pressed() == "false" and abs(vj["z"] - v0["z"]) < 1e-9 and abs(vj["y"] - v0["y"]) < 0.01
+              and vj["fits"] == 2 and vj["cause"] == "open" and lockbtn.is_visible(), vj)
+        lockbtn.click(); pg4.wait_for_timeout(60); lockbtn.click(); pg4.wait_for_timeout(60)
+        check("a second tap unlocks: aria-pressed false, the toast 'Zoom unlocked', the open padlock again",
+              pressed() == "false" and toast4() == "Zoom unlocked" and vw()["lock"] is False and pg4.evaluate(GEO)["open"] != "none", toast4())
+
+        # (k) unlocked again: everything as before
+        vk0 = vw()
+        two((590, 400), (690, 400), (565, 400), (715, 400)); pg4.wait_for_timeout(150); vk1 = vw()
+        check("(k) unlocked again: the pinch zooms (100 to 150 px apart: zoom x 1.5)", abs(vk1["z"] - 1.5 * vk0["z"]) < 0.01, [vk0, vk1])
+        wheel(-200, True); vk2 = vw()
+        check("(k) unlocked: Ctrl + wheel zooms", vk2["z"] > vk1["z"] + 0.1, [vk1, vk2])
+        vk3 = vw(); one(640, 600, 0, -150, n=15, pause=0.08); pg4.wait_for_timeout(300); vk4 = vw()
+        check("(k) unlocked: one finger pans again (150 px)", abs((vk3["y"] - vk4["y"]) - 150) < 1, [vk3, vk4])
+        check("no page errors (zoom lock)", not errs4, errs4)
+        ctx4.close()
+
+        # (m) ?dbg=1: the resize / fit / lock line
+        ctx5 = b.new_context(viewport={"width": 1280, "height": 800}, has_touch=True)
+        pg5 = ctx5.new_page(); errs5 = []
+        pg5.on("pageerror", lambda e: errs5.append(str(e)))
+        pg5.goto(LOCAL + "&dbg=1"); ready(pg5); pg5.evaluate(SEED); pg5.reload(); ready(pg5)
+        pg5.locator(".nrow").first.click(); pg5.wait_for_selector("#noteView:not([hidden])"); pg5.wait_for_timeout(400)
+        LINE = r"resize (\d+) \| fit (\d+) \((\w+)\) \| lock (on|off)"
+        dl = lambda: pg5.evaluate("document.getElementById('dbgView').textContent").split("\n")
+        l1 = dl(); m1 = re.fullmatch(LINE, l1[1]) if len(l1) == 2 else None
+        check("(m) ?dbg=1: #dbgView's second line reads 'resize <n> | fit 1 (open) | lock off'", m1 is not None and m1.group(2) == "1" and m1.group(3) == "open" and m1.group(4) == "off", l1)
+        r0 = int(m1.group(1)) if m1 else -99
+        pg5.set_viewport_size({"width": 1200, "height": 760}); pg5.wait_for_timeout(400)
+        l2 = dl(); m2 = re.fullmatch(LINE, l2[1]) if len(l2) == 2 else None
+        check("(m) a viewport resize: the resize count goes up by one, the fit count stays 1", m2 is not None and int(m2.group(1)) == r0 + 1 and m2.group(2) == "1", [l1, l2])
+        pg5.click("#zoomLock"); pg5.wait_for_timeout(350)
+        check("(m) after a tap on the chip the line says 'lock on'", dl()[-1].endswith("| lock on"), dl())
+        geo5 = pg5.evaluate("""() => { const d = document.getElementById('desk').getBoundingClientRect(), c = document.getElementById('zoomLock').getBoundingClientRect();
+          const left = (id) => document.getElementById(id).getBoundingClientRect().left - d.left;
+          const hit = document.elementFromPoint(c.left + c.width / 2, c.top + c.height / 2);
+          return { dbg: left('dbg'), view: left('dbgView'), copy: left('dbgCopy'), hit: !!hit && hit.id === 'zoomLock', chipRight: c.right - d.left }; }""")
+        check("(m) the dbg boxes sit 64 px in (right of the chip), the chip stays tappable with them up",
+              all(abs(geo5[k] - 64) < 0.5 for k in ("dbg", "view", "copy")) and geo5["hit"] and geo5["chipRight"] <= 64, geo5)
+        check("no page errors (zoom lock, dbg)", not errs5, errs5)
+        ctx5.close()
         b.close()
 finally:
     srv.terminate()

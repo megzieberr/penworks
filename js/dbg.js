@@ -12,24 +12,27 @@
 // real pen stroke can be pasted back for the arrow fix. The button stops its own pointerdown: it never starts a stroke.
 // Parabola fit (pw-v4s): a parabola's classify word carries its fit and the arc's, "classify: parabola (p 2.1 / a 6.3)"
 // (lastStroke().fit, px).
-import { view, deskScroll } from './page.js';
+// pw-v7b: #dbgView has a second line, "resize <n> | fit <n> (<last cause>) | lock on/off" (page.js viewStats()): the
+// window resizes seen and the zoom resets, so the next "the page shot back" can be read off the screen. The boxes sit
+// 64 px in from the left, clear of the zoom lock chip (bottom-left, 12 + 44 px).
+import { view, deskScroll, viewStats } from './page.js';
 
 const KEEP = 4;                                   // the last event and the three before it
 const TYPES = ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'contextmenu'];
 const CSS = `
-#dbgView { position: absolute; left: 8px; bottom: 96px; z-index: 50; pointer-events: none; margin: 0; padding: 4px 8px;
+#dbgView { position: absolute; left: 64px; bottom: 96px; z-index: 50; pointer-events: none; margin: 0; padding: 4px 8px;
   font: 11px/1.35 ui-monospace, Consolas, "Courier New", monospace; white-space: pre; border-radius: 6px;
   background: rgba(20,22,26,.6); color: #FFFFFF; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) #dbgView { background: rgba(255,255,255,.6); color: #14161A; } }
 :root[data-theme="dark"] #dbgView { background: rgba(255,255,255,.6); color: #14161A; }
-#dbgCopy { position: absolute; left: 8px; bottom: 150px; z-index: 50; pointer-events: auto; min-height: 44px; padding: 0 14px;
+#dbgCopy { position: absolute; left: 64px; bottom: 150px; z-index: 50; pointer-events: auto; min-height: 44px; padding: 0 14px;
   font: 14px/1.2 ui-monospace, Consolas, "Courier New", monospace; border: 0; border-radius: 6px;
   background: rgba(20,22,26,.6); color: #FFFFFF; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) #dbgCopy { background: rgba(255,255,255,.6); color: #14161A; } }
 :root[data-theme="dark"] #dbgCopy { background: rgba(255,255,255,.6); color: #14161A; }
-#dbgText { position: absolute; left: 8px; bottom: 202px; z-index: 50; pointer-events: auto; box-sizing: border-box;
-  width: calc(100% - 16px); font: 11px/1.35 ui-monospace, Consolas, "Courier New", monospace; }
-#dbg { position: absolute; left: 8px; bottom: 8px; z-index: 50; pointer-events: none; margin: 0; padding: 5px 8px;
+#dbgText { position: absolute; left: 64px; bottom: 202px; z-index: 50; pointer-events: auto; box-sizing: border-box;
+  width: calc(100% - 72px); font: 11px/1.35 ui-monospace, Consolas, "Courier New", monospace; }
+#dbg { position: absolute; left: 64px; bottom: 8px; z-index: 50; pointer-events: none; margin: 0; padding: 5px 8px;
   font: 11px/1.35 ui-monospace, Consolas, "Courier New", monospace; white-space: pre; border-radius: 6px;
   background: rgba(20,22,26,.6); color: #FFFFFF; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) #dbg { background: rgba(255,255,255,.6); color: #14161A; } }
@@ -70,7 +73,9 @@ export function startDbg(desk, ink) {
   const showView = () => {
     const [st, sl] = deskScroll(), v = view(), dr = desk.getBoundingClientRect(), sr = stack.getBoundingClientRect();
     const dx = sr.left - dr.left - v.x, dy = sr.top - dr.top - v.y;
-    vbox.textContent = `scroll ${st} ${sl} | view ${v.x.toFixed(0)} ${v.y.toFixed(0)} z${v.z.toFixed(2)} | drift ${dx.toFixed(0)} ${dy.toFixed(0)}`;
+    const s = viewStats();
+    vbox.textContent = `scroll ${st} ${sl} | view ${v.x.toFixed(0)} ${v.y.toFixed(0)} z${v.z.toFixed(2)} | drift ${dx.toFixed(0)} ${dy.toFixed(0)}`
+      + `\nresize ${s.resizes} | fit ${s.fits} (${s.cause || 'none'}) | lock ${s.lock ? 'on' : 'off'}`;
   };
   const tick = () => { showView(); paint(); };
   tick(); setInterval(tick, 250);

@@ -12,6 +12,11 @@
 // A finger held still for 500 ms on the desk (pw-v4k) stops that finger's pan and asks the ink hook for the hold
 // menu (Paste); a second finger, a move of more than 6 px, the lift or the pen cancels it. The pen button's
 // contextmenu never opens a menu; since pw-v4v it flips between Select and the last ink tool.
+// pw-v7b: nothing but opening a note (fit) changes the zoom by itself: a window resize, full screen and the header
+// hiding keep the zoom and the place (relayout), only the clamp moves the stack. The zoom lock (setLock, the round
+// padlock chip app.js owns; Samsung Notes' "fix zoom"): while locked the zoom never changes, ONE finger only taps
+// (clears the selection) and holds (Paste), never pans or glides, and TWO fingers move the stack by their midpoint.
+// The S Pen and the jumps to a page work as always. viewStats() counts resizes and fits for ?dbg=1.
 
 export const CM = 96 / 2.54;                 // 1 cm at 96 px per inch
 export const A4 = { w: 794, h: 1123 };       // 21 x 29.7 cm at zoom 1
@@ -35,6 +40,8 @@ let glide = null;    // { vx, vy (px per ms on screen), t } while the stack glid
 let shown = '';      // the transform last written
 let movedAt = 0;     // U4a: when a frame last moved the stack (a pan, a glide, a pinch, the wheel)
 let bgN = 0;         // unique pattern ids, one set per page
+let lock = false;    // pw-v7b: the zoom lock, per open note (app.js turns it off on every open and close; never saved)
+const stats = { resizes: 0, fits: 0, cause: '' };   // pw-v7b: window resizes, fit() calls and the last fit's cause, for ?dbg=1
 
 // a page's size in page px at zoom 1. `p` is the page row (or, as before U4a, just its orientation). A normal page is A4
 // in its orientation. U4a: a page made from a PDF page (pdf_w, pdf_h = that page's size in PDF points) takes the PDF
@@ -202,8 +209,10 @@ export function markSheet(pageId, on) {
 }
 
 // fit page `index` across the desk (zoom 1 at most) and show it at the top; a wider (landscape) page
-// in the same note then pans sideways with one finger
-export function fit(index = Math.max(0, cur)) {
+// in the same note then pans sideways with one finger. pw-v7b: only opening a note calls this (app.js openNote, cause
+// 'open'); nothing else may reset her zoom. `cause` is counted for ?dbg=1 (viewStats).
+export function fit(index = Math.max(0, cur), cause = '?') {
+  stats.fits++; stats.cause = cause;
   const dw = desk.clientWidth, w = (L.sizes[index] || L.sizes[0] || A4).w;
   V.z = Math.min(1, Math.max(ZMIN, (dw - 2 * MARGIN) / w));
   V.x = (dw - L.w * V.z) / 2;                            // pages sit centred in the stack
@@ -220,8 +229,18 @@ export function scrollToPage(index) {
   stopGlide(); settle(); clampView(); apply();
 }
 
-// after the desk changes size (full screen, header hidden): keep the current page in place
-export function relayout() { const i = Math.max(0, cur); fit(i); }
+// after the desk changes size (a window resize, full screen, the header hidden or back): the zoom and the place stay
+// exactly as they were (V untouched); only the clamp moves the stack, when the desk grew or shrank past it (a stack
+// narrower than the desk is centred, a stack past an edge comes back). pw-v7b: this used to re-fit the current page,
+// so every resize her tablet fired while she explained threw her zoom away (27 Oct, about 30 times in a day).
+export function relayout() { R = null; stopGlide(); settle(); clampView(); apply(); }
+
+// pw-v7b: the zoom lock. Locked: the zoom cannot change and only two fingers move the stack (see initPage); a glide
+// still running stops where it is. app.js owns the button and turns the lock off on every note open and close.
+export function setLock(on) { lock = !!on; if (lock) stopGlide(); }
+export function locked() { return lock; }
+// ?dbg=1 (js/dbg.js): window resizes seen, fit() calls and the last fit's cause, and the lock
+export function viewStats() { return { resizes: stats.resizes, fits: stats.fits, cause: stats.cause, lock }; }
 
 // the desk must never scroll natively (css overflow: clip); if a browser scrolled it anyway, the stack would show
 // shifted while the pen maths below still use the transform alone: every stroke off by that scroll. Reset it.
@@ -255,6 +274,7 @@ export function pageAt(cx, cy) {
 }
 
 function zoomAt(p, f) {
+  if (lock) return;                                // pw-v7b: Ctrl + wheel never zooms while locked
   pinned = null;
   clampView();
   const z = Math.min(ZMAX, Math.max(ZMIN, V.z * f));
@@ -302,6 +322,12 @@ export function initPage(els) {
   }
   function movePinch() {
     const [a, b] = [...touches.values()], m = mid(a, b), d = Math.max(10, dist(a, b));
+    if (lock) {                                     // pw-v7b: locked, two fingers only move the stack by their midpoint
+      if (pinch.z0 !== V.z) Object.assign(pinch, { z0: V.z, x0: V.x, y0: V.y, m0: m, d0: d });   // locked mid-pinch: from here
+      V.x = pinch.x0 + m[0] - pinch.m0[0]; V.y = pinch.y0 + m[1] - pinch.m0[1];
+      request();
+      return;
+    }
     const z = Math.min(ZMAX, Math.max(ZMIN, pinch.z0 * d / pinch.d0));
     const w = [(pinch.m0[0] - pinch.x0) / pinch.z0, (pinch.m0[1] - pinch.y0) / pinch.z0];
     V.z = z; V.x = m[0] - w[0] * z; V.y = m[1] - w[1] * z;
@@ -379,13 +405,13 @@ export function initPage(els) {
     if (pinch && touches.size >= 2) { movePinch(); return; }
     if (drag && drag.id === e.pointerId) {
       const p = pt(e), t = when(e);
-      V.x = drag.x0 + p[0] - drag.s0[0]; V.y = drag.y0 + p[1] - drag.s0[1];
+      if (!lock) { V.x = drag.x0 + p[0] - drag.s0[0]; V.y = drag.y0 + p[1] - drag.s0[1]; }   // pw-v7b: locked, one finger never pans
       drag.c = [e.clientX, e.clientY];
       if (dist(p, drag.s0) > TAP_PX) cancelHold();                       // moved: a pan, never a hold
       if (dist(p, drag.s0) >= TAP_PX) drag.panned = true;                // once a pan, never a tap
       drag.trail.push([t, p[0], p[1]]);
       while (drag.trail.length > 2 && t - drag.trail[0][0] > WINDOW) drag.trail.shift();
-      request();
+      if (!lock) request();
     }
   });
   const up = (e) => {
@@ -396,7 +422,7 @@ export function initPage(els) {
     if (drag && drag.id === e.pointerId && e.type === 'pointerup' && !pinch) {                             // a finger only
       settle();
       if (!drag.panned && dist(pt(e), drag.s0) < TAP_PX) { if (ink && ink.fingerTap) ink.fingerTap(e.clientX, e.clientY); }   // a tap: no flick
-      else flick(drag, e);
+      else if (!lock) flick(drag, e);                                     // pw-v7b: locked, one finger never glides
     }
     if (touches.size >= 2) startPinch();
     else { pinch = null; drag = null; }
@@ -419,6 +445,7 @@ export function initPage(els) {
     if (e.pointerType === 'touch' || touches.size || drag || inkId !== null) return;
     onPenButton(e);
   });
-  window.addEventListener('resize', () => { R = null; stopGlide(); if (L.tops.length) relayout(); });
+  // pw-v7b: a resize keeps the zoom and the place (relayout), whatever fired it (the system bars, a keyboard, split screen)
+  window.addEventListener('resize', () => { stats.resizes++; R = null; stopGlide(); if (L.tops.length) relayout(); });
   desk.addEventListener('scroll', () => { unscroll(); R = null; }, { passive: true });   // cannot fire with overflow: clip; a fallback only
 }

@@ -90,6 +90,11 @@
         <button id="exitFs" type="button" aria-label="Leave full screen" hidden>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
         </button>
+        <!-- pw-v7b: the zoom lock; outside #desk, so no stroke or pan ever starts under it -->
+        <button id="zoomLock" type="button" aria-label="Lock zoom" aria-pressed="false">
+          <svg class="lockOpen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8.5 11V7.5a3.5 3.5 0 0 1 6.8-1.2"/></svg>
+          <svg class="lockShut" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8.5 11V7.5a3.5 3.5 0 0 1 7 0V11"/></svg>
+        </button>
         <aside id="pageList" aria-label="Pages" hidden>
           <div class="plHead">
             <button id="plAll" type="button" aria-label="Tick every page" aria-pressed="false" hidden><span class="box"></span><span class="lbl">All</span></button>

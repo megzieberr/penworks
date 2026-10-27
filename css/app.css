@@ -329,6 +329,17 @@ input.rename {
 }
 #exitFs svg { width: 20px; height: 20px; }
 body.full #noteBar, body.full #counter { display: none; }
+/* pw-v7b: the zoom lock, bottom-left of the open note (full screen too); the #exitFs look, a white padlock, open or
+   closed; locked = solid graphite so the state shows at a glance. It sits on the desk, which is light in both modes,
+   so the colours are fixed (the light graphite #262A30, never the dark-mode --graphite). */
+#zoomLock {
+  position: absolute; left: 12px; bottom: 12px; z-index: 6; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%;
+  background: rgba(38,42,48,.35); color: #fff; display: grid; place-items: center; cursor: pointer; touch-action: manipulation;
+}
+#zoomLock svg { width: 22px; height: 22px; display: block; pointer-events: none; }
+#zoomLock .lockShut, #zoomLock[aria-pressed="true"] .lockOpen { display: none; }
+#zoomLock[aria-pressed="true"] .lockShut { display: block; }
+#zoomLock[aria-pressed="true"] { background: #262A30; }
 
 /* page list: slides in from the left over the desk */
 #pageList {

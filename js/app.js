@@ -21,8 +21,11 @@
 // is logged in a small sheet asks "Open <name> as": New note in Loose, or Add to a note (the grid of every note's card),
 // or Cancel. The installed app runs full screen itself (manifest display "fullscreen"), so the full-screen button there
 // only hides PenWorks' own header: no requestFullscreen, no Chrome "you're in full screen" notice.
+// pw-v7b: the zoom lock, the round padlock chip at the bottom-left of an open note (her "thingy that sticks the page and
+// zoom", 27 Oct): locked, the zoom never changes and only two fingers move the page. Every note opens unlocked and
+// fitted; the lock is never saved. Opening a note is the only fit(); resizes and full screen keep her zoom (js/page.js).
 import { api } from './api.js';
-import { initPage, showStack, fit, scrollToPage, relayout, current, bookmarkTab, markSheet, bgSvg, pageSize, A4 } from './page.js';
+import { initPage, showStack, fit, scrollToPage, relayout, current, bookmarkTab, markSheet, bgSvg, pageSize, A4, setLock, locked } from './page.js';
 import * as ink from './ink.js';
 import * as store from './store.js';
 import { initTray, closePanel, trayState, chooseTool, localTray, adopt as adoptTray } from './tray.js';
@@ -297,10 +300,12 @@ async function openNote(id, index = 0) {
   S.openNote = id; S.cur = index; S.listOpen = false; S.renaming = null; remember();
   document.body.classList.add('noteMode');
   if (!(history.state && history.state.note)) history.pushState({ note: id }, '');
-  stackKey = ''; render(); fit(index);
+  showLock(false);                                          // pw-v7b: a note always opens unlocked and fitted
+  stackKey = ''; render(); fit(index, 'open');
 }
 function closeNote(skipHistory) {
   if (document.body.classList.contains('full')) exitFull();
+  showLock(false);
   closePanel(); ink.clearSelection();
   if (S.openNote) { delete S.hist[S.openNote]; tidyInk(); }    // closing a note ends its undo history
   S.openNote = null; S.listOpen = false; S.tick = null; S.renaming = null; remember();
@@ -505,6 +510,19 @@ function exitFull() {
   document.body.classList.remove('full'); $('exitFs').hidden = true;
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   relayout();
+}
+
+// ---------------------------------------------------------------- the zoom lock (pw-v7b)
+// the chip shows its state by aria-pressed (css: the open or the closed padlock, solid when locked); the lock itself
+// lives in js/page.js
+function showLock(on) {
+  setLock(on);
+  $('zoomLock').setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+function flipLock() {
+  const on = !locked();
+  showLock(on);
+  toast(on ? 'Zoom locked' : 'Zoom unlocked');
 }
 
 // ---------------------------------------------------------------- menu (long-press, right-click or the dots)
@@ -1668,6 +1686,7 @@ function wire() {
   $('nextBtn').addEventListener('click', () => scrollToPage(S.cur + 1));
   $('fsBtn').addEventListener('click', enterFull);
   $('exitFs').addEventListener('click', exitFull);
+  $('zoomLock').addEventListener('click', flipLock);
   document.addEventListener('fullscreenchange', () => {
     if (!document.fullscreenElement && document.body.classList.contains('full')) exitFull();
     else relayout();

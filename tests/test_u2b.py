@@ -1247,8 +1247,8 @@ try:
         pg.wait_for_selector("#dbg", state="attached", timeout=5000)
         info = pg.evaluate("""() => { const e = document.getElementById('dbg'), c = getComputedStyle(e), r = e.getBoundingClientRect(), d = document.getElementById('desk').getBoundingClientRect();
           return { pe: c.pointerEvents, font: c.fontSize, fam: c.fontFamily, left: r.left - d.left, bottom: d.bottom - r.bottom, parent: e.parentNode.id, bg: c.backgroundColor }; }""")
-        check("?dbg=1: the #dbg box is on the desk, bottom-left, 11 px monospace, pointer-events none",
-              info["parent"] == "desk" and info["pe"] == "none" and info["font"] == "11px" and "monospace" in info["fam"] and info["left"] < 20 and info["bottom"] < 20, info)
+        check("?dbg=1: the #dbg box is on the desk, bottom-left (64 px in, clear of the zoom lock chip, pw-v7b), 11 px monospace, pointer-events none",
+              info["parent"] == "desk" and info["pe"] == "none" and info["font"] == "11px" and "monospace" in info["fam"] and abs(info["left"] - 64) < 1 and info["bottom"] < 20, info)
         pen = Pen(ctx, pg)
         n0 = len(strokes(pg, "p2"))
         a, b2 = screen(pg, 1, 200, 400), screen(pg, 1, 400, 480)
@@ -2836,7 +2836,7 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v7a", "pw-v7a" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v7b", "pw-v7b" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)
