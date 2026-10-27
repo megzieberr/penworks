@@ -348,9 +348,9 @@ body.full #noteBar, body.full #counter { display: none; }
 }
 .thumbP .paper > svg.thumbInk { position: absolute; inset: 0; display: block; pointer-events: none; }   /* the page's ink (pw-v4i) */
 .thumbP .paper.landscape { aspect-ratio: 1123 / 794; --sq: calc(100cqw / 29.7); }
-.thumbP.cur .paper { outline: 2px solid var(--ink); outline-offset: 2px; }
+.thumbP.cur .paper { outline: 1.5px solid var(--graphite); outline-offset: 2px; }   /* the page she is on: thin graphite, no fill (pw-v6c); a tick's blue wins */
 .thumbP .num { font-size: 12.5px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
-.thumbP.cur .num { color: var(--ink); }
+.thumbP.cur .num { color: var(--graphite); }
 .thumbP { position: relative; }
 .thumbP .more { position: absolute; right: -6px; bottom: -7px; width: 32px; height: 28px; }   /* the page menu */
 /* hold and drag: the lifted page grows a little, casts a stronger shadow and goes slightly see-through;
@@ -402,7 +402,7 @@ body.full #noteBar, body.full #counter { display: none; }
   font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; display: grid; place-items: center; }
 .moveHere:hover { background: var(--ink-soft); }
 
-/* ---------- the tray: her 13 colours and the spare slot, the tools, a gap, undo, redo (top to bottom) ---------- */
+/* ---------- the tray: her 13 colours and the spare slot, the tools (undo under the highlighter, pw-v6c), a gap, redo (top to bottom) ---------- */
 #tray {
   background: var(--tray); border-left: 1px solid rgba(38,42,48,.08); display: flex; flex-direction: column;
   align-items: center; padding: 10px 0 10px; gap: 2px; min-height: 0; overflow-y: auto; overflow-x: hidden;
@@ -442,7 +442,7 @@ body.full #noteBar, body.full #counter { display: none; }
   #tray .sw, #tray .spec { width: 20px; height: 20px; }
   #tray .colours { gap: 2px; }
   #tray .sw.on, #tray .spec.on { outline-offset: 1px; }
-  #tray .tool, #tray .slot, #tray > .ib { width: 38px; height: 38px; }
+  #tray .tool, #tray .slot, #tray > .ib, #tray #undoBtn { width: 38px; height: 38px; }   /* undo sits in .tools now (pw-v6c) */
 }
 
 /* the pen and highlighter panels: a small card to the left of the tray */

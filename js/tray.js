@@ -388,9 +388,10 @@ export function initTray(o = {}) {
     btns[t] = el('button', { type: 'button', class: 'ib tool', id: 'tool-' + t, 'data-tool': t, 'aria-label': TITLES[t], title: TITLES[t],
       html: ICONS[t], onclick: () => pickTool(t) });
     tools.append(btns[t]);
+    if (t === 'highlighter') tools.append(undo);       // pw-v6c: undo straight under the highlighter, where her hand goes (27 Oct)
   }
   tray.textContent = '';
-  tray.append(colours, tools, el('div', { class: 'gap' }), undo, redo, el('div', { class: 'slot', 'data-slot': 'tools' }));
+  tray.append(colours, tools, el('div', { class: 'gap' }), redo, el('div', { class: 'slot', 'data-slot': 'tools' }));   // redo stays at the bottom
   panel = el('div', { id: 'toolPanel', class: 'panel', hidden: true, role: 'dialog', 'aria-label': 'Tool settings' });
   picker = el('div', { id: 'specPicker', class: 'panel picker', hidden: true, role: 'dialog', 'aria-label': 'Any colour' });
   document.body.append(panel, picker);

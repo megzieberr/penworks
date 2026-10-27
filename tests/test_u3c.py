@@ -292,9 +292,9 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v6b" not in keys:
+        if "pw-v6c" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v6b", "pw-v6b" in keys, keys)
+        check("cache is pw-v6c", "pw-v6c" in keys, keys)
         files = ["./js/store.js", "./js/api.js", "./js/local-backend.js", "./js/tray.js", "./js/app.js", "./sw.js"]
         srcs = {u: pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in files}
         check("no em-dashes in the changed files", all(chr(0x2014) not in v for v in srcs.values()))
@@ -302,9 +302,9 @@ try:
               and "keepBookmark" not in srcs["./js/app.js"] and "store.bookmarked" not in srcs["./js/app.js"])
         check("no 'synced' wording anywhere", all("synced" not in v.lower() for v in srcs.values())
               and "synced" not in pg.evaluate("document.body.innerText").lower())
-        check("nothing new in the tray (13 swatches, the spare slot, six tools, undo, redo, the empty slot)",
-              pg.evaluate("[...document.querySelectorAll('#tray > *')].map(e => e.className || e.id)") == ["colours", "tools", "gap", "ib", "ib", "slot"]
-              and pg.locator("#tray .colours > *").count() == 14 and pg.locator("#tray .tools > *").count() == 6,
+        check("nothing new in the tray (13 swatches, the spare slot, six tools and undo (pw-v6c), redo, the empty slot)",
+              pg.evaluate("[...document.querySelectorAll('#tray > *')].map(e => e.className || e.id)") == ["colours", "tools", "gap", "ib", "slot"]
+              and pg.locator("#tray .colours > *").count() == 14 and pg.locator("#tray .tools > *").count() == 7,
               pg.evaluate("[...document.querySelectorAll('#tray > *')].map(e => e.className || e.id)"))
         ctx.close()
 

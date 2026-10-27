@@ -566,9 +566,9 @@ try:
         # ------------------------------------------------------------ 8. cache
         group[0] = "cache"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v6b" not in keys:
+        if "pw-v6c" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v6b", "pw-v6b" in keys, keys)
+        check("cache is pw-v6c", "pw-v6c" in keys, keys)
         sw_src = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("sw.js lists vendor/jspdf.umd.min.js", "./vendor/jspdf.umd.min.js" in sw_src)
         ctx.close()
@@ -731,9 +731,13 @@ try:
               and p2.evaluate("document.getElementById('toast').textContent") == "Saved to downloads" and p2.evaluate("window.__pw.tick()") is None,
               [dl.value.suggested_filename])
         p2.evaluate("() => { navigator.share = async (d) => { window.__shared = d; window.__sharedAt = performance.now(); }; }")
-        # 4. one landscape page
-        go_page(p2, 4); p2.click("#noteMore"); p2.wait_for_timeout(40); menu_click(p2, "Landscape"); menu_click(p2, "Just this page"); idle(p2)
-        check("set-up: page 4 is landscape (page menu)", p2.evaluate("window.__pw.S.pages.find(p => p.id === 't4').orientation") == "landscape")
+        # 4. one landscape page (pw-v6c: a written page keeps its shape, so its writing comes off, the page turns, the writing goes back)
+        go_page(p2, 4); keep4 = p2.evaluate("window.__pw.ink.copyStrokes('t4')")
+        p2.evaluate("() => window.__pw.ink.erasePageOp('t4').redo()"); idle(p2)
+        p2.click("#noteMore"); p2.wait_for_timeout(40); menu_click(p2, "Landscape"); menu_click(p2, "Just this page"); idle(p2)
+        p2.evaluate("(r) => window.__pw.ink.put('t4', r)", keep4); idle(p2)
+        check("set-up: page 4 is landscape (page menu), its stroke back on it", p2.evaluate("window.__pw.S.pages.find(p => p.id === 't4').orientation") == "landscape"
+              and len(p2.evaluate("window.__pw.ink.strokesOf('t4')")) == len(keep4) > 0)
         share_start(p2, (4,)); q = p2.evaluate(DLG_JS)
         check("one page ticked: the name box says 'Test note p4'", q.get("value") == "Test note p4", q)
         sh, _ = share_go(p2, "pdf")

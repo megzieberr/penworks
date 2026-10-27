@@ -450,10 +450,14 @@ function erasePage(i) {
   if (!op) { toast('Nothing to erase on this page.'); return; }
   doOp(op);
 }
+const written = (p) => !!(p && p.id) && ink.strokesOf(p.id).length > 0;   // any ink at all on the page (pw-v6c)
 // orientation or paper, for the current page or all of them
 function setPaper(field, value, all) {
   const list = pagesOf(S.openNote), targets = (all ? list : [list[S.cur]].filter(Boolean)).filter((p) => !p.pdf_path);   // U4a: a PDF page keeps its shape
-  const changes = targets.filter((p) => p[field] !== value).map((p) => ({ id: p.id, old: p[field] }));
+  // pw-v6c: a page with writing keeps its shape too (a turn cuts the writing off, her 26 Oct note); its paper still changes
+  const kept = field === 'orientation' ? targets.filter((p) => p[field] !== value && written(p)).length : 0;
+  if (kept) toast(kept === 1 ? '1 page with writing kept its shape' : `${kept} pages with writing kept their shape`);
+  const changes = targets.filter((p) => p[field] !== value && !(field === 'orientation' && written(p))).map((p) => ({ id: p.id, old: p[field] }));
   if (!changes.length) return;
   const at = S.cur;
   const put = (pairs) => {
@@ -568,12 +572,13 @@ function thumbMenu(i, anchor) {
 }
 function paperMenu(anchor) {
   const p = pagesOf(S.openNote)[S.cur] || {}, pdf = !!p.pdf_path;    // U4a: on a PDF page the shape and paper are the PDF's (greyed)
+  const shape = pdf || written(p);                                    // pw-v6c: writing on the page locks its shape (not its paper)
   const ask = (field, value) => openMenu(anchor, [{ head: 'Change' },
     { label: 'Just this page', fn: () => setPaper(field, value, false) },
     { label: 'All pages', fn: () => setPaper(field, value, true) }]);
   openMenu(anchor, [{ head: 'Page' },
-    { label: 'Portrait', on: !pdf && p.orientation === 'portrait', disabled: pdf, keep: true, fn: () => ask('orientation', 'portrait') },
-    { label: 'Landscape', on: !pdf && p.orientation === 'landscape', disabled: pdf, keep: true, fn: () => ask('orientation', 'landscape') },
+    { label: 'Portrait', on: !pdf && p.orientation === 'portrait', disabled: shape, keep: true, fn: () => ask('orientation', 'portrait') },
+    { label: 'Landscape', on: !pdf && p.orientation === 'landscape', disabled: shape, keep: true, fn: () => ask('orientation', 'landscape') },
     { head: 'Paper' },
     { label: 'Blank', on: !pdf && p.background === 'blank', disabled: pdf, keep: true, fn: () => ask('background', 'blank') },
     { label: 'Grid, 1 cm squares', on: !pdf && p.background === 'grid', disabled: pdf, keep: true, fn: () => ask('background', 'grid') },
@@ -813,6 +818,15 @@ function renderPageList() {
   });
   renderTick();
   updateCount();
+}
+// pw-v6c: the list opens at the page she is on ("it always opens to the first page"): its thumb centred in #plThumbs'
+// own scroll box, by hand, never scrollIntoView (that also scrolls #desk and the window, and a scroll of the desk is the
+// 25 Oct off-page-ink bug, see unscroll() in page.js). With the Bookmarks filter on and her page not shown: the top.
+function listToCur() {
+  const T = $('plThumbs'), t = T.querySelector(`.thumbP[data-index="${S.cur + 1}"]`);
+  if (!t) { T.scrollTop = 0; return; }
+  const a = T.getBoundingClientRect(), b = t.getBoundingClientRect();
+  T.scrollTop = Math.max(0, T.scrollTop + (b.top + b.height / 2) - (a.top + T.clientHeight / 2));
 }
 
 // ---------------------------------------------------------------- page list tick mode (pw-v4q)
@@ -1551,7 +1565,7 @@ function wire() {
   $('addPageBtn').addEventListener('click', (e) => addMenu(e.currentTarget));      // U4a: Page or PDF
   $('pdfInput').addEventListener('change', pdfPicked);
   $('addBelow').addEventListener('click', () => addPageBelow(pagesOf(S.openNote).length - 1));
-  $('listBtn').addEventListener('click', () => { S.listOpen = !S.listOpen; renderPageList(); });
+  $('listBtn').addEventListener('click', () => { S.listOpen = !S.listOpen; renderPageList(); if (S.listOpen) listToCur(); });
   $('plClose').addEventListener('click', () => { S.listOpen = false; renderPageList(); });
   $('plSelect').addEventListener('click', startTick);
   $('plMarks').addEventListener('click', toggleBookmarks);

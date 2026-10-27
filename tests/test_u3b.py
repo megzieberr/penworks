@@ -235,10 +235,18 @@ try:
 
         # ------------------------------------------------------------ a new paper is a new picture; landscape swaps
         group[0] = "paper change"
+        # pw-v6c: a written page keeps its shape, so the writing comes off first (its own new picture lands), the page
+        # turns (the picture this group checks), then the writing goes back
+        keep1 = pg.evaluate("window.__pw.ink.copyStrokes('s1')"); at_w = row(pg, "pages", "s1")["snapshot_at"]
+        pg.evaluate("() => window.__pw.ink.erasePageOp('s1').redo()"); idle(pg)
+        until(pg, lambda: (row(pg, "pages", "s1") or {}).get("snapshot_at") != at_w, 7000)
         at0 = row(pg, "pages", "s1")["snapshot_at"]
         pg.click("#noteMore"); menu(pg, "Landscape"); menu(pg, "Just this page"); idle(pg)
         ok = until(pg, lambda: (row(pg, "pages", "s1") or {}).get("snapshot_at") != at0, 7000)
         check("Landscape for this page: a new picture within 7 s", ok, [at0, row(pg, "pages", "s1")["snapshot_at"]])
+        at_l = row(pg, "pages", "s1")["snapshot_at"]
+        pg.evaluate("(r) => window.__pw.ink.put('s1', r)", keep1); idle(pg)
+        until(pg, lambda: (row(pg, "pages", "s1") or {}).get("snapshot_at") != at_l, 7000)   # the written page's picture lands too
         dims = pg.evaluate("""async () => { const b = await window.__pw.api.getSnapshot('local/s1.webp'), bm = await createImageBitmap(b); return [bm.width, bm.height]; }""")
         check("landscape at 1x: 1123 x 794", dims == [1123, 794], dims)
         back(pg)
@@ -298,9 +306,9 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v6b" not in keys:
+        if "pw-v6c" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v6b", "pw-v6b" in keys, keys)
+        check("cache is pw-v6c", "pw-v6c" in keys, keys)
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the shell lists ./js/snap.js", "./js/snap.js" in swt)
         check("Supabase (its /storage/ too) is never cached: other origins go straight to the network", "url.origin !== location.origin" in swt)
