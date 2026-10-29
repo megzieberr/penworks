@@ -1382,7 +1382,7 @@ function toggleTheme() {
 // ---------------------------------------------------------------- pw-v7c: the pen tray down the right edge or the left
 // Her big tablet (29 Oct): the right edge is a long reach, so the tray can sit down the left edge instead. A switch she
 // flips as often as she likes (the footer's #trayBtn, or "Tray to the left / right" in the open note's menu); this device
-// remembers it (localStorage pw.traySide, like the theme: the tablet is the only device with a tray, so it is not synced).
+// remembers it (localStorage pw.traySide, like the theme: the tablet is the only device with a tray, so it is not shared).
 // body.trayLeft = left. The css moves the tray by `order` only (the DOM stays: #tray after #main) and mirrors the chips.
 // Both labels name what a tap does ("Move tray to the left"), as the dark-mode button names the mode it switches to.
 const TRAY_SIDE = 'pw.traySide';

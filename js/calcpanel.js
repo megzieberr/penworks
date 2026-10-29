@@ -123,6 +123,7 @@ export function initCalc({ trayBtn }) {
   }, true);
   // the tray changed sides: the card goes beside it again (a dragged place is dropped); pw-v7c also fires `resize`
   new MutationObserver(() => {
+    if (!document.body.classList.contains('noteMode')) { closeCalc(); return; }   // Fable review: leaving the note puts the calculator away (its LCD is kept)
     const now = trayLeft();
     if (now === wasLeft) return;
     wasLeft = now;

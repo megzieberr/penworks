@@ -204,6 +204,13 @@ try:
         menu_flip(pg)
         c, tray = rect(pg, "#calcCard"), rect(pg, "#tray")
         check("flipped back to the right: the card follows, 12 px left of the tray", abs(c["r"] - (tray["l"] - 12)) <= 1, [c, tray])
+        # Fable review: leaving the note puts the calculator away; opening a note again brings it back on a tap, LCD kept
+        pg.click("#backBtn"); pg.wait_for_timeout(200)
+        check("back to the folder view: the card is hidden", pg.evaluate("document.getElementById('calcCard').hidden"))
+        open_note(pg)
+        check("a note opened again: the card stays hidden until the button is tapped", pg.evaluate("document.getElementById('calcCard').hidden"))
+        pg.click("#toolsBtn"); pg.wait_for_timeout(100)
+        check("tapped: the card is back, the same card (never rebuilt)", not pg.evaluate("document.getElementById('calcCard').hidden") and pg.locator("#calcCard").count() == 1)
 
         # the pen panel and the desk
         group[0] = "B. panels and the desk"

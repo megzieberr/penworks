@@ -259,8 +259,8 @@ try:
         group[0] = "the dot"
         sel = "#side .foot #saveDot"
         box = pg.locator(sel).bounding_box()
-        tb = pg.locator("#themeBtn").bounding_box()
-        check("one 10 px round dot beside the dark-mode toggle", pg.locator("#saveDot").count() == 1 and box and abs(box["width"] - 10) < 0.5
+        tb = pg.locator("#trayBtn").bounding_box()   # pw-v7c: the tray-side button sits between the dot and the dark-mode toggle
+        check("one 10 px round dot beside the tray-side button (then the dark-mode toggle)", pg.locator("#saveDot").count() == 1 and box and abs(box["width"] - 10) < 0.5
               and abs(box["height"] - 10) < 0.5 and abs((box["x"] + 10) - tb["x"]) < 12, [box, tb])
         # the folder view's footer is hidden while she writes: the note bar carries a second dot with the same state
         bar = pg.evaluate("""() => { const d = document.querySelector('#noteBar .saveDot'), f = document.getElementById('saveDot');
