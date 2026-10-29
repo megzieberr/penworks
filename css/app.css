@@ -147,8 +147,8 @@ body:not(.noteMode) #tray { display: none; }
 #side .top .wordmark { margin: 0; font-size: 21px; }
 #folderList { flex: 1; overflow-y: auto; padding: 4px 8px 16px; touch-action: pan-y; }
 #side .foot { flex: none; border-top: 1px solid var(--line); padding: 6px 8px 10px; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-.themeBtn { width: 36px; height: 36px; color: var(--muted); }
-.themeBtn svg { width: 20px; height: 20px; }
+.themeBtn, .trayBtn { width: 36px; height: 36px; color: var(--muted); }
+.themeBtn svg, .trayBtn svg { width: 20px; height: 20px; }
 /* the save dot (U3a): fixed colours, the same in dark mode */
 .footR { display: flex; align-items: center; gap: 4px; margin-left: auto; }
 .saveDot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: #9a9a9a; }
@@ -340,6 +340,17 @@ body.full #noteBar, body.full #counter { display: none; }
 #zoomLock .lockShut, #zoomLock[aria-pressed="true"] .lockOpen { display: none; }
 #zoomLock[aria-pressed="true"] .lockShut { display: block; }
 #zoomLock[aria-pressed="true"] { background: #262A30; }
+
+/* pw-v7c: the tray down the LEFT edge (body.trayLeft, her switch, js/app.js). The tray moves by css `order` only (the DOM
+   keeps #tray after #main), its hairline goes to its desk side, and the chips mirror: the padlock bottom-right, the
+   full-screen exit top-left, the page counter bottom-left. The phone (under 600 px) keeps its one column either way. */
+@media (min-width: 600px) {
+  body.noteMode.trayLeft #app { grid-template-columns: var(--tray-w) minmax(0, 1fr); }
+}
+body.trayLeft #tray { order: -1; border-left: 0; border-right: 1px solid rgba(38,42,48,.08); }
+body.trayLeft #zoomLock { left: auto; right: 12px; }
+body.trayLeft #exitFs { right: auto; left: 12px; }
+body.trayLeft #counter { right: auto; left: 14px; }
 
 /* page list: slides in from the left over the desk */
 #pageList {

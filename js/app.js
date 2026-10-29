@@ -28,7 +28,7 @@ import { api } from './api.js';
 import { initPage, showStack, fit, scrollToPage, relayout, current, bookmarkTab, markSheet, bgSvg, pageSize, A4, setLock, locked } from './page.js';
 import * as ink from './ink.js';
 import * as store from './store.js';
-import { initTray, closePanel, trayState, chooseTool, localTray, adopt as adoptTray } from './tray.js';
+import { initTray, closePanel, closePicker, trayState, chooseTool, localTray, adopt as adoptTray } from './tray.js';
 import * as pics from './snap.js';
 import * as live from './live.js';
 import * as treeq from './treeq.js';
@@ -612,6 +612,7 @@ function paperMenu(anchor) {
     { label: 'Lined', on: !pdf && p.background === 'lined', disabled: pdf, keep: true, fn: () => ask('background', 'lined') },
     p.id ? { label: p.bookmark ? 'Remove bookmark' : 'Bookmark', fn: () => setBookmark(p.id, !p.bookmark) } : null,
     { head: 'Note' },
+    { label: trayLeft ? 'Tray to the right' : 'Tray to the left', fn: flipTray },   // pw-v7c: names what a tap does
     { label: 'Share note', fn: shareNote },                           // pw-v6b: every page, no ticking
     { label: 'Bin this note', fn: () => binThing('note', S.openNote) }]);   // Bin stays last (Fable: never beside a routine tap)
 }
@@ -1377,6 +1378,31 @@ function toggleTheme() {
   applyTheme();
 }
 
+// ---------------------------------------------------------------- pw-v7c: the pen tray down the right edge or the left
+// Her big tablet (29 Oct): the right edge is a long reach, so the tray can sit down the left edge instead. A switch she
+// flips as often as she likes (the footer's #trayBtn, or "Tray to the left / right" in the open note's menu); this device
+// remembers it (localStorage pw.traySide, like the theme: the tablet is the only device with a tray, so it is not synced).
+// body.trayLeft = left. The css moves the tray by `order` only (the DOM stays: #tray after #main) and mirrors the chips.
+// Both labels name what a tap does ("Move tray to the left"), as the dark-mode button names the mode it switches to.
+const TRAY_SIDE = 'pw.traySide';
+const SVG_TRAY_R = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M15.5 5H19a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-3.5z" fill="currentColor"/></svg>';
+const SVG_TRAY_L = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8.5 5H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3.5z" fill="currentColor"/></svg>';
+let trayLeft = (() => { try { return localStorage.getItem(TRAY_SIDE) === 'left'; } catch (_) { return false; } })();
+function applyTraySide() {
+  document.body.classList.toggle('trayLeft', trayLeft);
+  const b = $('trayBtn'), lbl = trayLeft ? 'Move tray to the right' : 'Move tray to the left';
+  b.innerHTML = trayLeft ? SVG_TRAY_L : SVG_TRAY_R;               // the bar on the side the tray is on now
+  b.setAttribute('aria-label', lbl); b.title = lbl;
+}
+function flipTray() {
+  trayLeft = !trayLeft;
+  try { localStorage.setItem(TRAY_SIDE, trayLeft ? 'left' : 'right'); } catch (_) { /* this session only */ }
+  closePanel(); closePicker();
+  applyTraySide();
+  window.dispatchEvent(new Event('resize'));                       // a layout change: the desk's cached rectangles drop, the
+  toast(trayLeft ? 'Tray on the left' : 'Tray on the right');      // zoom and the place stay (page.js relayout only clamps)
+}
+
 // ---------------------------------------------------------------- start
 async function load() {
   try { await api.purgeBin(30); } catch (_) { /* the bin empties itself next time */ }
@@ -1629,8 +1655,10 @@ function inkChanged(pageId, how) {
 
 function wire() {
   applyTheme();
+  applyTraySide();                                                 // pw-v7c: before any note opens, so it never jumps sides
   darkQuery.addEventListener('change', applyTheme);
   $('themeBtn').addEventListener('click', toggleTheme);
+  $('trayBtn').addEventListener('click', flipTray);
   $('eyeBtn').addEventListener('click', () => {
     const show = $('lp').type === 'password';
     $('lp').type = show ? 'text' : 'password';

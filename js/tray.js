@@ -195,10 +195,14 @@ function openPanel(t) {
   panel.hidden = false;
   place(panel, btns[t]);
 }
-function place(card, by) {                                        // a card to the left of the tray, beside its button
+function place(card, by) {                                        // a card beside the tray (on its desk side), level with its button
   const tb = tray.getBoundingClientRect(), bb = by.getBoundingClientRect();
   const ph = card.offsetHeight;
-  card.style.right = Math.max(8, innerWidth - tb.left + 8) + 'px';
+  if (document.body.classList.contains('trayLeft')) {             // pw-v7c: the tray down the left edge, the card to its right
+    card.style.left = tb.right + 8 + 'px'; card.style.right = '';
+  } else {
+    card.style.right = Math.max(8, innerWidth - tb.left + 8) + 'px'; card.style.left = '';
+  }
   card.style.top = Math.max(8, Math.min(innerHeight - ph - 8, bb.top + bb.height / 2 - ph / 2)) + 'px';
 }
 export function closePanel() { if (panel && !panel.hidden) { panel.hidden = true; panel.textContent = ''; } }

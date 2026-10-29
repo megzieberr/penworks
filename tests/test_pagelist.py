@@ -435,8 +435,9 @@ try:
 
         # 1. page 2's menu: Bookmark, right after the paper items; tap it
         items = page_menu(2)
-        check("page 2's menu has 'Bookmark' right after the paper items (Lined), then 'Share note', then 'Bin this note'",
-              "Bookmark" in items and items.index("Bookmark") == items.index("Lined") + 1 and items.index("Share note") == items.index("Bookmark") + 1
+        check("page 2's menu has 'Bookmark' right after the paper items (Lined), then 'Tray to the left' (pw-v7c), 'Share note', 'Bin this note'",
+              "Bookmark" in items and items.index("Bookmark") == items.index("Lined") + 1 and items.index("Tray to the left") == items.index("Bookmark") + 1
+              and items.index("Share note") == items.index("Tray to the left") + 1
               and items.index("Bin this note") == items.index("Share note") + 1
               and "Remove bookmark" not in items, items)
         u0, r0 = U4(), R4()
@@ -566,9 +567,9 @@ try:
         # ------------------------------------------------------------ 8. cache
         group[0] = "cache"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v7b" not in keys:
+        if "pw-v7c" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v7b", "pw-v7b" in keys, keys)
+        check("cache is pw-v7c", "pw-v7c" in keys, keys)
         sw_src = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("sw.js lists vendor/jspdf.umd.min.js", "./vendor/jspdf.umd.min.js" in sw_src)
         ctx.close()
