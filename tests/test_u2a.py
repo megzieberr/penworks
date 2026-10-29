@@ -137,7 +137,7 @@ try:
               ["#FF7043", "Orange"], ["#A83AFF", "Purple"], ["#FFC107", "Amber"], ["#00BCD5", "Cyan"], ["#04878F", "Teal"], ["#FF00FF", "Magenta"],
               ["#FF3636", "Red"], ["#000000", "Black"], ["#808080", "Grey"]], sw)
         st0 = pg.evaluate("window.__pw.tray()")
-        check("defaults: pen Black #000000, highlighter Amber #FFC107", st0["pen"]["colour"] == "#000000" and st0["highlighter"]["colour"] == "#FFC107", [st0["pen"], st0["highlighter"]])
+        check("default: ONE colour, Black #000000, for pen and highlighter (round 1)", st0["pen"]["colour"] == "#000000" and st0["highlighter"]["colour"] == "#000000", [st0["pen"], st0["highlighter"]])
         order = pg.evaluate("""[...document.getElementById('tray').querySelectorAll(':scope > *, :scope > .tools > *')]
           .map(e => e.dataset.tool || e.dataset.slot || e.id || e.className)""")
         check("order (pw-v7e): calculator at the top, colours, pen, highlighter, undo (pw-v6c), stroke eraser, area eraser, restyle, select, gap, redo",
@@ -273,10 +273,10 @@ try:
         draw(pg, 1, line(400))
         p = [q for q in paths(pg, 1) if q["cls"] == "highlighter"][-1]; r = strokes(pg, "p6")[-1]
         grp = pg.evaluate("(id) => { const g = document.querySelector(`svg.ink path[data-id='${id}']`).parentNode; return [g.getAttribute('class'), g.dataset.opacity, g.getAttribute('opacity'), g.parentNode.getAttribute('class')]; }", r["id"])
-        check("highlighter path: no stroke-opacity, no blend, round caps and joins, amber, width 16",
-              p["opacity"] is None and not p["blend"] and p["cap"] == "round" and p["join"] == "round" and p["stroke"] == "#FFC107" and p["width"] == "16", p)
+        check("highlighter path: no stroke-opacity, no blend, round caps and joins, the pen's red (one colour), width 16",
+              p["opacity"] is None and not p["blend"] and p["cap"] == "round" and p["join"] == "round" and p["stroke"] == "#FF3636" and p["width"] == "16", p)
         check("it sits in .hl > .hlo[data-opacity=0.6] with group opacity 0.6", grp == ["hlo", "0.6", "0.6", "hl"], grp)
-        check("its record: kind highlighter, opacity kept", r["kind"] == "highlighter" and r["style"] == {"colour": "#FFC107", "width": 16, "dash": "solid", "opacity": 0.6}, r["style"])
+        check("its record: kind highlighter, opacity kept", r["kind"] == "highlighter" and r["style"] == {"colour": "#FF3636", "width": 16, "dash": "solid", "opacity": 0.6}, r["style"])
         pg.click("#tool-pen")
         check("the pen's red is back on the swatches", pg.get_attribute("#tray .sw[data-colour='#FF3636']", "class").split().count("on") == 1)
         back(pg)
@@ -338,8 +338,8 @@ try:
           pen: { colour: '#1F2328', width: 4, dash: 'dashed' }, highlighter: { colour: '#F9A825', width: 20, opacity: 0.5 } }))""")
         pg.reload(); ready(pg)
         st1 = pg.evaluate("window.__pw.tray()")
-        check("an old saved colour falls back to the tool's default; width, dash, opacity stay",
-              st1["pen"] == {"colour": "#000000", "width": 4, "dash": "dashed"} and st1["highlighter"] == {"colour": "#FFC107", "width": 20, "opacity": 0.5}, [st1["pen"], st1["highlighter"]])
+        check("an old saved colour falls back to Black (the one colour); width, dash, opacity stay",
+              st1["pen"] == {"colour": "#000000", "width": 4, "dash": "dashed"} and st1["highlighter"] == {"colour": "#000000", "width": 20, "opacity": 0.5}, [st1["pen"], st1["highlighter"]])
         pg.evaluate("localStorage.removeItem('pw.tools')"); pg.reload(); ready(pg)
         open_note(pg, "Erasers")
         pg.click("#tool-highlighter")
@@ -495,7 +495,7 @@ try:
         check("the eye toggles password to text and back", a == "password" and c == ["text", "Hide password"] and d == "password", [a, c, d])
         check("the eye sits inside the field", eb["x"] >= lb["x"] and eb["x"] + eb["width"] <= lb["x"] + lb["width"] and eb["y"] >= lb["y"] - 1 and eb["y"] + eb["height"] <= lb["y"] + lb["height"] + 1, [eb, lb])
         group[0] = "pwa and house rules"
-        check("cache is pw-v7j", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v7j"] or "pw-v7j" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v7k", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v7k"] or "pw-v7k" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the new files are in the offline shell", all(f in swt for f in ("./js/ink.js", "./js/store.js", "./js/tray.js")))
         pg.evaluate(SEED_JS, False); pg.reload(); ready(pg)

@@ -909,7 +909,7 @@ try:
         draw(pg, 1, rough_line(), hold=650)
         r = last(pg, "p1")
         check("a held highlighter line becomes shape/line", r["kind"] == "shape" and r["data"]["type"] == "line", [r["kind"], r["data"]])
-        check("it keeps the highlighter's look (colour, width, solid, opacity)", r["style"] == {"colour": "#FFC107", "width": 18, "dash": "solid", "opacity": 0.4}, r["style"])
+        check("it keeps the highlighter's look (colour, width, solid, opacity)", r["style"] == {"colour": "#000000", "width": 18, "dash": "solid", "opacity": 0.4}, r["style"])
         e = elinfo(pg, 1, r["id"])
         check("it renders inside the highlighter layer: g.hlo (0.4) under g.hl", e["tag"] == "line" and e["parent"] == "hlo" and e["gp"] == "hl" and e["opacity"] == "0.4", e)
         own = pg.evaluate(f"(() => {{ const e = document.querySelector('[data-id=\"{r['id']}\"]'); return [e.getAttribute('stroke-opacity'), e.getAttribute('stroke-linecap')]; }})()")
@@ -977,10 +977,10 @@ try:
         HS = last(pg, "p3")["id"]
         tool(pg, "restyle")
         ts = pg.evaluate("window.__pw.tray()")
-        check("restyle picked after the highlighter: its colour starts as the highlighter's", ts["restyle"]["colour"] == "#FFC107", ts.get("restyle"))
+        check("restyle picked after the highlighter: its colour starts as the current colour (round 1: one colour, Black)", ts["restyle"]["colour"] == "#000000", ts.get("restyle"))
         pg.click("#tray .sw[data-colour='#FF3636']")
         ts = pg.evaluate("window.__pw.tray()")
-        check("a colour tap with restyle on: only restyle's colour changes", ts["restyle"]["colour"] == "#FF3636" and ts["pen"]["colour"] == "#000000" and ts["highlighter"]["colour"] == "#FFC107", [ts["restyle"], ts["pen"], ts["highlighter"]])
+        check("a colour tap with restyle on: only restyle's colour changes", ts["restyle"]["colour"] == "#FF3636" and ts["pen"]["colour"] == "#000000" and ts["highlighter"]["colour"] == "#000000", [ts["restyle"], ts["pen"], ts["highlighter"]])
         check("the swatch ring shows the restyle colour", pg.evaluate("[...document.querySelectorAll('#tray .sw.on')].map(e => e.dataset.colour)") == ["#FF3636"])
         u0 = U(pg)
         tap_page(pg, 1, 250, 211)
@@ -992,7 +992,7 @@ try:
               h_["style"] == {"colour": "#FF3636", "width": 18, "dash": "solid", "opacity": 0.4} and elinfo(pg, 1, HS)["parent"] == "hlo", h_["style"])
         check("two taps, two undo steps", U(pg) == u0 + 2)
         ts = pg.evaluate("window.__pw.tray()")
-        check("the pen's and the highlighter's own colours did not move", ts["pen"]["colour"] == "#000000" and ts["highlighter"]["colour"] == "#FFC107", [ts["pen"], ts["highlighter"]])
+        check("the one ink colour (pen and highlighter) did not move", ts["pen"]["colour"] == "#000000" and ts["highlighter"]["colour"] == "#000000", [ts["pen"], ts["highlighter"]])
         # the spare slot while restyle is on: it sets the restyle colour
         pg.click("#tray .spec")
         pg.wait_for_selector("#specPicker:not([hidden])")
@@ -1045,7 +1045,7 @@ try:
         check("ONE undo step", U(pg) == u0 + 1, [u0, U(pg)])
         ts = pg.evaluate("window.__pw.tray()")
         check("select stays the tool, the selection and its box stay", ts["tool"] == "select" and sel(pg) and sorted(sel(pg)["ids"]) == sorted([A, H, S]) and selui(pg)["box"], [ts["tool"], sel(pg)])
-        check("the pen's colour did not become pink", ts["pen"]["colour"] == "#000000" and ts["highlighter"]["colour"] == "#FFC107", [ts["pen"], ts["highlighter"]])
+        check("the pen's colour did not become pink", ts["pen"]["colour"] == "#000000" and ts["highlighter"]["colour"] == "#000000", [ts["pen"], ts["highlighter"]])
         undo(pg)
         check("undo puts every colour back (the selection follows)", all({x["id"]: x for x in strokes(pg, "p4")}[i]["style"] == before[i]["style"] for i in (A, H, S)) and sel(pg) is not None)
         redo(pg)
@@ -1530,7 +1530,7 @@ try:
         draw(pg, 1, rough_arc(600, 1050, 100, -160, -20), hold=650)
         h = last(pg, "p1")
         check("a highlighter arc held: shape/arc", h["kind"] == "shape" and h["data"]["type"] == "arc", [h["kind"], h["data"]])
-        check("... with the highlighter's look", h["style"] == {"colour": "#FFC107", "width": 18, "dash": "solid", "opacity": 0.4}, h["style"])
+        check("... with the highlighter's look", h["style"] == {"colour": "#000000", "width": 18, "dash": "solid", "opacity": 0.4}, h["style"])
         e = elinfo(pg, 1, h["id"])
         check("... a <path> in its g.hlo (0.4) group under g.hl", e["tag"] == "path" and e["parent"] == "hlo" and e["gp"] == "hl" and e["opacity"] == "0.4", e)
         ids.append(h["id"])
@@ -2426,7 +2426,7 @@ try:
         draw(pg, 1, rough_parabola(400, 700, 0.004, 150, seed=12), hold=650)
         h = last(pg, "p1")
         check("a highlighter parabola held: shape/parabola with the highlighter's look", h and h["kind"] == "shape" and h["data"].get("type") == "parabola"
-              and h["style"] == {"colour": "#FFC107", "width": 18, "dash": "solid", "opacity": 0.4}, h and [h["kind"], h["data"], h["style"]])
+              and h["style"] == {"colour": "#000000", "width": 18, "dash": "solid", "opacity": 0.4}, h and [h["kind"], h["data"], h["style"]])
         e = elinfo(pg, 1, h["id"]) if h else None
         check("... a <path> in its g.hlo (0.4) group under g.hl", e and e["tag"] == "path" and e["parent"] == "hlo" and e["gp"] == "hl" and e["opacity"] == "0.4", e)
         tool(pg, "pen")
@@ -2840,7 +2840,7 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v7j", "pw-v7j" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v7k", "pw-v7k" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)

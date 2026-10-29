@@ -1,10 +1,12 @@
 // PenWorks pen tray (right edge): her 13 colours, a spare spectrum slot, pen, highlighter, stroke eraser, area eraser,
 // restyle, rectangle select, a gap, undo, redo, and an empty slot for the Tools button (U5). One icon per tool, no
 // labels. The pen and the highlighter each open a small panel when tapped while already selected.
-// Each remembers its own colour, width and dash or opacity.
+// Round 1 (pw-v7k, her ruling 29 Oct): ONE colour for the pen and the highlighter. The colour belongs to her hand, not
+// the tool: a colour tap sets it, a switch between pen and highlighter never changes it. Width, dash and opacity stay
+// per tool.
 // Colours: hold a swatch (350 ms, still) and drag it up or down to put her 13 in her order; the order is
 // kept on the device. Under them a 14th spare slot (rainbow ring) holds any colour picked from the honeycomb.
-// Restyle has its own colour (it starts as the last ink tool's colour when restyle is picked); a colour tap
+// Restyle has its own colour (it starts as the current ink colour when restyle is picked); a colour tap
 // while restyle is on changes only that. With the select tool and a selection on the page, a colour tap
 // recolours the selection and a tap on Restyle restyles it (the select tool and the selection stay).
 // U3c: the tray state follows her across devices. keep() writes it here (localStorage pw.tools, with its tray_at stamp)
@@ -19,9 +21,13 @@ export const COLOURS = [
   ['#A83AFF', 'Purple'], ['#FFC107', 'Amber'], ['#00BCD5', 'Cyan'], ['#04878F', 'Teal'], ['#FF00FF', 'Magenta'],
   ['#FF3636', 'Red'], ['#000000', 'Black'], ['#808080', 'Grey'],
 ];
+// The one ink colour starts as Black (the highlighter's old Amber default is gone: she picks Amber when she wants it).
+// Both pen.colour and highlighter.colour are still kept, always equal: profiles.settings.tray and the device copy keep
+// the shape an older app (and a row saved before round 1) has, so either one still loads.
+const DEFAULT_COLOUR = '#000000';
 const DEFAULTS = {
-  pen: { colour: '#000000', width: 2.5, dash: 'solid' },
-  highlighter: { colour: '#FFC107', width: 18, opacity: 0.4 },
+  pen: { colour: DEFAULT_COLOUR, width: 2.5, dash: 'solid' },
+  highlighter: { colour: DEFAULT_COLOUR, width: 18, opacity: 0.4 },
 };
 const KNOWN = new Set(COLOURS.map(([c]) => c.toLowerCase()));
 const CANON = new Map(COLOURS.map(([c]) => [c.toLowerCase(), c]));
@@ -75,14 +81,12 @@ function sanitise(saved) {
     && new Set(o.map((c) => c.toLowerCase())).size === COLOURS.length;
   s.order = okOrder ? o.map((c) => CANON.get(c.toLowerCase())) : COLOURS.map(([c]) => c);
   s.spec = normHex(saved.spec);                                   // the spare slot: null until she first picks
-  // a colour saved from an older set (not one of the 13, not the spare slot's) falls back to that tool's
-  // default; width, dash, opacity stay
-  for (const t of INK) {
-    const c = String(s[t].colour);
-    if (KNOWN.has(c.toLowerCase())) s[t].colour = CANON.get(c.toLowerCase());
-    else if (s.spec && same(c, s.spec)) s[t].colour = s.spec;
-    else s[t].colour = DEFAULTS[t].colour;
-  }
+  // the one colour: the colour of the saved tool (a row from before round 1 can hold two different ones; the tool she
+  // had on wins). A colour from an older set (not one of the 13, not the spare slot's) falls back to Black; width,
+  // dash, opacity stay
+  const c = String(s[s.tool].colour);
+  const one = KNOWN.has(c.toLowerCase()) ? CANON.get(c.toLowerCase()) : s.spec && same(c, s.spec) ? s.spec : DEFAULT_COLOUR;
+  for (const t of INK) s[t].colour = one;
   s.lastInk = s.tool;
   const rc = String((saved.restyle && saved.restyle.colour) || '');   // restyle's own colour, the same rule
   s.restyle = { colour: KNOWN.has(rc.toLowerCase()) ? CANON.get(rc.toLowerCase()) : s.spec && same(rc, s.spec) ? s.spec : s[s.lastInk].colour };
@@ -108,7 +112,9 @@ function push() {
   setTool(st.tool, INK.includes(st.tool) ? st[st.tool] : null);
   paint();
 }
-const ringColour = () => (st.tool === 'restyle' ? st.restyle.colour : st[st.lastInk].colour);   // the swatch ring
+const inkColour = () => st.pen.colour;                          // the one colour (highlighter.colour is always the same)
+const setInk = (c) => { for (const t of INK) st[t].colour = c; };
+const ringColour = () => (st.tool === 'restyle' ? st.restyle.colour : inkColour());   // the swatch ring
 const specOn = () => !!st.spec && same(ringColour(), st.spec);
 function paint() {
   for (const [t, b] of Object.entries(btns)) { b.classList.toggle('on', t === st.tool); b.setAttribute('aria-pressed', t === st.tool ? 'true' : 'false'); }
@@ -125,7 +131,7 @@ function useColour(c) {
   if (st.tool === 'restyle') { st.restyle.colour = c; keep(); push(); return; }   // restyle stays: only its own colour changes
   if (st.tool === 'select' && hasSelection()) { recolourSelection(c); return; }   // the selection takes it; no tool colour moves
   if (!INK.includes(st.tool)) st.tool = st.lastInk;              // after an eraser, a colour hands back the last ink tool
-  st[st.tool].colour = c;
+  setInk(c);                                                      // pen and highlighter both: one colour
   keep(); push();
 }
 function pickColour(c) { closePicker(); useColour(c); }
@@ -135,7 +141,7 @@ function pickTool(t) {
     if (!panel.hidden && panel.dataset.for === t) closePanel(); else openPanel(t);
     return;
   }
-  if (t === 'restyle' && st.tool !== 'restyle') st.restyle.colour = st[st.lastInk].colour;   // restyle starts in the last ink colour
+  if (t === 'restyle' && st.tool !== 'restyle') st.restyle.colour = inkColour();   // restyle starts in the current colour
   if (t === 'restyle' && st.tool === 'select' && hasSelection()) {  // a selection: restyle it, select stays, restyle is not entered
     closePanel(); keep(); push(); restyleSelection();
     return;

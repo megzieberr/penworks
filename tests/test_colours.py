@@ -102,7 +102,7 @@ try:
         check("a small gap sets it apart (wider than between colours)", gap[1] > gap[0], gap)
         check("her 13 in her order by default, with her names", pg.evaluate(SW_JS) == HERS, pg.evaluate(SW_JS))
         check("names also on the title", all(s["title"] == s["name"] for s in strip[:13]))
-        check("defaults unchanged: pen Black, highlighter Amber", tray(pg)["pen"]["colour"] == "#000000" and tray(pg)["highlighter"]["colour"] == "#FFC107")
+        check("default: ONE colour, Black, for the pen and the highlighter (round 1)", tray(pg)["pen"]["colour"] == "#000000" and tray(pg)["highlighter"]["colour"] == "#000000")
         ta = pg.evaluate("['#tray .colours'].map(s => getComputedStyle(document.querySelector(s)).touchAction)")
         check("the colour group has touch-action none (no scroll or zoom during a hold)", ta == ["none"], ta)
         fit = pg.evaluate("(() => { const t = document.getElementById('tray'); return [t.scrollHeight, t.clientHeight]; })()")
@@ -224,8 +224,11 @@ try:
         check("a pen stroke drawn after the tap has that colour", r1 and r1["kind"] == "pen" and r1["style"]["colour"] == A, r1 and r1["style"])
         # the highlighter
         pg.click("#tool-highlighter")
-        check("highlighter keeps Amber; the ring moves to Amber", tray(pg)["highlighter"]["colour"] == "#FFC107"
-              and pg.evaluate("[...document.querySelectorAll('#tray .colours .on')].map(s => s.dataset.colour)") == ["#FFC107"])
+        check("the highlighter takes the colour too (round 1); the ring stays on the spare slot", tray(pg)["highlighter"]["colour"] == A
+              and tray(pg)["pen"]["colour"] == A and "on" in pg.get_attribute("#tray .spec", "class").split() and pg.locator("#tray .sw.on").count() == 0)
+        pg.click(sw_sel("#FFC107"))                           # Amber on one of her 13, so the spare slot is not selected
+        check("Amber with the highlighter: pen and highlighter both Amber, the ring on Amber", tray(pg)["highlighter"]["colour"] == "#FFC107"
+              and tray(pg)["pen"]["colour"] == "#FFC107" and pg.evaluate("[...document.querySelectorAll('#tray .colours .on')].map(s => s.dataset.colour)") == ["#FFC107"])
         pg.click("#tray .spec")
         check("tap on the holding slot (not selected): it selects, the picker stays shut", tray(pg)["highlighter"]["colour"] == A and not picker_open(pg)
               and "on" in pg.get_attribute("#tray .spec", "class").split())
@@ -234,8 +237,8 @@ try:
         B = byid["6-10"]["colour"]
         pg.click("#specPicker [data-cell='6-10']")
         st = tray(pg)
-        check("with the highlighter active, picking colours the highlighter (the pen keeps its own)", st["highlighter"]["colour"] == B
-              and st["pen"]["colour"] == A and st["spec"] == B, [st["pen"], st["highlighter"], st["spec"]])
+        check("with the highlighter active, picking sets the one colour (pen and highlighter both)", st["highlighter"]["colour"] == B
+              and st["pen"]["colour"] == B and st["spec"] == B, [st["pen"], st["highlighter"], st["spec"]])
         pg.click("#tray .spec")
         check("tap again while open: it closes (the panel rule)", not picker_open(pg))
         draw(pg, 500)
@@ -248,7 +251,8 @@ try:
         pg.click("#tray .spec"); pg.click("#tray .spec"); o1 = picker_open(pg)
         pg.click("#tool-pen"); o2 = picker_open(pg)
         check("picking a tool closes it", o1 and not o2)
-        pg.click("#tray .spec"); o1 = picker_open(pg)        # the pen is on A (not the spare's B): this selects
+        pg.click(sw_sel("#000000"))                           # the pen on Black (not the spare's B): the next tap selects
+        pg.click("#tray .spec"); o1 = picker_open(pg)
         pg.click("#tray .spec"); o2 = picker_open(pg)
         pg.mouse.click(500, 400); o3 = picker_open(pg)
         check("a tap outside closes it", not o1 and o2 and not o3, [o1, o2, o3])
@@ -259,8 +263,8 @@ try:
         # reload
         pg.reload(); ready(pg); open_note(pg)
         st = tray(pg)
-        check("a reload keeps the picked colour (slot middle, pen on it)", st["spec"] == B and pg.evaluate(MID_JS) == rgb(B)
-              and st["pen"]["colour"] == B and "on" in pg.get_attribute("#tray .spec", "class").split(), [st["spec"], st["pen"]])
+        check("a reload keeps the picked colour (slot middle, pen and highlighter on it)", st["spec"] == B and pg.evaluate(MID_JS) == rgb(B)
+              and st["pen"]["colour"] == B and st["highlighter"]["colour"] == B and "on" in pg.get_attribute("#tray .spec", "class").split(), [st["spec"], st["pen"], st["highlighter"]])
         pg.click("#tray .spec")
         check("after a reload the picker opens with the outline on the saved cell", picker_open(pg) and sel_on(pg, "6-10"), pg.evaluate(SEL_JS))
         pg.keyboard.press("Escape")
@@ -272,6 +276,86 @@ try:
         check("the spare slot is not draggable (holding it lifts nothing)", (hold(pg, "#tray .spec"), pg.locator("#tray .lift").count())[1] == 0)
         pg.mouse.up(); pg.wait_for_timeout(40); pg.keyboard.press("Escape")
         check("no page errors (honeycomb)", not errs, errs)
+        ctx.close()
+
+        # ------------------------------------------------------------ round 1: ONE colour for the pen and the highlighter
+        group[0] = "one colour"
+        ctx, pg, errs = fresh(b)
+        pg.evaluate(SEED_JS); pg.reload(); ready(pg); open_note(pg)
+        RING_JS = "() => [...document.querySelectorAll('#tray .colours .on')].map(s => s.dataset.colour || 'spec')"
+        pg.click(sw_sel("#0D0DFF"))
+        pg.click("#tool-highlighter")
+        check("Blue with the pen, then the highlighter: it is Blue, the ring stays on Blue", tray(pg)["highlighter"]["colour"] == "#0D0DFF"
+              and pg.evaluate(RING_JS) == ["#0D0DFF"], [tray(pg)["highlighter"], pg.evaluate(RING_JS)])
+        draw(pg, 200)
+        r = last_stroke(pg)
+        check("... and its stroke is Blue", r and r["kind"] == "highlighter" and r["style"]["colour"] == "#0D0DFF", r and r["style"])
+        pg.click(sw_sel("#2CB05F"))
+        pg.click("#tool-pen")
+        check("Green with the highlighter, back to the pen: the pen is Green", tray(pg)["pen"]["colour"] == "#2CB05F" and pg.evaluate(RING_JS) == ["#2CB05F"],
+              [tray(pg)["pen"], pg.evaluate(RING_JS)])
+        draw(pg, 300)
+        r = last_stroke(pg)
+        check("... and its stroke is Green", r and r["kind"] == "pen" and r["style"]["colour"] == "#2CB05F", r and r["style"])
+        pg.click("#tool-highlighter"); pg.click("#tool-pen"); pg.click("#tool-highlighter")
+        check("switching back and forth never changes it", tray(pg)["pen"]["colour"] == tray(pg)["highlighter"]["colour"] == "#2CB05F")
+        pg.click("#tool-eraser")
+        pg.click(sw_sel("#FF0C84"))
+        st = tray(pg)
+        check("after an eraser a colour tap hands back the last ink tool (the highlighter) in that colour",
+              st["tool"] == "highlighter" and st["highlighter"]["colour"] == "#FF0C84" and st["pen"]["colour"] == "#FF0C84"
+              and "on" in pg.get_attribute("#tool-highlighter", "class").split(), [st["tool"], st["pen"], st["highlighter"]])
+        draw(pg, 400)
+        r = last_stroke(pg)
+        check("... its stroke is a Pink highlighter stroke", r and r["kind"] == "highlighter" and r["style"]["colour"] == "#FF0C84", r and r["style"])
+        pg.click("#tool-highlighter"); pg.click("#toolPanel [aria-label='Width bigger']"); pg.keyboard.press("Escape")
+        pg.click("#tool-pen"); pg.click("#tool-pen"); pg.click("#toolPanel [aria-label='Width bigger']"); pg.keyboard.press("Escape")
+        st = tray(pg)
+        check("width stays per tool (pen 3, highlighter 20)", st["pen"]["width"] == 3 and st["highlighter"]["width"] == 20, [st["pen"], st["highlighter"]])
+        pg.click("#tool-restyle")
+        check("restyle starts in the current colour (Pink)", tray(pg)["restyle"]["colour"] == "#FF0C84" and pg.evaluate(RING_JS) == ["#FF0C84"])
+        pg.click(sw_sel("#FF3636"))
+        st = tray(pg)
+        check("a colour tap with restyle on changes only restyle's own colour", st["restyle"]["colour"] == "#FF3636"
+              and st["pen"]["colour"] == st["highlighter"]["colour"] == "#FF0C84", [st["restyle"], st["pen"]])
+        pg.click("#tool-pen")
+        check("back to the pen: still Pink, the ring on Pink", tray(pg)["pen"]["colour"] == "#FF0C84" and pg.evaluate(RING_JS) == ["#FF0C84"], pg.evaluate(RING_JS))
+        saved = pg.evaluate(SAVED_JS)
+        check("the saved copy keeps both fields, equal (the shape older apps read)", saved["pen"]["colour"] == saved["highlighter"]["colour"] == "#FF0C84"
+              and saved["pen"]["width"] == 3 and saved["highlighter"]["width"] == 20, [saved["pen"], saved["highlighter"]])
+        pg.reload(); ready(pg); open_note(pg)
+        st = tray(pg)
+        check("a reload keeps the one colour (Pink for both, the ring on Pink)", st["pen"]["colour"] == st["highlighter"]["colour"] == "#FF0C84"
+              and pg.evaluate(RING_JS) == ["#FF0C84"], [st["pen"], st["highlighter"]])
+        # a copy saved by the old app: pen Black, highlighter Amber, the highlighter on
+        OLD = {"tool": "highlighter", "pen": {"colour": "#000000", "width": 4, "dash": "dashed"},
+               "highlighter": {"colour": "#FFC107", "width": 22, "opacity": 0.5}, "restyle": {"colour": "#FFC107"}, "order": HEXES, "spec": None}
+        pg.evaluate("(v) => localStorage.setItem('pw.tools', JSON.stringify(v))", OLD)
+        pg.reload(); ready(pg); open_note(pg)
+        st = tray(pg)
+        check("an old device copy (pen Black, highlighter Amber, highlighter on) loads as Amber for both",
+              st["tool"] == "highlighter" and st["pen"]["colour"] == st["highlighter"]["colour"] == "#FFC107" and pg.evaluate(RING_JS) == ["#FFC107"],
+              [st["tool"], st["pen"], st["highlighter"]])
+        check("... width, dash and opacity stay per tool", st["pen"]["width"] == 4 and st["pen"]["dash"] == "dashed" and st["highlighter"]["width"] == 22
+              and st["highlighter"]["opacity"] == 0.5, [st["pen"], st["highlighter"]])
+        pg.click("#tool-pen"); draw(pg, 500)
+        r = last_stroke(pg)
+        check("... and the pen then draws Amber", r and r["kind"] == "pen" and r["style"]["colour"] == "#FFC107", r and r["style"])
+        # the same row from the database (profiles.settings.tray), newer than the device's copy
+        pg.evaluate("(v) => localStorage.setItem('pw.tools', JSON.stringify(v))", dict(OLD, tool="pen", pen=dict(OLD["pen"], colour="#0D0DFF"), tray_at="2026-10-20T00:00:00.000Z"))
+        pg.evaluate("([t, at]) => window.__pw.api.setSettings({ tray: t, tray_at: at })", [OLD, "2026-10-28T00:00:00.000Z"])
+        pg.reload(); ready(pg)
+        try: pg.wait_for_function("() => window.__pw.tray().pen.colour !== '#0D0DFF'", timeout=4000)
+        except Exception: pass                                # the check below reports it
+        st = tray(pg)
+        check("an old database row (pen Black, highlighter Amber, highlighter on) adopted: Amber for both",
+              st["tool"] == "highlighter" and st["pen"]["colour"] == st["highlighter"]["colour"] == "#FFC107", [st["tool"], st["pen"], st["highlighter"]])
+        OLDP = dict(OLD, tool="pen")
+        pg.evaluate("(v) => localStorage.setItem('pw.tools', JSON.stringify(v))", OLDP)
+        pg.reload(); ready(pg); open_note(pg)
+        st = tray(pg)
+        check("the same old copy with the pen on loads as Black for both", st["pen"]["colour"] == st["highlighter"]["colour"] == "#000000", [st["pen"], st["highlighter"]])
+        check("no page errors (one colour)", not errs, errs)
         ctx.close()
 
         # ------------------------------------------------------------ rings on both trays, portrait fit
