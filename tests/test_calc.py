@@ -126,7 +126,8 @@ try:
         c, tray = rect(pg, "#calcCard"), rect(pg, "#tray")
         check("a tap shows #calcCard; the button lights up (.on, aria-pressed true)", c and c["shown"] and "on" in pg.get_attribute("#toolsBtn", "class").split() and pg.get_attribute("#toolsBtn", "aria-pressed") == "true", c)
         check("tray on the RIGHT: the card's right edge is 12 px left of the tray", c and abs(c["r"] - (tray["l"] - 12)) <= 1, [c, tray])
-        check("the card's top is the tray's top (clamped inside the viewport) (pw-v7e: it was bottom to bottom)", c and abs(c["t"] - min(tray["t"], 800 - c["h"])) <= 1.5, [c, tray])
+        bar = rect(pg, "#noteBar")
+        check("the card's top is 12 px under the note bar (pw-v7e review: never over the More button)", c and abs(c["t"] - min(bar["b"] + 12, 800 - c["h"])) <= 1.5, [c, bar])
         check("the card is inside the viewport", c and c["l"] >= 0 and c["t"] >= 0 and c["r"] <= 1280 and c["b"] <= 800, c)
         cs = pg.evaluate("() => { const s = getComputedStyle(document.getElementById('calcCard')); return [s.position, s.zIndex, document.querySelector('#calcCard .calc-wrap').getBoundingClientRect().width]; }")
         check("position fixed, z-index 45, the .calc-wrap gives the width (344 px)", cs[0] == "fixed" and cs[1] == "45" and abs(cs[2] - 344) <= 1, cs)
@@ -194,8 +195,9 @@ try:
         menu_flip(pg)
         check("set-up: the tray is now on the left", pg.evaluate("document.body.classList.contains('trayLeft')"))
         c, tray = rect(pg, "#calcCard"), rect(pg, "#tray")
-        check("tray on the LEFT, card open and dragged: the flip puts it 12 px right of the tray, top-aligned (pw-v7e)",
-              abs(c["l"] - (tray["r"] + 12)) <= 1 and abs(c["t"] - min(tray["t"], 800 - c["h"])) <= 1.5, [c, tray])
+        bar = rect(pg, "#noteBar")
+        check("tray on the LEFT, card open and dragged: the flip puts it 12 px right of the tray, 12 px under the note bar (pw-v7e)",
+              abs(c["l"] - (tray["r"] + 12)) <= 1 and abs(c["t"] - min(bar["b"] + 12, 800 - c["h"])) <= 1.5, [c, tray, bar])
         pg.screenshot(path=str(SHOTS / "left-tray-card.png"))
         pg.click("#calcCard .calcClose"); pg.wait_for_timeout(50); pg.click("#toolsBtn"); pg.wait_for_timeout(120)
         c, tray = rect(pg, "#calcCard"), rect(pg, "#tray")
@@ -238,12 +240,12 @@ try:
         pg.mouse.click(dx, dy); pg.wait_for_timeout(80)
         check("the colour picker: a tap on the desk closes it as before", pg.evaluate("document.getElementById('specPicker').hidden"))
         # the app menu (the third closer): the note menu stays open under a tap inside the card
-        # pw-v7e: the card now opens level with the tray's top (y 0), so at its own place it lies over the note's More button;
-        # the button is clicked through the DOM here (this check is about the closers, not the place). Flagged to Fable.
+        # pw-v7e review (Fable): the card opens UNDER the note bar, so the More button is never covered and is tapped for real
         cov = pg.evaluate("() => { const m = document.getElementById('noteMore').getBoundingClientRect(), c = document.getElementById('calcCard').getBoundingClientRect(); return m.left < c.right && c.left < m.right && m.top < c.bottom && c.top < m.bottom; }")
-        check("(information) pw-v7e: the open card lies over the note's More button (top bar)", True, cov)
-        pg.evaluate("document.getElementById('noteMore').click()"); pg.wait_for_selector("#menu:not([hidden])")
-        pg.mouse.click(*center(rect(pg, '#calcCard [data-keyid="ac"]'))); pg.wait_for_timeout(80)
+        check("pw-v7e review: the open card does NOT lie over the note's More button", not cov, cov)
+        pg.click("#noteMore"); pg.wait_for_selector("#menu:not([hidden])")
+        # the open menu drops down over the card's top keys (AC is under it), so the tap goes to "=", below the menu
+        pg.mouse.click(*center(rect(pg, '#calcCard [data-keyid="eq"]'))); pg.wait_for_timeout(80)
         menu_kept = not pg.evaluate("document.getElementById('menu').hidden")
         pg.keyboard.press("Escape"); pg.wait_for_timeout(50)
         check("the note menu: a tap inside the card does not close it (Escape does)", menu_kept and pg.evaluate("document.getElementById('menu').hidden"), menu_kept)

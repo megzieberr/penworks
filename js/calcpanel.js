@@ -4,7 +4,8 @@
 //
 // - #calcCard is built once (the first time it opens) and kept: hide = `hidden`, never rebuilt, so the LCD state survives a
 //   close (the real fx-991ZA remembers its screen when you put it down).
-// - It opens BESIDE THE TRAY, top-aligned with the tray's top (pw-v7e; it was the bottom), 12 px from it: the tray on the right (default) puts the
+// - It opens BESIDE THE TRAY, up top (pw-v7e; it was the bottom): 12 px under the note bar, or level with the tray's top when
+//   the bar is hidden (full screen); 12 px from the tray: the tray on the right (default) puts the
 //   card's right edge 12 px left of the tray; body.trayLeft (pw-v7c) puts its left edge 12 px right of the tray. The tray's
 //   rectangle is read at open time. A flip of the tray side while it is open puts it beside the tray again.
 // - Dragged by its head (pen or finger). The dragged place is kept for this session only (a module variable), never saved.
@@ -71,7 +72,11 @@ function place() {
   const tray = document.getElementById('tray'), t = tray && tray.getBoundingClientRect();
   const w = card.offsetWidth, h = card.offsetHeight;
   if (!t || !t.width) { put(innerWidth - w - 80, innerHeight - h - EDGE); return; }   // no tray on screen: bottom right
-  put(trayLeft() ? t.right + GAP : t.left - GAP - w, t.top);   // pw-v7e: level with the tray's top (its button is up there now)
+  // pw-v7e: up top, by its button; Fable review: just UNDER the note bar (the More button lives there), so the bar's buttons
+  // stay tappable; in full screen the bar is gone (no height) and the card sits level with the tray's top
+  const bar = document.getElementById('noteBar'), b = bar && bar.getBoundingClientRect();
+  const top = b && b.height > 0 ? Math.max(t.top, b.bottom + GAP) : t.top;
+  put(trayLeft() ? t.right + GAP : t.left - GAP - w, top);
 }
 
 function setOn(on) {
