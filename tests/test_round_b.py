@@ -97,18 +97,18 @@ try:
         group[0] = "tray"
         open_note(pg, "Twelve")
         order = pg.evaluate(ORDER_JS)
-        check("order: colours, pen, highlighter, UNDO, stroke eraser, area eraser, restyle, select, gap, redo, Tools slot",
-              order == ["colours", "tools", "pen", "highlighter", "undoBtn", "eraser", "area", "restyle", "select", "gap", "redoBtn", "tools"], order)
+        check("order (pw-v7e): calculator at the top, colours, pen, highlighter, UNDO, stroke eraser, area eraser, restyle, select, gap, redo",
+              order == ["tools", "colours", "tools", "pen", "highlighter", "undoBtn", "eraser", "area", "restyle", "select", "gap", "redoBtn"], order)
         check("undo is inside .tools, redo is a child of #tray (after the gap)",
               pg.evaluate("document.getElementById('undoBtn').parentNode.classList.contains('tools') && document.getElementById('redoBtn').parentNode.id === 'tray'"))
         geo = pg.evaluate("""() => { const r = (s) => document.querySelector(s).getBoundingClientRect();
           const h = r('#tool-highlighter'), u = r('#undoBtn'), e = r('#tool-eraser'), rd = r('#redoBtn'), s = r('#toolsBtn');
           return { hu: Math.round(u.top - h.bottom), ue: Math.round(e.top - u.bottom), uw: u.width, uh: u.height, rw: rd.width, rh: rd.height,
-                   redoLast: rd.bottom <= s.top + 0.5 && rd.top > e.bottom, centred: Math.abs((u.left + u.width / 2) - (h.left + h.width / 2)) < 0.6 }; }""")
+                   redoLast: rd.top > e.bottom && s.bottom <= r('#tray .colours').top + 0.5, /* pw-v7e: the calculator moved to the top */ centred: Math.abs((u.left + u.width / 2) - (h.left + h.width / 2)) < 0.6 }; }""")
         check("undo sits straight under the highlighter (the tools' 2 px gap above and below)", geo["hu"] == 2 and geo["ue"] == 2, geo)
         check("undo keeps its size (40 x 40, the same as redo) and is centred in the column",
               geo["uw"] == 40 and geo["uh"] == 40 and geo["rw"] == 40 and geo["rh"] == 40 and geo["centred"], geo)
-        check("redo is still at the bottom, above the empty Tools slot", geo["redoLast"], geo)
+        check("redo is still at the bottom; the calculator button sits above the colours (pw-v7e)", geo["redoLast"], geo)
         icon = pg.evaluate("[document.getElementById('undoBtn').getAttribute('aria-label'), document.querySelectorAll('#undoBtn svg path').length]")
         check("undo keeps its label and icon", icon == ["Undo", 2], icon)
         for w, h_ in [(1600, 2560), (2560, 1600), (1280, 800), (1280, 760), (1280, 720)]:
@@ -251,9 +251,9 @@ try:
         group[0] = "cache"
         pg.evaluate("navigator.serviceWorker.ready"); pg.wait_for_timeout(300)
         keys = pg.evaluate("caches.keys()")
-        if "pw-v7d" not in keys:
+        if "pw-v7e" not in keys:
             pg.reload(); ready(pg); pg.wait_for_timeout(600); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v7d", "pw-v7d" in keys, keys)
+        check("cache is pw-v7e", "pw-v7e" in keys, keys)
         ctx.close()
         b.close()
 finally:

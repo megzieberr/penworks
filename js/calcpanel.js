@@ -4,7 +4,7 @@
 //
 // - #calcCard is built once (the first time it opens) and kept: hide = `hidden`, never rebuilt, so the LCD state survives a
 //   close (the real fx-991ZA remembers its screen when you put it down).
-// - It opens BESIDE THE TRAY, bottom-aligned with the tray's bottom, 12 px from it: the tray on the right (default) puts the
+// - It opens BESIDE THE TRAY, top-aligned with the tray's top (pw-v7e; it was the bottom), 12 px from it: the tray on the right (default) puts the
 //   card's right edge 12 px left of the tray; body.trayLeft (pw-v7c) puts its left edge 12 px right of the tray. The tray's
 //   rectangle is read at open time. A flip of the tray side while it is open puts it beside the tray again.
 // - Dragged by its head (pen or finger). The dragged place is kept for this session only (a module variable), never saved.
@@ -18,7 +18,7 @@
 import { mountCalculator } from './calc/calculator.js';
 
 const GAP = 12;          // px between the tray and the card
-const EDGE = 0;          // px kept clear of the viewport edge (flush: the card sits on the tray's bottom edge)
+const EDGE = 0;          // px kept clear of the viewport edge (flush: the clamp lets it touch the edge)
 let card = null, head = null, btn = null, mine = null, drag = null, wasLeft = false;
 
 const trayLeft = () => document.body.classList.contains('trayLeft');
@@ -71,7 +71,7 @@ function place() {
   const tray = document.getElementById('tray'), t = tray && tray.getBoundingClientRect();
   const w = card.offsetWidth, h = card.offsetHeight;
   if (!t || !t.width) { put(innerWidth - w - 80, innerHeight - h - EDGE); return; }   // no tray on screen: bottom right
-  put(trayLeft() ? t.right + GAP : t.left - GAP - w, t.bottom - h);
+  put(trayLeft() ? t.right + GAP : t.left - GAP - w, t.top);   // pw-v7e: level with the tray's top (its button is up there now)
 }
 
 function setOn(on) {

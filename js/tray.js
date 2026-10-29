@@ -397,8 +397,10 @@ export function initTray(o = {}) {
     if (t === 'highlighter') tools.append(undo);       // pw-v6c: undo straight under the highlighter, where her hand goes (27 Oct)
   }
   tray.textContent = '';
-  tray.append(colours, tools, el('div', { class: 'gap' }), redo,
-    el('button', { type: 'button', class: 'ib tool', id: 'toolsBtn', 'data-slot': 'tools', 'aria-label': 'Calculator', title: 'Calculator', 'aria-pressed': 'false', html: CALC_ICON }));   // redo stays above it; js/calcpanel.js wires the tap (pw-v7d)
+  // pw-v7e: the calculator is the FIRST thing in the tray, above the colours: at the bottom her palm kept opening it (29 Oct).
+  // js/calcpanel.js wires the tap (pw-v7d)
+  const toolsBtn = el('button', { type: 'button', class: 'ib tool', id: 'toolsBtn', 'data-slot': 'tools', 'aria-label': 'Calculator', title: 'Calculator', 'aria-pressed': 'false', html: CALC_ICON });
+  tray.append(toolsBtn, colours, tools, el('div', { class: 'gap' }), redo);
   panel = el('div', { id: 'toolPanel', class: 'panel', hidden: true, role: 'dialog', 'aria-label': 'Tool settings' });
   picker = el('div', { id: 'specPicker', class: 'panel picker', hidden: true, role: 'dialog', 'aria-label': 'Any colour' });
   document.body.append(panel, picker);

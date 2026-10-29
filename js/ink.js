@@ -72,7 +72,8 @@ export const HOLD_MS = (() => { const v = +new URLSearchParams(location.search).
 const SVGNS = 'http://www.w3.org/2000/svg';
 export const ERASE_REACH = 6;    // stroke eraser: px on screen around the pen (6 px at zoom 1)
 export const AREA_SIZE = 24;     // area eraser: circle diameter, px on screen (24 px at zoom 1)
-const MIN_STEP = 0.4;            // page px; closer points than this are dropped while drawing
+const MIN_STEP = 0.4;            // page px; the floor: the live step is one SCREEN px (pw-v7e), never less than this
+const SMOOTH = 0.5;              // pw-v7e: each pen sample pulls a smoothed point halfway to it (the S Pen's wobble on slow, small writing; her "washy" 30°, 29 Oct)
 const HOLD_PX = 4;               // snap: "still" means within 4 px on screen of where the pen settled
 const SNAP_MIN = 30;             // snap: a stroke shorter than this (page px) never snaps
 const SNAP_ANIM = 150;           // snap: the soft cross-fade, ms
@@ -1301,7 +1302,7 @@ function armHold(cx, cy) {
 function snapNow() {
   const g = G;
   if (!g || g.kind !== 'draw') return;
-  let shape = classify(g.rec.data.points);
+  let shape = classify(g.rawPts);                                 // pw-v7e: shapes are read from the pen's own path, not the smoothed ink
   if (!shape) return;                                              // stays freehand
   const hl = g.rec.kind === 'highlighter';
   if (hl && shape.type === 'arrow') shape = { type: 'line', x1: shape.x1, y1: shape.y1, x2: shape.x2, y2: shape.y2 };   // no highlighter arrows
@@ -1316,7 +1317,7 @@ function snapNow() {
     el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: SNAP_ANIM, easing: 'ease-out' });
   } catch (_) { /* no animations: it just swaps */ }
   setTimeout(() => old.remove(), SNAP_ANIM);
-  G = { kind: 'snapped', page: g.page, rec, el, d, raw: g.rec.data.points.slice(), pt: g.pt, z: g.z };   // raw: the freehand points, kept for lastStroke
+  G = { kind: 'snapped', page: g.page, rec, el, d, raw: g.rawPts.slice(), pt: g.pt, z: g.z };   // raw: the freehand (pen) points, kept for lastStroke
 }
 
 function down(e) {
@@ -1336,7 +1337,9 @@ function down(e) {
     const rec = { id: uuid(), page_id: at.id, seq: 0, kind: T.tool, style, data: { points: [[r1(at.x), r1(at.y)]] } };
     const el = makeEl(rec);
     groupFor(d, rec).appendChild(el);                              // newest, so last in its group
-    G = { kind: 'draw', index: at.index, page: at.id, rec, el, holdT: 0, anchor: null, pt: e.pointerType || 'mouse', z: view().z };
+    G = { kind: 'draw', index: at.index, page: at.id, rec, el, holdT: 0, anchor: null, pt: e.pointerType || 'mouse', z: view().z,
+          sm: [at.x, at.y], lastRaw: null, rawPts: [[r1(at.x), r1(at.y)]] };   // pw-v7e: the smoothed pen point (unrounded), the last raw
+                                                                   // one, and the raw path as before (MIN_STEP apart) for the snap
     armHold(e.clientX, e.clientY);                                 // pen and highlighter both snap when held
     return true;
   }
@@ -1415,10 +1418,14 @@ function move(events) {
   if (!G) return;
   const ev = events[events.length - 1];
   if (G.kind === 'draw') {
-    const pts = G.rec.data.points;
+    const pts = G.rec.data.points, step = Math.max(MIN_STEP, 1 / G.z);   // pw-v7e: one screen px, never under the floor
     for (const e of events) {
       const [x, y] = pagePoint(G.index, e.clientX, e.clientY), l = pts[pts.length - 1];
-      if (Math.hypot(x - l[0], y - l[1]) >= MIN_STEP) pts.push([r1(x), r1(y)]);
+      G.lastRaw = [x, y];
+      const lr = G.rawPts[G.rawPts.length - 1];                    // pw-v7e: the raw path, kept exactly as before, for classify
+      if (Math.hypot(x - lr[0], y - lr[1]) >= MIN_STEP) G.rawPts.push([r1(x), r1(y)]);
+      G.sm = [G.sm[0] + (x - G.sm[0]) * SMOOTH, G.sm[1] + (y - G.sm[1]) * SMOOTH];   // pw-v7e: the smoothed point is what is kept
+      if (Math.hypot(G.sm[0] - l[0], G.sm[1] - l[1]) >= step) pts.push([r1(G.sm[0]), r1(G.sm[1])]);
       if (G.anchor && Math.hypot(e.clientX - G.anchor[0], e.clientY - G.anchor[1]) > HOLD_PX) armHold(e.clientX, e.clientY);
     }
     G.el.setAttribute('d', pathD(pts));
@@ -1471,7 +1478,14 @@ function up(e, cancelled) {
   if (!g) return;
   if (g.kind === 'draw' || g.kind === 'snapped') {
     clearTimeout(g.holdT);
-    const points = (g.raw || g.rec.data.points).map((p) => [p[0], p[1]]), c = classify(points);   // a snapped stroke keeps its freehand points in g.raw
+    if (g.kind === 'draw' && g.lastRaw) {                          // pw-v7e: the stroke reaches where the pen lifted (a tap keeps its one point)
+      const pts = g.rec.data.points, l = pts[pts.length - 1], step = Math.max(MIN_STEP, 1 / g.z);
+      if (Math.hypot(g.lastRaw[0] - l[0], g.lastRaw[1] - l[1]) > step) {
+        pts.push([r1(g.lastRaw[0]), r1(g.lastRaw[1])]);
+        g.el.setAttribute('d', pathD(pts));
+      }
+    }
+    const points = (g.raw || g.rawPts).map((p) => [p[0], p[1]]), c = classify(points);   // a snapped stroke keeps its freehand points in g.raw; pw-v7e: the pen's raw path
     LAST = { points, pointerType: g.pt || 'mouse', z: g.z, n: points.length, len: Math.round(polyLen(points) * 10) / 10,
       classify: c ? c.type : null, snapped: g.kind === 'snapped', at: Date.now() };
     if (FIT) LAST.fit = { ...FIT };                                 // a parabola: its fit and the arc's (pw-v4s)

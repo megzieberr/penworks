@@ -4,7 +4,7 @@
 #   PenWorks and must pass every row; Blipwork's own page is run the same way and both counts are printed (they must match).
 #   The page also loads Blipwork's quest01 consumer for its "Build 8 / 9" rows: that file is Blipwork's, not PenWorks'. The
 #   test serves it (and its two imports) from the Blipwork folder, READ ONLY, for the URLs /tests/js/** (a fixture, not a copy).
-# Part B: the real app. The tools button at the bottom of the tray, the card beside the tray on both sides, the keys, the LCD
+# Part B: the real app. The tools button at the top of the tray (pw-v7e; it was the bottom), the card beside the tray on both sides, the keys, the LCD
 #   surviving a close, a stroke next to the card landing under the pointer, a press on a key drawing nothing, the head
 #   dragging the card, the pen panel NOT closed by a tap inside the card (and closed by a tap on the desk as before), the
 #   card NOT closed by a tap on the desk. Screenshots of both sides go to _build/shots-calc/.
@@ -116,7 +116,8 @@ try:
         check("the tools button exists: class 'ib tool', aria-label and title 'Calculator'",
               tb is not None and pg.get_attribute("#toolsBtn", "aria-label") == "Calculator" and pg.get_attribute("#toolsBtn", "title") == "Calculator"
               and "ib" in pg.get_attribute("#toolsBtn", "class") and "tool" in pg.get_attribute("#toolsBtn", "class"), tb)
-        check("it is the last thing in the tray, under redo, at the very bottom", kids[-1] == "toolsBtn" and tb["t"] >= rb["b"] - 1 and tray["b"] - tb["b"] < 30, [kids, tb, rb, tray])
+        cl = rect(pg, "#tray .colours")   # pw-v7e: the button moved to the top (her palm kept opening it at the bottom)
+        check("it is the FIRST thing in the tray, above the colours, at the very top", kids[0] == "toolsBtn" and tb["t"] - tray["t"] < 30 and cl["t"] >= tb["b"] - 1, [kids, tb, cl, tray])
         check("the old empty slot is gone", pg.locator("#tray div.slot").count() == 0)
         check("it holds a calculator icon (an svg with a rect and six dots)", pg.evaluate("() => { const s = document.querySelector('#toolsBtn svg'); return !!s && !!s.querySelector('rect') && s.querySelector('path[d*=\"13h.01\"]') !== null; }"))
         check("before the first tap there is no card, and the button is not 'on'", pg.locator("#calcCard").count() == 0 and "on" not in pg.get_attribute("#toolsBtn", "class").split())
@@ -125,7 +126,7 @@ try:
         c, tray = rect(pg, "#calcCard"), rect(pg, "#tray")
         check("a tap shows #calcCard; the button lights up (.on, aria-pressed true)", c and c["shown"] and "on" in pg.get_attribute("#toolsBtn", "class").split() and pg.get_attribute("#toolsBtn", "aria-pressed") == "true", c)
         check("tray on the RIGHT: the card's right edge is 12 px left of the tray", c and abs(c["r"] - (tray["l"] - 12)) <= 1, [c, tray])
-        check("the card's bottom is the tray's bottom (clamped inside the viewport)", c and abs(c["b"] - min(tray["b"], 800)) <= 1.5, [c, tray])
+        check("the card's top is the tray's top (clamped inside the viewport) (pw-v7e: it was bottom to bottom)", c and abs(c["t"] - min(tray["t"], 800 - c["h"])) <= 1.5, [c, tray])
         check("the card is inside the viewport", c and c["l"] >= 0 and c["t"] >= 0 and c["r"] <= 1280 and c["b"] <= 800, c)
         cs = pg.evaluate("() => { const s = getComputedStyle(document.getElementById('calcCard')); return [s.position, s.zIndex, document.querySelector('#calcCard .calc-wrap').getBoundingClientRect().width]; }")
         check("position fixed, z-index 45, the .calc-wrap gives the width (344 px)", cs[0] == "fixed" and cs[1] == "45" and abs(cs[2] - 344) <= 1, cs)
@@ -172,9 +173,10 @@ try:
         # dragging the head
         pg.click("#calcCard .calcClose"); pg.click("#toolsBtn"); pg.wait_for_timeout(100)
         c0 = rect(pg, "#calcCard"); hx, hy = center(rect(pg, "#calcCard .calc-name"))
-        pg.mouse.move(hx, hy); pg.mouse.down(); pg.mouse.move(hx - 120, hy - 60, steps=6); pg.mouse.move(hx - 300, hy - 150, steps=6); pg.mouse.up(); pg.wait_for_timeout(80)
+        # pw-v7e: the card now opens at the top (y 0), so the drag goes down-left (it was up-left, which now clamps at the top)
+        pg.mouse.move(hx, hy); pg.mouse.down(); pg.mouse.move(hx - 120, hy + 60, steps=6); pg.mouse.move(hx - 300, hy + 150, steps=6); pg.mouse.up(); pg.wait_for_timeout(80)
         c1 = rect(pg, "#calcCard")
-        check("dragging the head moves the card by the drag (-300, -150)", abs((c1["l"] - c0["l"]) + 300) <= 1.5 and abs((c1["t"] - c0["t"]) + 150) <= 1.5, [c0, c1])
+        check("dragging the head moves the card by the drag (-300, +150)", abs((c1["l"] - c0["l"]) + 300) <= 1.5 and abs((c1["t"] - c0["t"]) - 150) <= 1.5, [c0, c1])
         # drag far off: clamped inside the viewport
         hx, hy = center(rect(pg, "#calcCard .calc-name"))
         pg.mouse.move(hx, hy); pg.mouse.down(); pg.mouse.move(hx + 2000, hy + 2000, steps=8); pg.mouse.up(); pg.wait_for_timeout(80)
@@ -192,8 +194,8 @@ try:
         menu_flip(pg)
         check("set-up: the tray is now on the left", pg.evaluate("document.body.classList.contains('trayLeft')"))
         c, tray = rect(pg, "#calcCard"), rect(pg, "#tray")
-        check("tray on the LEFT, card open and dragged: the flip puts it 12 px right of the tray, bottom-aligned",
-              abs(c["l"] - (tray["r"] + 12)) <= 1 and abs(c["b"] - min(tray["b"], 800)) <= 1.5, [c, tray])
+        check("tray on the LEFT, card open and dragged: the flip puts it 12 px right of the tray, top-aligned (pw-v7e)",
+              abs(c["l"] - (tray["r"] + 12)) <= 1 and abs(c["t"] - min(tray["t"], 800 - c["h"])) <= 1.5, [c, tray])
         pg.screenshot(path=str(SHOTS / "left-tray-card.png"))
         pg.click("#calcCard .calcClose"); pg.wait_for_timeout(50); pg.click("#toolsBtn"); pg.wait_for_timeout(120)
         c, tray = rect(pg, "#calcCard"), rect(pg, "#tray")
@@ -236,7 +238,11 @@ try:
         pg.mouse.click(dx, dy); pg.wait_for_timeout(80)
         check("the colour picker: a tap on the desk closes it as before", pg.evaluate("document.getElementById('specPicker').hidden"))
         # the app menu (the third closer): the note menu stays open under a tap inside the card
-        pg.click("#noteMore"); pg.wait_for_selector("#menu:not([hidden])")
+        # pw-v7e: the card now opens level with the tray's top (y 0), so at its own place it lies over the note's More button;
+        # the button is clicked through the DOM here (this check is about the closers, not the place). Flagged to Fable.
+        cov = pg.evaluate("() => { const m = document.getElementById('noteMore').getBoundingClientRect(), c = document.getElementById('calcCard').getBoundingClientRect(); return m.left < c.right && c.left < m.right && m.top < c.bottom && c.top < m.bottom; }")
+        check("(information) pw-v7e: the open card lies over the note's More button (top bar)", True, cov)
+        pg.evaluate("document.getElementById('noteMore').click()"); pg.wait_for_selector("#menu:not([hidden])")
         pg.mouse.click(*center(rect(pg, '#calcCard [data-keyid="ac"]'))); pg.wait_for_timeout(80)
         menu_kept = not pg.evaluate("document.getElementById('menu').hidden")
         pg.keyboard.press("Escape"); pg.wait_for_timeout(50)

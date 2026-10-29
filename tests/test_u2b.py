@@ -245,8 +245,8 @@ try:
         open_note(pg, "Snap")
         order = pg.evaluate("""[...document.getElementById('tray').querySelectorAll(':scope > *, :scope > .tools > *')]
           .map(e => e.dataset.tool || e.dataset.slot || e.id || e.className)""")
-        check("order: colours, pen, highlighter, undo (pw-v6c), stroke eraser, area eraser, restyle, select, gap, redo, Tools slot",
-              order == ["colours", "tools", "pen", "highlighter", "undoBtn", "eraser", "area", "restyle", "select", "gap", "redoBtn", "tools"], order)
+        check("order (pw-v7e): calculator at the top, colours, pen, highlighter, undo (pw-v6c), stroke eraser, area eraser, restyle, select, gap, redo",
+              order == ["tools", "colours", "tools", "pen", "highlighter", "undoBtn", "eraser", "area", "restyle", "select", "gap", "redoBtn"], order)
         tb = pg.evaluate("""['restyle', 'select'].map(t => { const e = document.getElementById('tool-' + t), r = e.getBoundingClientRect();
           return [e.tagName, e.className, e.title, e.getAttribute('aria-label'), Math.round(r.width), Math.round(r.height), !!e.querySelector('svg'), e.textContent.trim()]; })""")
         pen_r = pg.evaluate("(() => { const r = document.getElementById('tool-pen').getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; })()")
@@ -874,7 +874,11 @@ try:
         draw(pg, 1, [(450, 340), (560, 230)], steps=1)              # a diagonal: its two points stay outside the box below
         draw(pg, 1, rough_circle(300, 800, 90), steps=2, hold=650)
         S1, S2, D, CI = [s["id"] for s in strokes(pg, "p4")]
-        check("a diagonal of just two points, and a circle", len(strokes(pg, "p4")[2]["data"]["points"]) == 2 and strokes(pg, "p4")[3]["data"]["type"] == "circle",
+        # pw-v7e: one move now keeps the smoothed halfway point and then the lift point (3 points, was 2); none of them is in the box below
+        dp = strokes(pg, "p4")[2]["data"]["points"]
+        check("a diagonal of just a few points (pw-v7e: 3, none in the corner box below), and a circle",
+              len(dp) <= 3 and dp[0] == [450, 340] and dp[-1] == [560, 230] and not any(520 <= q[0] <= 650 and 250 <= q[1] <= 350 for q in dp)
+              and strokes(pg, "p4")[3]["data"]["type"] == "circle",
               [strokes(pg, "p4")[2]["data"], strokes(pg, "p4")[3]["data"].get("type")])
         tool(pg, "select")
         drag_page(pg, 1, (370, 100), (520, 200))                     # holds x 370..400 of 100..400: 10%
@@ -2836,7 +2840,7 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v7d", "pw-v7d" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v7e", "pw-v7e" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)
