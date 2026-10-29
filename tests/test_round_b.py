@@ -251,9 +251,9 @@ try:
         group[0] = "cache"
         pg.evaluate("navigator.serviceWorker.ready"); pg.wait_for_timeout(300)
         keys = pg.evaluate("caches.keys()")
-        if "pw-v7m" not in keys:
+        if "pw-v7n" not in keys:
             pg.reload(); ready(pg); pg.wait_for_timeout(600); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v7m", "pw-v7m" in keys, keys)
+        check("cache is pw-v7n", "pw-v7n" in keys, keys)
         ctx.close()
         b.close()
 finally:

@@ -80,14 +80,16 @@ async function allRecs() {
 // ---------------------------------------------------------------- start
 export function initPdf(o) {
   Object.assign(cfg, o);
-  const name = `penworks.${o.mode}.${o.userId}.pdf`;
+  const name = `penworks.${o.mode}.${o.userId}.pdf`, tname = `penworks.${o.mode}.${o.userId}.thumbs`;
   let wipe = Promise.resolve();
   if (o.mode === 'local') {
-    try { if (localStorage.getItem(LOCAL_MARK) !== name) { wipe = dropDb(name); localStorage.setItem(LOCAL_MARK, name); } }
+    try { if (localStorage.getItem(LOCAL_MARK) !== name) { wipe = Promise.all([dropDb(name), dropDb(tname)]); localStorage.setItem(LOCAL_MARK, name); } }
     catch (_) { /* ignore */ }
   }
   dbp = wipe.then(() => openDb(name));
   dbp.catch((e) => console.warn('PenWorks: no device copy for opened PDFs', e));
+  tdbp = wipe.then(() => openThumbDb(tname));
+  tdbp.catch(() => {});                           // no thumb store: thumbs are made again each session, as before pw-v7n
   dbp.then(() => kickUploads(), () => kickUploads());
   const now = () => { clearTimeout(upT); upT = 0; kickUploads(); };   // a retry waiting goes at once
   addEventListener('online', () => { upTries = 0; now(); });
@@ -153,6 +155,75 @@ function trimDocs(keep) {
     old[1].p.then((d) => d.destroy(), () => {});
   }
 }
+
+// ---------------------------------------------------------------- pw-v7n: the PDF pages' thumbs, kept on this device
+// js/pdfview.js makes a page's thumb (a 240 px JPEG) once and keeps it here, so a note scrolled once never renders a thumb
+// again, even after a restart. A database of its own (penworks.<mode>.<user id>.thumbs, store `thumbs`), so the PDFs' own
+// database is never upgraded for it. A record: { k: pdf_path#page, blob, at (ms, when it was made) }; a PDF's path never
+// changes (a new uuid per import), so a thumb never goes stale. At most THUMB_CAP thumbs: the oldest made go first.
+const THUMB_CAP = 2000;
+let tdbp = Promise.reject(new Error('initPdf has not run'));
+tdbp.catch(() => {});
+let thumbCap = THUMB_CAP;
+const tstats = { thumbReads: 0, thumbHits: 0, thumbPuts: 0, thumbDropped: 0 };
+function openThumbDb(name) {
+  return new Promise((resolve, reject) => {
+    const r = indexedDB.open(name, 1);
+    r.onupgradeneeded = () => {
+      if (!r.result.objectStoreNames.contains('thumbs')) r.result.createObjectStore('thumbs', { keyPath: 'k' }).createIndex('at', 'at');
+    };
+    r.onsuccess = () => { const db = r.result; db.onversionchange = () => db.close(); resolve(db); };
+    r.onerror = () => reject(r.error);
+  });
+}
+function trun(mode, fn) {
+  return tdbp.then((db) => new Promise((resolve, reject) => {
+    const t = db.transaction(['thumbs'], mode), out = {};
+    fn(t.objectStore('thumbs'), out);
+    t.oncomplete = () => resolve(out);
+    t.onerror = t.onabort = () => reject(t.error);
+  }));
+}
+// the thumb's JPEG for pdf_path#page, or null (none kept, or no store)
+export async function thumbGet(k) {
+  tstats.thumbReads++;
+  try {
+    const o = await trun('readonly', (s, out) => { s.get(k).onsuccess = (e) => { out.v = e.target.result || null; }; });
+    if (o.v && o.v.blob) { tstats.thumbHits++; return o.v.blob; }
+  } catch (_) { /* no store */ }
+  return null;
+}
+// keep a thumb; past the cap the oldest made go (in the same transaction)
+export async function thumbPut(k, blob) {
+  try {
+    await trun('readwrite', (s) => {
+      s.put({ k, blob, at: Date.now() });
+      s.count().onsuccess = (e) => {
+        let over = e.target.result - thumbCap;
+        if (over <= 0) return;
+        s.index('at').openCursor().onsuccess = (ev) => {
+          const c = ev.target.result;
+          if (!c || over <= 0) return;
+          if (c.value.k !== k) { c.delete(); over--; tstats.thumbDropped++; }
+          c.continue();
+        };
+      };
+    });
+    tstats.thumbPuts++;
+    return true;
+  } catch (_) { return false; }
+}
+// every key kept (pdfview's background fill skips these without reading them)
+export async function thumbKeys() {
+  try { return new Set((await trun('readonly', (s, out) => { s.getAllKeys().onsuccess = (e) => { out.v = e.target.result || []; }; })).v); }
+  catch (_) { return new Set(); }
+}
+export async function thumbCount() {
+  try { return (await trun('readonly', (s, out) => { s.count().onsuccess = (e) => { out.v = e.target.result; }; })).v; }
+  catch (_) { return 0; }
+}
+// the tests' small cap, so the cap is reached with a few pages; no argument = the real one
+export function setThumbCap(n) { thumbCap = n > 0 ? n : THUMB_CAP; }
 
 // ---------------------------------------------------------------- the import
 const round2 = (v) => Math.round(v * 100) / 100;
@@ -257,4 +328,4 @@ export async function dropShared(olderThan = 0) {
 
 // ---------------------------------------------------------------- for the tests (window.__pw.pdf)
 export async function uploadsPending() { return (await allRecs()).filter((r) => r && !r.up).length; }
-export function pdfStats() { return { ...stats, docs: docs.size, uploading: upBusy, retry: !!upT }; }
+export function pdfStats() { return { ...stats, ...tstats, docs: docs.size, uploading: upBusy, retry: !!upT }; }

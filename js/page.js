@@ -294,7 +294,8 @@ export function initPage(els) {
   let pinch = null, drag = null, penSeen = -1e9, inkId = null, chord = false, holdT = 0;
   const now = () => performance.now();
   const when = (e) => e.timeStamp || now();       // when the finger was there (a late event keeps its own time)
-  const rect = () => desk.getBoundingClientRect();
+  let gRect = null;                                 // pw-v7n: the desk's place, measured once per finger gesture (it was every move)
+  const rect = () => gRect || desk.getBoundingClientRect();
   const pt = (e) => { const r = rect(); return [e.clientX - r.left, e.clientY - r.top]; };
   const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
   const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
@@ -308,7 +309,7 @@ export function initPage(els) {
       holdT = 0;
       if (!drag || drag.id !== id || pinch || inkId !== null || touches.size !== 1 || now() - penSeen < 600) return;
       const [cx, cy] = drag.c;
-      drag = null; touches.delete(id);
+      drag = null; touches.delete(id); if (!touches.size) gRect = null;
       try { desk.releasePointerCapture(id); } catch (_) { /* ignore */ }
       if (ink && ink.holdMenu) ink.holdMenu(cx, cy);
     }, FINGER_HOLD);
@@ -351,7 +352,7 @@ export function initPage(els) {
     R = desk.getBoundingClientRect();
     if (!ink.down(e)) return false;
     inkId = e.pointerId;
-    touches.clear(); pinch = null; drag = null; cancelHold();              // a palm already down stops panning
+    touches.clear(); pinch = null; drag = null; cancelHold(); gRect = null;   // a palm already down stops panning
     try { desk.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
     e.preventDefault();
     return true;
@@ -369,6 +370,7 @@ export function initPage(els) {
     if (inkId !== null) return;                                            // a finger is ignored while the pen writes
     if (e.target.closest('button, #pageList')) return;                     // buttons and the page list stay tappable
     if (performance.now() - penSeen < 600) return;                         // palm while the pen is near
+    if (!touches.size) gRect = desk.getBoundingClientRect();              // the first finger: the desk's place for this gesture
     touches.set(e.pointerId, pt(e));
     try { desk.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
     pinned = null;
@@ -426,6 +428,7 @@ export function initPage(els) {
     }
     if (touches.size >= 2) startPinch();
     else { pinch = null; drag = null; }
+    if (!touches.size) gRect = null;
   };
   desk.addEventListener('pointerup', up);
   desk.addEventListener('pointercancel', up);
@@ -446,6 +449,6 @@ export function initPage(els) {
     onPenButton(e);
   });
   // pw-v7b: a resize keeps the zoom and the place (relayout), whatever fired it (the system bars, a keyboard, split screen)
-  window.addEventListener('resize', () => { stats.resizes++; R = null; stopGlide(); if (L.tops.length) relayout(); });
-  desk.addEventListener('scroll', () => { unscroll(); R = null; }, { passive: true });   // cannot fire with overflow: clip; a fallback only
+  window.addEventListener('resize', () => { stats.resizes++; R = null; gRect = null; stopGlide(); if (L.tops.length) relayout(); });
+  desk.addEventListener('scroll', () => { unscroll(); R = null; gRect = null; }, { passive: true });   // cannot fire with overflow: clip; a fallback only
 }

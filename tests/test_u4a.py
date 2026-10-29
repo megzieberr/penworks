@@ -468,12 +468,16 @@ try:
         # ------------------------------------------------------------ pw-v6d: the thumb first, render ahead, keep more
         group[0] = "thumb first, render ahead (pw-v6d)"
         since = lambda s_a, s_b: s_b["events"][len(s_b["events"]) - (s_b["evN"] - s_a["evN"]):] if s_b["evN"] > s_a["evN"] else []
+        until(pg, lambda: stats(pg).get("fillLeft") == 0, 20000)       # pw-v7n: the background fill has kept every page's thumb
         th0 = stats(pg)
         m = pg.evaluate(PH_JS, [8, 60])
         th1 = stats(pg)
         check("a long scroll down to page 8: page 8 shows its thumb while the stack still moves", m["ph"] is not None and m["ph"] < m["frames"], m)
         check("... before any sharp render (none while moving)", m["rph"] == 0, m)
-        check("... a thumb made then (pdf.js), not before", th1["thumbs"] > th0["thumbs"] and th1["placeholders"] > th0["placeholders"], [th0["thumbs"], th1["thumbs"]])
+        # pw-v7n: nothing from pdf.js while the stack moves; the thumb is the one the background fill kept on the device
+        check("... read from the device (kept by the background fill), no pdf.js thumb render while moving (pw-v7n)",
+              th1["fromStore"] > th0["fromStore"] and th1["thumbRenders"] == th0["thumbRenders"] and th1["placeholders"] > th0["placeholders"],
+              {k: [th0[k], th1[k]] for k in ("fromStore", "thumbRenders", "placeholders")})
         check("then the sharp canvas lands and replaces it (only the canvas in the layer)", m["cv"] is not None and m["cv"] > m["ph"] and m["after"] == ["canvas"], m)
         ev = since(th0, stats(pg))
         check("events: 'ph 8' before 'sharp 8'", "ph 8" in ev and "sharp 8" in ev and ev.index("ph 8") < ev.index("sharp 8"), ev)
@@ -546,12 +550,12 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v7m" not in keys:
+        if "pw-v7n" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v7m", "pw-v7m" in keys, keys)
+        check("cache is pw-v7n", "pw-v7n" in keys, keys)
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the shell lists pdfin.js, pdfview.js and both pdf.js files", all(x in swt for x in ["./js/pdfin.js", "./js/pdfview.js", "./vendor/pdf.min.mjs", "./vendor/pdf.worker.min.mjs"]))
-        shell = pg.evaluate("""async () => { const c = await caches.open('pw-v7m'); const out = [];
+        shell = pg.evaluate("""async () => { const c = await caches.open('pw-v7n'); const out = [];
           for (const u of ['./vendor/pdf.min.mjs', './vendor/pdf.worker.min.mjs', './js/pdfin.js', './js/pdfview.js']) out.push(!!(await c.match(u))); return out; }""")
         check("... and they are in the cache (PDF pages draw offline)", shell == [True] * 4, shell)
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in
