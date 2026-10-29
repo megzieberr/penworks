@@ -142,7 +142,7 @@ try:
         ms_warm = make_ready(pg)
         send(pg)
         info_lines.append(f"timing: 'Share as PDF' tap to ready, 2-page note (A4 grid + one PDF page), headless Chromium: "
-                          f"{round(ms_cold)} ms the first time (jsPDF loads), {round(ms_warm)} ms the second")
+                          f"{round(ms_cold)} ms the first time (pdf-lib loads), {round(ms_warm)} ms the second")
         check("tap to ready under 5 s here (the tablet is slower; Send no longer depends on it)", 0 < ms_cold < 5000 and 0 < ms_warm < 5000, [ms_cold, ms_warm])
         back(pg)
 
@@ -168,7 +168,7 @@ try:
         sh = send(pg)
         fs = sh["files"] if sh else []
         check("(b) Send: navigator.share gets one application/pdf File 'Three p1-2.pdf', title 'Three p1-2'",
-              len(fs) == 1 and fs[0]["name"] == "Three p1-2.pdf" and fs[0]["type"] == "application/pdf" and fs[0]["size"] > 5000 and sh["title"] == "Three p1-2", brief(sh))
+              len(fs) == 1 and fs[0]["name"] == "Three p1-2.pdf" and fs[0]["type"] == "application/pdf" and fs[0]["size"] > 1000 and sh["title"] == "Three p1-2", brief(sh))
         check("(b) ... called in the same task as the Send tap (no await before it)", sh and sh["inTap"] is True, brief(sh))
         check("(b) the dialog closed, tick mode ended, toast 'Shared'", pg.locator("#shareDlg").count() == 0 and pg.evaluate("window.__pw.tick()") is None
               and pg.evaluate(TOAST_JS) == "Shared", pg.evaluate(TOAST_JS))
@@ -281,9 +281,9 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v7i" not in keys:
+        if "pw-v7j" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v7i", "pw-v7i" in keys, keys)
+        check("cache is pw-v7j", "pw-v7j" in keys, keys)
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/app.js", "./css/app.css", "./sw.js", "./tests/test_share.py"])
         check("no em-dashes in the changed files", chr(0x2014) not in srcs)
         labels = ["Send", "Save", "Share note", "Share page", "Shared", "Could not open the share sheet, Save instead", "Ready: "]

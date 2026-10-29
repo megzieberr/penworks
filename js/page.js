@@ -20,10 +20,10 @@
 
 export const CM = 96 / 2.54;                 // 1 cm at 96 px per inch
 export const A4 = { w: 794, h: 1123 };       // 21 x 29.7 cm at zoom 1
-const GRID = A4.w / 22;                      // grid paper: 22 blocks across A4 (210 mm / 22 = 9.545 mm), matches her sample page
-const GRID_TOP = 0.6 * CM;                   // grid paper: 6 mm blank strip at the top, matches her sample page
-const LINE_GAP = GRID;                       // lined paper: the grid's rows (9.545 mm), so words written on grid rows sit on the lines after a paper switch (her ask 26 Oct)
-const LINE_TOP = GRID_TOP;                   // and the grid's 6 mm start, for the same reason
+export const GRID = A4.w / 22;                     // grid paper: 22 blocks across A4 (210 mm / 22 = 9.545 mm), matches her sample page
+export const GRID_TOP = 0.6 * CM;                  // grid paper: 6 mm blank strip at the top, matches her sample page
+export const LINE_GAP = GRID;                      // lined paper: the grid's rows (9.545 mm), so words written on grid rows sit on the lines after a paper switch (her ask 26 Oct)
+export const LINE_TOP = GRID_TOP;                  // and the grid's 6 mm start, for the same reason
 const ZMIN = 0.2, ZMAX = 4, MARGIN = 24, GAP = 24, BELOW = 90;   // BELOW: room for "Add a page below"
 const SVGNS = 'http://www.w3.org/2000/svg';
 const FLICK = 0.25, STOP = 0.02, DECAY = 0.95, FRAME = 1000 / 60, WINDOW = 100;   // glide: px per ms, per 16.7 ms, ms

@@ -27,7 +27,7 @@
 // zoom", 27 Oct): locked, the zoom never changes and only two fingers move the page. Every note opens unlocked and
 // fitted; the lock is never saved. Opening a note is the only fit(); resizes and full screen keep her zoom (js/page.js).
 import { api } from './api.js';
-import { initPage, showStack, fit, scrollToPage, relayout, current, bookmarkTab, markSheet, bgSvg, pageSize, A4, setLock, locked } from './page.js';
+import { initPage, showStack, fit, scrollToPage, relayout, current, bookmarkTab, markSheet, bgSvg, pageSize, setLock, locked } from './page.js';
 import * as ink from './ink.js';
 import * as store from './store.js';
 import { initCalc } from './calcpanel.js';
@@ -37,6 +37,7 @@ import * as live from './live.js';
 import * as treeq from './treeq.js';
 import * as pdfin from './pdfin.js';
 import * as pdfview from './pdfview.js';
+import { buildPdf } from './pdfout.js';
 
 const $ = (id) => document.getElementById(id);
 const S = { folders: [], notes: [], pages: [], sel: 'loose', openNote: null, cur: 0, fold: {}, renaming: null,
@@ -959,11 +960,11 @@ function renderTick() {
 // ---------------------------------------------------------------- share the ticked pages (pw-v4t)
 // Share (last in the tick bar) opens a small dialog: a Name box (the note's name, plus " p3" or " p3-5" when the ticked
 // pages are not the whole note, all of it selected) and Share as PDF / Share as images. Cancel, Escape or a tap outside
-// closes it. Every ticked page is drawn off-screen at 2x page px: one SVG (white paper, its paper pattern, both ink
-// layers with the highlighter groups' opacity) through a Blob URL into an <img>, onto a <canvas>, then toBlob. The PDF
-// (vendor/jspdf.umd.min.js, loaded the first time) gets one A4 page per page in note order, in that page's orientation,
-// a JPEG 0.92 at full bleed; images are one PNG per page. Her ask (26 Oct): Samsung Notes never lets her name the PDF
-// before it goes.
+// closes it. Images: every ticked page is drawn off-screen at 2x page px: one SVG (white paper, its paper pattern, both
+// ink layers with the highlighter groups' opacity) through a Blob URL into an <img>, onto a <canvas>, then one PNG per
+// page. Her ask (26 Oct): Samsung Notes never lets her name the PDF before it goes.
+// Round 5 (pw-v7j): the PDF is VECTOR (js/pdfout.js, pdf-lib): the paper lines and the ink as PDF paths, a page from
+// a PDF as its original page with the ink on top. One page per page in note order, in that page's shape.
 // pw-v6b: the files are made first, then the dialog shows "Ready: <name>.pdf" with Send and Save. Android's Chrome lets
 // navigator.share run only inside a tap, and only for about 5 s after it; on her tablet the share sheet was refused
 // and the file quietly downloaded ("it just saves it on my tablet", 27 Oct; a 2-page note renders in 0.2 s headless,
@@ -1015,42 +1016,16 @@ async function renderPage(p, type, quality, scale = SHARE_SCALE, recs = null) {
     return await new Promise((ok, no) => c.toBlob((b) => (b ? ok(b) : no(new Error('a page could not be drawn'))), type, quality));
   } finally { URL.revokeObjectURL(url); }
 }
-const A4_PT = [595.28, 841.89];   // A4 in PDF points (jsPDF's own 'a4')
-let jspdfLoad = null;
-function loadJsPdf() {
-  if (window.jspdf) return Promise.resolve(window.jspdf);
-  return (jspdfLoad ||= new Promise((ok, no) => {
-    const s = document.createElement('script');
-    s.src = './vendor/jspdf.umd.min.js';
-    s.onload = () => (window.jspdf ? ok(window.jspdf) : no(new Error('the PDF maker did not load')));
-    s.onerror = () => { jspdfLoad = null; s.remove(); no(new Error('the PDF maker did not load')); };
-    document.head.append(s);
-  }));
-}
 // the ticked pages as File objects; progress(k, n) before page k of n
 async function shareFiles(ids, kind, name, progress) {
   const list = ids.map(page).filter(Boolean), n = list.length, blobs = [];
+  if (kind === 'pdf') return [new File([await buildPdf(list, name, progress)], name + '.pdf', { type: 'application/pdf' })];
   for (let k = 0; k < n; k++) {
     progress(k + 1, n);
     await new Promise((r) => setTimeout(r, 0));                     // a yield between pages: the screen stays alive
-    blobs.push(await renderPage(list[k], kind === 'pdf' ? 'image/jpeg' : 'image/png', kind === 'pdf' ? 0.92 : undefined));
+    blobs.push(await renderPage(list[k], 'image/png', undefined));
   }
-  if (kind === 'images') {
-    return blobs.map((b, k) => new File([b], n === 1 ? name + '.png' : `${name}-${k + 1}.png`, { type: 'image/png' }));
-  }
-  const { jsPDF } = await loadJsPdf();
-  let doc = null;
-  for (let k = 0; k < n; k++) {
-    // U4a: a PDF page goes out in its own shape (210 mm across, 297 mm when wider than tall, the height by its aspect)
-    const p = list[k], sz = pageSize(p), o = sz.w > sz.h ? 'landscape' : 'portrait';
-    const wpt = sz.w === A4.h ? A4_PT[1] : A4_PT[0], fmt = p.pdf_path ? [wpt, wpt * p.pdf_h / p.pdf_w] : 'a4';
-    if (!doc) doc = new jsPDF({ orientation: o, unit: 'pt', format: fmt, compress: true });
-    else doc.addPage(fmt, o);
-    const pw = doc.internal.pageSize.getWidth(), ph = doc.internal.pageSize.getHeight();
-    doc.addImage(new Uint8Array(await blobs[k].arrayBuffer()), 'JPEG', 0, 0, pw, ph, undefined, 'NONE');
-  }
-  doc.setProperties({ title: name });
-  return [new File([doc.output('blob')], name + '.pdf', { type: 'application/pdf' })];
+  return blobs.map((b, k) => new File([b], n === 1 ? name + '.png' : `${name}-${k + 1}.png`, { type: 'image/png' }));
 }
 // Save: one download per file (150 ms apart)
 async function saveFiles(files) {

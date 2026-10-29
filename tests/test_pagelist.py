@@ -567,11 +567,11 @@ try:
         # ------------------------------------------------------------ 8. cache
         group[0] = "cache"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v7i" not in keys:
+        if "pw-v7j" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v7i", "pw-v7i" in keys, keys)
+        check("cache is pw-v7j", "pw-v7j" in keys, keys)
         sw_src = pg.evaluate("fetch('./sw.js').then(r => r.text())")
-        check("sw.js lists vendor/jspdf.umd.min.js", "./vendor/jspdf.umd.min.js" in sw_src)
+        check("sw.js lists vendor/pdf-lib.min.js (round 5: it replaced jsPDF)", "./vendor/pdf-lib.min.js" in sw_src)
         ctx.close()
 
         # ------------------------------------------------------------ 9. share (pw-v4t)
@@ -683,8 +683,8 @@ try:
         check("typing replaces the selected name", p2.evaluate("document.getElementById('shareName').value") == "Homework week 3", typed)
         sh, ms = share_go(p2, "pdf")
         fs = sh["files"] if sh else []
-        check("Share as PDF: one file 'Homework week 3.pdf', application/pdf, over 10 KB, title = the name",
-              len(fs) == 1 and fs[0]["name"] == "Homework week 3.pdf" and fs[0]["type"] == "application/pdf" and fs[0]["size"] > 10240
+        check("Share as PDF: one file 'Homework week 3.pdf', application/pdf, over 1 KB (round 5: vector pages are small), title = the name",
+              len(fs) == 1 and fs[0]["name"] == "Homework week 3.pdf" and fs[0]["type"] == "application/pdf" and fs[0]["size"] > 1024
               and sh["title"] == "Homework week 3", brief(sh))
         pi = pdf_info(fs[0]) if fs else {}
         check("the PDF: 2 pages, both A4 portrait within 1 pt", pi.get("pages") == 2 and all(near(s_, A4P) for s_ in pi["sizes"]), pi)
@@ -769,7 +769,7 @@ try:
         pi = pdf_info(sh["files"][0]) if sh else {}
         check("the 12-page PDF has 12 pages", pi.get("pages") == 12, pi)
         check("12 A4 pages at 2x render to ready in under 6 s", 0 < ms12 < 6000, round(ms12))
-        info_lines.append(f"share: 12 A4 pages (60 strokes each) at 2x to one PDF, tap to ready, in {round(ms12)} ms, {round(sh['files'][0]['size'] / 1024) if sh else '?'} KB")
+        info_lines.append(f"share: 12 A4 pages (60 strokes each) to one (vector) PDF, tap to ready, in {round(ms12)} ms, {round(sh['files'][0]['size'] / 1024) if sh else '?'} KB")
         share_start(p2, all_=True); sh, msi = share_go(p2, "images", "Twelve pages")
         info_lines.append(f"share: the same 12 pages as PNGs in {round(msi)} ms")
         check("no page errors (share)", not e2, e2)

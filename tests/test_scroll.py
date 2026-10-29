@@ -546,7 +546,7 @@ try:
         pg5.on("pageerror", lambda e: errs5.append(str(e)))
         pg5.goto(LOCAL + "&dbg=1"); ready(pg5); pg5.evaluate(SEED); pg5.reload(); ready(pg5)
         pg5.locator(".nrow").first.click(); pg5.wait_for_selector("#noteView:not([hidden])"); pg5.wait_for_timeout(400)
-        LINE = r"resize (\d+) \| fit (\d+) \((\w+)\) \| lock (on|off)"
+        LINE = r"resize (\d+) \| fit (\d+) \((\w+)\) \| lock (on|off)(?: \| oe [\d.]+ [\d.]+)?"   # pw-v7i: the pen filter pair follows
         dl = lambda: pg5.evaluate("document.getElementById('dbgView').textContent").split("\n")
         l1 = dl(); m1 = re.fullmatch(LINE, l1[1]) if len(l1) == 2 else None
         check("(m) ?dbg=1: #dbgView's second line reads 'resize <n> | fit 1 (open) | lock off'", m1 is not None and m1.group(2) == "1" and m1.group(3) == "open" and m1.group(4) == "off", l1)
@@ -555,7 +555,7 @@ try:
         l2 = dl(); m2 = re.fullmatch(LINE, l2[1]) if len(l2) == 2 else None
         check("(m) a viewport resize: the resize count goes up by one, the fit count stays 1", m2 is not None and int(m2.group(1)) == r0 + 1 and m2.group(2) == "1", [l1, l2])
         pg5.click("#zoomLock"); pg5.wait_for_timeout(350)
-        check("(m) after a tap on the chip the line says 'lock on'", dl()[-1].endswith("| lock on"), dl())
+        check("(m) after a tap on the chip the line says 'lock on'", "| lock on" in dl()[-1], dl())   # pw-v7i: '| oe ...' follows
         geo5 = pg5.evaluate("""() => { const d = document.getElementById('desk').getBoundingClientRect(), c = document.getElementById('zoomLock').getBoundingClientRect();
           const left = (id) => document.getElementById(id).getBoundingClientRect().left - d.left;
           const hit = document.elementFromPoint(c.left + c.width / 2, c.top + c.height / 2);

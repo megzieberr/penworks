@@ -269,7 +269,7 @@ function boxOf(rec) {
 
 // ---------------------------------------------------------------- rendering
 const f1 = (v) => String(r1(v));
-function pathD(pts) {
+export function pathD(pts) {
   const n = pts.length;
   if (!n) return '';
   const p = (q) => f1(q[0]) + ' ' + f1(q[1]);
@@ -323,8 +323,8 @@ function arrowHeadPts(d, w) {                                    // an arrow alo
   const dx = d.x2 - d.x1, dy = d.y2 - d.y1, L = Math.hypot(dx, dy) || 1;
   return headPts([d.x2, d.y2], dx / L, dy / L, L, w);
 }
-function arrowHead(d, w) { return 'M' + arrowHeadPts(d, w).map((q) => f1(q[0]) + ' ' + f1(q[1])).join('L'); }
-function arcD(d) {                                               // M start A r r 0 large sweep end; in a line: straight
+export function arrowHead(d, w) { return 'M' + arrowHeadPts(d, w).map((q) => f1(q[0]) + ' ' + f1(q[1])).join('L'); }
+export function arcD(d) {                                             // M start A r r 0 large sweep end; in a line: straight
   const g = arcGeom(d), p = (x, y) => f1(x) + ' ' + f1(y);
   return g
     ? 'M' + p(d.x1, d.y1) + 'A' + f1(g.r) + ' ' + f1(g.r) + ' 0 ' + (Math.abs(g.sweep) > Math.PI ? 1 : 0) + ' ' + (g.sweep > 0 ? 1 : 0) + ' ' + p(d.x2, d.y2)
@@ -371,8 +371,8 @@ function makeEl(rec) {
 }
 // the layer groups: which group a record's path lives in, made on demand. THE one rule: a highlighter stroke,
 // or a shape with opacity under 1 (a highlighter-born shape), lives in the highlighter layer
-const inHl = (rec) => rec.kind === 'highlighter' || (rec.kind === 'shape' && +((rec.style && rec.style.opacity) ?? 1) < 1);
-const opKey = (rec) => String(+((rec.style && rec.style.opacity) ?? 0.4));
+export const inHl = (rec) => rec.kind === 'highlighter' || (rec.kind === 'shape' && +((rec.style && rec.style.opacity) ?? 1) < 1);
+export const opKey = (rec) => String(+((rec.style && rec.style.opacity) ?? 0.4));
 const keyOf = (rec) => (inHl(rec) ? 'hl' + opKey(rec) : 'pen');
 function hloGroup(d, key) {
   let g = d.hlo.get(key);
