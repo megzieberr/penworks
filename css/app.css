@@ -472,7 +472,18 @@ body.trayLeft #counter { right: auto; left: 14px; }
 /* pw-v7d: the calculator card (js/calcpanel.js). Above the pen panels (40), below the menu (50) and the toast (60). The card is
    only the fixed box; the look is Blipwork's own .calc-wrap (css/calc.css, lifted from Blipwork by _build/extract_calc_css.py).
    The head drags it, so only the head gives up touch scrolling. */
-#calcCard { position: fixed; z-index: 45; width: min(344px, calc(100vw - 8px)); left: 0; top: 0; }
+/* pw-v7o: --calc-s is the card's one scale (js/calcpanel.js sets it, 1.0x to 2.5x, 1.6x by default): the box is 344 px times
+   it and .calc-wrap is laid out again at that zoom (sharp text, keys exactly where calculator.js put them). The script keeps
+   344 x scale inside the screen; max-width is only a backstop. */
+#calcCard { position: fixed; z-index: 45; width: calc(344px * var(--calc-s, 1)); max-width: 100vw; left: 0; top: 0; }
+#calcCard .calc-wrap { zoom: var(--calc-s, 1); }
+/* the size handle: the selection corner's look (a white dot ringed in the selection blue), 20 px for a pen tip, in the card's
+   bottom-right corner and outside the zoom so it stays 20 px at every size */
+#calcCard .calcGrip {
+  position: absolute; right: 2px; bottom: 2px; z-index: 1; width: 20px; height: 20px; box-sizing: border-box; border-radius: 50%;
+  background: #FFFFFF; border: 2px solid #2F4BB8; box-shadow: 0 0 0 1px rgba(255,255,255,.8);
+  touch-action: none; cursor: nwse-resize; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
 #calcCard .calcHead { touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 #calcCard .calcHead:active { cursor: grabbing; }
 #calcCard .calc-close { min-width: 40px; min-height: 32px; }

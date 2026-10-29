@@ -8,6 +8,13 @@
 #   surviving a close, a stroke next to the card landing under the pointer, a press on a key drawing nothing, the head
 #   dragging the card, the pen panel NOT closed by a tap inside the card (and closed by a tap on the desk as before), the
 #   card NOT closed by a tap on the desk. Screenshots of both sides go to _build/shots-calc/.
+#   pw-v7o: Part B runs at 1.0x (Blipwork's own size), stored the way she would leave it (localStorage pw.calc), so its
+#   numbers stay the pw-v7d ones; the dragged place is now remembered on the device.
+# Part C (pw-v7o, round 8, her ask "much much bigger... or at least lemme adjust it"): the size. 1.6x by default on a
+#   1280 px screen (the box measured), the corner handle (20 px) changes it with the proportions kept, 1.0x and 2.5x are
+#   the limits, a reload brings size and place back, a 375 px phone never has it off-screen, every key's centre hits that
+#   key at 2.5x and a tap on "=" gives the answer, a long input keeps its cursor in view at 2.5x, the LCD is laid out again
+#   (no transform anywhere up the tree), and a stroke beside the card at 2.5x lands under the pointer.
 import sys, subprocess, time, pathlib, re, math
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 from playwright.sync_api import sync_playwright
@@ -109,7 +116,9 @@ try:
         ctx = b.new_context(viewport={"width": 1280, "height": 800})
         pg = ctx.new_page(); errs = []
         pg.on("pageerror", lambda e: errs.append(str(e)))
-        pg.goto(LOCAL); ready(pg); pg.evaluate(SEED); pg.reload(); ready(pg)
+        pg.goto(LOCAL); ready(pg); pg.evaluate(SEED)
+        pg.evaluate("localStorage.setItem('pw.calc', JSON.stringify({ scale: 1 }))")   # pw-v7o: Part B at Blipwork's 1.0x
+        pg.reload(); ready(pg)
         open_note(pg)
         kids = pg.evaluate("[...document.getElementById('tray').children].map((e) => e.id || e.className)")
         tb, rb, tray = rect(pg, "#toolsBtn"), rect(pg, "#redoBtn"), rect(pg, "#tray")
@@ -189,11 +198,16 @@ try:
         c4 = rect(pg, "#calcCard")
         check("the dragged place is kept over a close and reopen (this session)", abs(c4["l"] - c3["l"]) <= 1 and abs(c4["t"] - c3["t"]) <= 1, [c3, c4])
         check("the head drag did not draw on the page or close the card", not pg.evaluate("document.getElementById('calcCard').hidden"))
-        check("nothing about the place is saved (no calc key in localStorage)", pg.evaluate("() => Object.keys(localStorage).filter((k) => /calc/i.test(k))") == [])
+        saved = pg.evaluate("() => JSON.parse(localStorage.getItem('pw.calc'))")
+        check("pw-v7o: the dragged place is remembered on this device (pw.calc), the size with it, nothing else stored",
+              saved and saved.get("scale") == 1 and abs(saved.get("left", -99) - c3["l"]) <= 1 and abs(saved.get("top", -99) - c3["t"]) <= 1
+              and pg.evaluate("() => Object.keys(localStorage).filter((k) => /calc/i.test(k))") == ["pw.calc"], [saved, c3])
 
         # a flip puts it beside the tray again (the card is open and was dragged)
         menu_flip(pg)
         check("set-up: the tray is now on the left", pg.evaluate("document.body.classList.contains('trayLeft')"))
+        check("pw-v7o: the flip drops the remembered place and keeps the size", pg.evaluate("() => JSON.parse(localStorage.getItem('pw.calc'))") == {"scale": 1},
+              pg.evaluate("() => localStorage.getItem('pw.calc')"))
         c, tray = rect(pg, "#calcCard"), rect(pg, "#tray")
         bar = rect(pg, "#noteBar")
         check("tray on the LEFT, card open and dragged: the flip puts it 12 px right of the tray, 12 px under the note bar (pw-v7e)",
@@ -255,6 +269,153 @@ try:
           return [t0, window.__pw.ink.tool().tool]; }""")
         check("(information) the S Pen button's contextmenu on the desk with the card open: tool before/after", True, r)
         check("no page errors", not errs, errs)
+        ctx.close()
+
+        # ------------------------------------------------------------ C: the size (pw-v7o, round 8)
+        group[0] = "C. size"
+        SC = "() => +document.getElementById('calcCard').style.getPropertyValue('--calc-s')"
+        STORED = "() => JSON.parse(localStorage.getItem('pw.calc'))"
+        def grip_drag(pg, dx, dy):
+            gx, gy = center(rect(pg, "#calcCard .calcGrip"))
+            pg.mouse.move(gx, gy); pg.mouse.down()
+            pg.mouse.move(gx + dx / 2, gy + dy / 2, steps=5); pg.mouse.move(gx + dx, gy + dy, steps=5)
+            pg.mouse.up(); pg.wait_for_timeout(80)
+        def fresh(vw, vh, stored=None, **kw):
+            ctx = b.new_context(viewport={"width": vw, "height": vh}, **kw)
+            pg = ctx.new_page(); errs = []
+            pg.on("pageerror", lambda e: errs.append(str(e)))
+            pg.goto(LOCAL); ready(pg); pg.evaluate(SEED)
+            if stored is not None: pg.evaluate("(v) => localStorage.setItem('pw.calc', JSON.stringify(v))", stored)
+            pg.reload(); ready(pg); open_note(pg)
+            return ctx, pg, errs
+        inside = lambda c, vw, vh: c["l"] >= -0.5 and c["t"] >= -0.5 and c["r"] <= vw + 0.5 and c["b"] <= vh + 0.5
+
+        # C1: 1280 x 1000, nothing stored: the default
+        ctx, pg, errs = fresh(1280, 1000)
+        pg.click("#toolsBtn"); pg.wait_for_timeout(150)
+        c, tray, bar, s = rect(pg, "#calcCard"), rect(pg, "#tray"), rect(pg, "#noteBar"), pg.evaluate(SC)
+        print(f"MEASURED default on 1280 x 1000: scale {s}, card {c['w']:.1f} x {c['h']:.1f} at ({c['l']:.0f}, {c['t']:.0f})")
+        check("1280 px screen, nothing stored: the card opens at 1.6x, 550.4 px wide (344 x 1.6)", abs(s - 1.6) < 1e-9 and abs(c["w"] - 550.4) <= 0.5, [s, c])
+        check("... beside the tray (12 px) and 12 px under the note bar, all on screen",
+              abs(c["r"] - (tray["l"] - 12)) <= 1 and abs(c["t"] - (bar["b"] + 12)) <= 1.5 and inside(c, 1280, 1000), [c, tray, bar])
+        z = pg.evaluate("""() => { const w = document.querySelector('#calcCard .calc-wrap'), out = { zoom: getComputedStyle(w).zoom, transforms: [] };
+          for (let e = document.querySelector('#calcCard .lcd-res'); e; e = e.parentElement) { const t = getComputedStyle(e).transform; if (t && t !== 'none') out.transforms.push(e.className || e.tagName); }
+          return out; }""")
+        check("scaled by CSS zoom on .calc-wrap (1.6) with no transform anywhere from the LCD up (laid out again, not a blown-up picture)", z["zoom"] == "1.6" and z["transforms"] == [], z)
+        lcd16 = rect(pg, "#calcCard .calc-lcd")
+        g = rect(pg, "#calcCard .calcGrip")
+        check("the corner handle: 20 x 20 px, in the card's bottom-right corner (2 px in)",
+              g and abs(g["w"] - 20) <= 0.5 and abs(g["h"] - 20) <= 0.5 and abs(c["r"] - g["r"] - 2) <= 0.5 and abs(c["b"] - g["b"] - 2) <= 0.5, [g, c])
+        gs = pg.evaluate("() => { const s = getComputedStyle(document.querySelector('#calcCard .calcGrip')); return [s.borderTopColor, s.backgroundColor, s.borderRadius, s.touchAction]; }")
+        check("... the selection corner's look (white, ringed in the selection blue, round) and it gives up touch scrolling", gs[0] == "rgb(47, 75, 184)" and gs[1] == "rgb(255, 255, 255)" and gs[2] == "50%" and gs[3] == "none", gs)
+        pg.screenshot(path=str(SHOTS / "size-1.6x.png"))
+        # the handle: smaller, proportions kept, the top-left corner stays put
+        grip_drag(pg, -150, -150)
+        c2, s2 = rect(pg, "#calcCard"), pg.evaluate(SC)
+        check("dragging the handle in (-150, -150) makes it smaller (between 1.0x and 1.6x), 344 px x scale wide",
+              1 < s2 < 1.6 and abs(c2["w"] - 344 * s2) <= 0.5, [s2, c2])
+        check("... the top-left corner stays where it was", abs(c2["l"] - c["l"]) <= 1 and abs(c2["t"] - c["t"]) <= 1, [c, c2])
+        check("... the proportions kept (height / width within 1% of the 1.6x card's)", abs((c2["h"] / c2["w"]) / (c["h"] / c["w"]) - 1) < 0.01, [c["h"] / c["w"], c2["h"] / c2["w"]])
+        check("... and the drag did not draw on the page or close the card", pg.evaluate(STROKES) == [] and not pg.evaluate("document.getElementById('calcCard').hidden"))
+        grip_drag(pg, -3000, -3000)
+        c1, s1 = rect(pg, "#calcCard"), pg.evaluate(SC)
+        check("dragged far in: it stops at 1.0x (344 px wide, Blipwork's size)", s1 == 1 and abs(c1["w"] - 344) <= 0.5, [s1, c1])
+        lcd10 = rect(pg, "#calcCard .calc-lcd")
+        check("the LCD at 1.6x is 1.6 times the LCD at 1.0x (both sides, within 1.5 px: its 2 px border rounds)", abs(lcd16["w"] - 1.6 * lcd10["w"]) <= 1.5 and abs(lcd16["h"] - 1.6 * lcd10["h"]) <= 1.5, [lcd16, lcd10])
+        check("proportions at 1.0x: within 1% of the 1.6x card's", abs((c1["h"] / c1["w"]) / (c["h"] / c["w"]) - 1) < 0.01, [c1["w"], c1["h"]])
+        grip_drag(pg, 3000, 3000)
+        cb, sb = rect(pg, "#calcCard"), pg.evaluate(SC)
+        print(f"MEASURED biggest that fits 1280 x 1000: scale {sb:.3f}, card {cb['w']:.1f} x {cb['h']:.1f}")
+        check("dragged far out on a 1000 px tall screen: as big as fits (below 2.5x, at least 99% of the height) and still all on screen", 1.6 < sb < 2.5 and inside(cb, 1280, 1000) and cb["h"] >= 990, [sb, cb])
+        # a mid size and a dragged place, then a reload
+        grip_drag(pg, -250, -250)
+        hx, hy = center(rect(pg, "#calcCard .calc-name"))
+        pg.mouse.move(hx, hy); pg.mouse.down(); pg.mouse.move(hx - 200, hy + 20, steps=6); pg.mouse.move(hx - 400, hy + 40, steps=6); pg.mouse.up(); pg.wait_for_timeout(80)
+        cm, sm, st = rect(pg, "#calcCard"), pg.evaluate(SC), pg.evaluate(STORED)
+        check("set-up: a mid size and a dragged place, stored in pw.calc", 1 < sm < sb and st and abs(st["scale"] - sm) < 0.001 and abs(st["left"] - cm["l"]) <= 1 and abs(st["top"] - cm["t"]) <= 1, [sm, cm, st])
+        pg.reload(); ready(pg); pg.wait_for_timeout(300)
+        if pg.evaluate("document.getElementById('noteView').hidden"): open_note(pg)   # the app may reopen the last note itself
+        pg.click("#toolsBtn"); pg.wait_for_timeout(150)
+        cr_, sr = rect(pg, "#calcCard"), pg.evaluate(SC)
+        print(f"MEASURED after a reload: scale {sr:.3f} (was {sm:.3f}), card at ({cr_['l']:.0f}, {cr_['t']:.0f}) (was ({cm['l']:.0f}, {cm['t']:.0f}))")
+        check("a reload brings the size and the place back", abs(sr - sm) < 0.001 and abs(cr_["l"] - cm["l"]) <= 1 and abs(cr_["t"] - cm["t"]) <= 1 and abs(cr_["w"] - cm["w"]) <= 0.5, [sm, sr, cm, cr_])
+        hx, hy = center(rect(pg, "#calcCard .calc-name"))
+        pg.mouse.move(hx, hy); pg.mouse.down(); pg.mouse.move(hx + 60, hy + 25, steps=6); pg.mouse.move(hx + 120, hy + 50, steps=6); pg.mouse.up(); pg.wait_for_timeout(80)
+        cd = rect(pg, "#calcCard")
+        check("the head drag at this size moves the card by the drag (+120, +50)", abs(cd["l"] - cr_["l"] - 120) <= 1.5 and abs(cd["t"] - cr_["t"] - 50) <= 1.5, [cr_, cd])
+        # a smaller screen now: made smaller to fit, her size kept for when the screen is big again
+        pg.set_viewport_size({"width": 1280, "height": 700}); pg.wait_for_timeout(150)
+        cs_, ss = rect(pg, "#calcCard"), pg.evaluate(SC)
+        check("the screen made shorter (700 px): the card shrinks to fit, all on screen", ss < sm and inside(cs_, 1280, 700), [ss, cs_])
+        check("... and her size is still the stored one", abs(pg.evaluate(STORED)["scale"] - sm) < 0.001, pg.evaluate(STORED))
+        pg.set_viewport_size({"width": 1280, "height": 1000}); pg.wait_for_timeout(150)
+        check("the screen tall again: her size is back", abs(pg.evaluate(SC) - sm) < 0.001, pg.evaluate(SC))
+        check("no page errors (1280 x 1000)", not errs, errs)
+        ctx.close()
+
+        # C1b: 1280 x 800, nothing stored: the default keeps under the note bar, as big as the room there allows
+        ctx, pg, errs = fresh(1280, 800)
+        pg.click("#toolsBtn"); pg.wait_for_timeout(150)
+        c, bar, s = rect(pg, "#calcCard"), rect(pg, "#noteBar"), pg.evaluate(SC)
+        print(f"MEASURED default on 1280 x 800: scale {s:.3f}, card {c['w']:.1f} x {c['h']:.1f}")
+        check("1280 x 800, nothing stored: bigger than 1.0x, no more than 1.6x, under the note bar and all on screen",
+              1 < s <= 1.6 and abs(c["t"] - (bar["b"] + 12)) <= 1.5 and inside(c, 1280, 800), [s, c, bar])
+        ctx.close()
+
+        # C2: 1600 x 1400 (room for 2.5x): the upper limit, the keys, "=", a long input, a stroke beside
+        ctx, pg, errs = fresh(1600, 1400)
+        pg.click("#toolsBtn"); pg.wait_for_timeout(150)
+        check("1600 px screen, nothing stored: 1.6x", abs(pg.evaluate(SC) - 1.6) < 1e-9, pg.evaluate(SC))
+        grip_drag(pg, 3000, 3000)
+        c, s = rect(pg, "#calcCard"), pg.evaluate(SC)
+        print(f"MEASURED at the top limit: scale {s}, card {c['w']:.1f} x {c['h']:.1f}")
+        check("dragged far out: it stops at 2.5x (860 px wide), all on screen", s == 2.5 and abs(c["w"] - 860) <= 0.5 and inside(c, 1600, 1400), [s, c])
+        tray = rect(pg, "#tray")
+        check("... grown beside the tray it slid left, never over the tray (its right edge 12 px left of the tray)", abs(c["r"] - (tray["l"] - 12)) <= 1, [c, tray])
+        check("2.5x is remembered", pg.evaluate(STORED)["scale"] == 2.5, pg.evaluate(STORED))
+        miss = pg.evaluate("""() => [...document.querySelectorAll('#calcCard [data-keyid]')].filter((k) => {
+            const r = k.getBoundingClientRect(), e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+            return !e || !e.closest('[data-keyid]') || e.closest('[data-keyid]') !== k; }).map((k) => k.dataset.keyid)""")
+        nkeys = pg.locator("#calcCard [data-keyid]").count()
+        check(f"at 2.5x the centre of every key ({nkeys}) hits that key", nkeys >= 50 and miss == [], miss)
+        for kid in ("ac", "d2", "mult", "d4"):
+            pg.mouse.click(*center(rect(pg, f'#calcCard [data-keyid="{kid}"]'))); pg.wait_for_timeout(30)
+        ex, ey = center(rect(pg, '#calcCard [data-keyid="eq"]'))
+        hit = pg.evaluate("([x, y]) => { const e = document.elementFromPoint(x, y); const k = e && e.closest('[data-keyid]'); return k ? k.dataset.keyid : null; }", [ex, ey])
+        pg.mouse.click(ex, ey); pg.wait_for_timeout(60)
+        check('a tap on "=" at 2.5x hits "=": 2 x 4 = shows 8', hit == "eq" and pg.evaluate(LCD) == "8", [hit, pg.evaluate(LCD)])
+        # a long input: the copied calculator scrolls its entry line; the cursor stays in view at 2.5x
+        CUR = """() => { const ex = document.querySelector('#calcCard .lcd-expr'), c = ex && ex.querySelector('.calc-cursor'), m = document.querySelector('#calcCard .lcd-lmark');
+          if (!c) return null; const a = ex.getBoundingClientRect(), b = c.getBoundingClientRect(), mr = m.getBoundingClientRect();
+          return { inView: b.left >= a.left - 0.5 && b.right <= a.right + 0.5, clearOfMark: m.hidden || b.left >= mr.right - 0.5, mark: !m.hidden, sl: ex.scrollLeft }; }"""
+        pg.mouse.click(*center(rect(pg, '#calcCard [data-keyid="ac"]')))
+        for k in range(60): pg.mouse.click(*center(rect(pg, f'#calcCard [data-keyid="d{1 + k % 9}"]')))
+        pg.wait_for_timeout(60)
+        a = pg.evaluate(CUR)
+        lefts = []
+        for k in range(30):
+            pg.mouse.click(*center(rect(pg, '#calcCard [data-keyid="left"]'))); lefts.append(pg.evaluate(CUR))
+        bad = [i for i, v in enumerate(lefts) if not (v and v["inView"] and v["clearOfMark"])]
+        check("a 60-digit input at 2.5x: the cursor is in view at the end (the line scrolled, the marker shown)", a and a["inView"] and a["mark"], a)
+        check("... and stays in view, clear of the marker, through 30 steps left", bad == [], [bad, lefts[-1]])
+        lcd = rect(pg, "#calcCard .calc-lcd")
+        pg.screenshot(path=str(SHOTS / "lcd-2.5x.png"), clip={"x": lcd["l"], "y": lcd["t"], "width": lcd["w"], "height": lcd["h"]})
+        pg.screenshot(path=str(SHOTS / "size-2.5x.png"))
+        c = rect(pg, "#calcCard")
+        sx, sy = (c["l"] - 190, c["t"] + 140) if c["l"] > 400 else (c["r"] + 60, c["t"] + 140)
+        ok, got = stroke_lands(pg, sx, sy)
+        check("with the card open at 2.5x, a mouse stroke beside it lands within 1.5 px of the pointer", ok, [sx, sy, c, got])
+        check("the card stayed open, never rebuilt", not pg.evaluate("document.getElementById('calcCard').hidden") and pg.locator(".calc-lcd").count() == 1)
+        check("no page errors (1600 x 1400)", not errs, errs)
+        ctx.close()
+
+        # C3: a 375 px phone with 2.5x and a far-right place stored: never off-screen
+        ctx, pg, errs = fresh(375, 812, {"scale": 2.5, "left": 900, "top": 500}, has_touch=True, is_mobile=True)
+        pg.evaluate("() => import('./js/calcpanel.js').then((m) => m.openCalc())"); pg.wait_for_timeout(150)
+        c, s = rect(pg, "#calcCard"), pg.evaluate(SC)
+        print(f"MEASURED on a 375 x 812 phone with 2.5x stored: scale {s:.3f}, card {c['w']:.1f} x {c['h']:.1f} at ({c['l']:.0f}, {c['t']:.0f})")
+        check("375 px phone, 2.5x and a far place stored: the card is all on screen (no wider than the phone)", c["shown"] and inside(c, 375, 812) and s <= 375 / 344 + 1e-9, [s, c])
+        check("no page errors (phone, stored size)", not errs, errs)
         ctx.close()
 
         # ------------------------------------------------------------ B: the phone has no tray, so no calculator button
