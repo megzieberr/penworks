@@ -64,6 +64,12 @@
 # (the arc's data, the head along the arc's end tangent), a <g> of two paths; her curved-arrow-pen fixture is one; three
 # handles, move, resize, turn, the erasers, restyle, Duplicate and Paste keep the head on the end. A snap's undo takes the
 # shape away as every snap's does. The "curved arrow (pw-v4x)" group.
+# Inside the box moves (pw-v7m, her ruling 29 Oct): with a selection box up, a pen down anywhere inside the dashed box
+# (on the line too) MOVES the selection, the 12 px band inside each corner and any shape handle inside included; a corner
+# resizes only from outside the box (within 12 px of it); a shape handle is grabbed from outside the box (or with no box).
+# In "select" the resize starts 5 px outside the corner; in "select drags an end (pw-v4v)" the rect's corner is taken
+# 5 px outside, and the selected arc's middle handle now moves the arc from inside and is grabbed from just above the box.
+# The "inside the box moves (pw-v7m)" group.
 import sys, subprocess, time, pathlib, re, json, math, random
 from playwright.sync_api import sync_playwright
 
@@ -151,6 +157,9 @@ def undo(pg): pg.click("#undoBtn"); pg.wait_for_timeout(30)
 def redo(pg): pg.click("#redoBtn"); pg.wait_for_timeout(30)
 def tool(pg, t): pg.click(f"#tool-{t}"); pg.wait_for_timeout(20)
 def near(a, b, tol): return math.hypot(a[0] - b[0], a[1] - b[1]) <= tol
+def corner_out(pg, o, c, px=5):               # pw-v7m: a corner resizes from OUTSIDE the box; px screen px out from corner c, along o -> c
+    L = math.hypot(c[0] - o[0], c[1] - o[1]) or 1; z = zoom(pg)
+    return ((c[0] - o[0]) / L * px / z, (c[1] - o[1]) / L * px / z)
 def wobble(k, amp=2.0): return amp * math.sin(k * 1.7) * math.cos(k * 0.6)
 def fresh(b, url=LOCAL, **kw):
     ctx = b.new_context(viewport={"width": 1280, "height": 1300}, **kw)   # tall: the whole A4 page on screen
@@ -614,8 +623,8 @@ try:
         check("box around the third only", sel(pg)["ids"] == [C])
         bx = sel(pg)["box"]
         q = pg.evaluate("(() => { const c = [...document.querySelectorAll('svg.ink g.sel circle.selh')].map(e => [+e.getAttribute('cx'), +e.getAttribute('cy')]); return c; })()")
-        c2 = q[2]
-        drag_page(pg, 1, (c2[0], c2[1]), (c2[0] + 100, c2[1] + 20), steps=12)
+        c2 = q[2]; zz = zoom(pg)                                         # pw-v7m: a corner resizes from OUTSIDE the box, so 5 px out and down
+        drag_page(pg, 1, (c2[0] + 5 / zz, c2[1] + 5 / zz), (c2[0] + 100, c2[1] + 20), steps=12)
         rc = {s["id"]: s for s in strokes(pg, "p4")}[C]
         b0 = [min(p[0] for p in P0[C]), min(p[1] for p in P0[C]), max(p[0] for p in P0[C]), max(p[1] for p in P0[C])]
         b1 = [min(p[0] for p in rc["data"]["points"]), min(p[1] for p in rc["data"]["points"]), max(p[0] for p in rc["data"]["points"]), max(p[1] for p in rc["data"]["points"])]
@@ -1325,10 +1334,10 @@ try:
         tap_page(pg, 1, (q0[0][0] + q0[1][0]) / 2, q0[0][1])
         check("a tap on the rect's top edge selects the rect", selids() == [rc["id"]], sel(pg))
         bx = sel(pg)["box"]; pad = 4 / z
-        cx0, cy0 = bx[0] - pad, bx[1] - pad                              # the box's top-left corner (the dashed box sits 4 px outside)
+        cx0, cy0 = bx[0] - pad - 5 / z, bx[1] - pad - 5 / z              # 5 px out from the box's top-left corner (the dashed box sits 4 px outside; pw-v7m: a corner resizes from outside)
         pen_pt = screen(pg, 1, cx0, cy0)
         pg.mouse.move(*pen_pt); pg.wait_for_timeout(20)
-        check("hovering on the selection's corner (the rect's own corner inside reach too): no handle ring, the corner wins", ring() is None, ring())
+        check("hovering just outside the selection's corner (the rect's own corner inside reach too): no handle ring, the corner wins", ring() is None, ring())
         u1 = U(pg)
         drag_page(pg, 1, (cx0, cy0), (cx0 - 40, cy0 - 10))
         q1 = R(rc["id"])["data"]["points"]
@@ -1337,18 +1346,30 @@ try:
         check("pen down on the box's corner with the rect selected: a resize (the aspect holds, the far corner holds), not a grab",
               abs(w1 / h1 - w0 / h0) < 0.02 and w1 > w0 and near(q1[2], q0[2], 1.5) and U(pg) == u1 + 1, [q0, q1])
         check("... and the rect is still selected", selids() == [rc["id"]], sel(pg))
-        # the arc selected: its middle handle (on the box's top edge, away from the corners and the ring) is a grab
+        # the arc selected: its middle handle sits inside the box, near the top edge (pw-v7m: from inside, a move; from just above the box, a grab)
         tap_page(pg, 1, 700, 1050)
         drag_page(pg, 1, (420, 420), (700, 560))
         check("a box round the arc selects it alone", selids() == [ar["id"]], sel(pg))
         a0 = R(ar["id"])["data"]
         mx, my = screen(pg, 1, a0["xm"], a0["ym"])
         pg.mouse.move(mx + 5, my + 3); pg.wait_for_timeout(20)
-        check("hovering on the selected arc's middle handle: the ring shows (a grab would win there)", ring() is not None and near(ring(), (mx, my), 2), [ring(), mx, my])
+        check("hovering on the selected arc's middle handle from inside the box: no ring (a touch there moves, pw-v7m)", ring() is None, ring())
         u2 = U(pg)
         drag_page(pg, 1, (a0["xm"] + 5, a0["ym"] + 3), (a0["xm"] + 5, a0["ym"] - 27))
         a1 = R(ar["id"])["data"]
-        check("pen down on the selected arc's middle handle: a grab (ym -30, the ends stay, one undo step)",
+        check("pen down on the selected arc's middle handle from inside the box: the whole arc moves (every point y -30), one undo step (pw-v7m)",
+              all(abs(a1[k] - a0[k]) <= 1.0 for k in ("x1", "xm", "x2")) and all(abs(a1[k] - (a0[k] - 30)) <= 1.0 for k in ("y1", "ym", "y2")) and U(pg) == u2 + 1, [a0, a1])
+        check("... and the arc is still selected", selids() == [ar["id"]], sel(pg))
+        a0 = a1; top = sel(pg)["box"][1] - pad - 5 / z                   # 5 px above the dashed box's top edge, over the middle handle
+        mx, my = screen(pg, 1, a0["xm"], a0["ym"])
+        hx_, hy_ = screen(pg, 1, a0["xm"], top)
+        check("... that point is within the 20 px handle reach and clear of the turn ring", 0 < my - hy_ <= 20, [my, hy_])
+        pg.mouse.move(hx_, hy_); pg.wait_for_timeout(20)
+        check("hovering just above the box over the middle handle: the ring shows on the handle (pw-v7m: a grab from outside)", ring() is not None and near(ring(), (mx, my), 2), [ring(), mx, my])
+        u2 = U(pg)
+        drag_page(pg, 1, (a0["xm"], top), (a0["xm"], top - 30))
+        a1 = R(ar["id"])["data"]
+        check("pen down just above the box over the selected arc's middle handle: a grab (ym -30, the ends stay, one undo step)",
               abs(a1["ym"] - (a0["ym"] - 30)) <= 1.0 and abs(a1["xm"] - a0["xm"]) <= 1.0 and a1["x1"] == a0["x1"] and a1["x2"] == a0["x2"] and U(pg) == u2 + 1, [a0, a1])
         check("... and the selection is cleared", sel(pg) is None and pg.evaluate("document.querySelectorAll('svg.ink g.sel').length") == 0, sel(pg))
         # a selection exists, a grab on ANOTHER shape's end: the selection clears and the end moves
@@ -1744,9 +1765,9 @@ try:
                                     rec("w2", "pen", {"points": [[200, 600], [260, 640], [320, 600]]}, width=4, k=1)]])
         tool(pg, "select")
         def resize_twice():                    # the bottom-right corner along the diagonal to twice the size; returns the mid-drag look
-            q = pg.evaluate(CORN_JS); o, c2 = q[0], q[2]
-            at = lambda s: (o[0] + s * (c2[0] - o[0]), o[1] + s * (c2[1] - o[1]))
-            sx, sy = screen(pg, 1, c2[0], c2[1]); pg.mouse.move(sx, sy); pg.mouse.down()
+            q = pg.evaluate(CORN_JS); o, c2 = q[0], q[2]; dd = corner_out(pg, o, c2)   # pw-v7m: 5 px outside the corner, the offset kept
+            at = lambda s: (o[0] + s * (c2[0] - o[0]) + dd[0], o[1] + s * (c2[1] - o[1]) + dd[1])
+            sx, sy = screen(pg, 1, *at(1)); pg.mouse.move(sx, sy); pg.mouse.down()
             mx, my = screen(pg, 1, *at(1.5)); pg.mouse.move(mx, my, steps=8); pg.wait_for_timeout(40)
             sid = sel(pg)["ids"][0]; mid = (elinfo(pg, 1, sid), pg.evaluate(BBW_JS, sid))
             tx, ty = screen(pg, 1, *at(2)); pg.mouse.move(tx, ty, steps=8); pg.mouse.up(); pg.wait_for_timeout(40)
@@ -2495,8 +2516,8 @@ try:
         undo(pg)
         check("undo puts it back", by_id()["pb"]["data"] == PB, by_id()["pb"]["data"])
         select_box((230, 190), (570, 410))
-        q = pg.evaluate(CORN_JS); o, c2 = q[0], q[2]
-        drag_page(pg, 1, (c2[0], c2[1]), (o[0] + 2 * (c2[0] - o[0]), o[1] + 2 * (c2[1] - o[1])), steps=12)
+        q = pg.evaluate(CORN_JS); o, c2 = q[0], q[2]; dd = corner_out(pg, o, c2)   # pw-v7m: 5 px outside the corner, the offset kept
+        drag_page(pg, 1, (c2[0] + dd[0], c2[1] + dd[1]), (o[0] + 2 * (c2[0] - o[0]) + dd[0], o[1] + 2 * (c2[1] - o[1]) + dd[1]), steps=12)
         d2 = by_id()["pb"]["data"]
         P, Q = pts3(PB), pts3(d2)
         s_ = math.hypot(Q[2][0] - Q[0][0], Q[2][1] - Q[0][1]) / math.hypot(P[2][0] - P[0][0], P[2][1] - P[0][1])
@@ -2787,8 +2808,8 @@ try:
         check("... one undo step, the head's tip = (x2, y2) within 0.5 px, along the tangent", U(pg) == u0 + 1 and head_ok("ca", d1), [U(pg), u0, head3("ca"), d1])
         undo(pg)
         select_box((250, 280), (550, 395))
-        q = pg.evaluate(CORN_JS); o, c2 = q[0], q[2]
-        drag_page(pg, 1, (c2[0], c2[1]), (o[0] + 2 * (c2[0] - o[0]), o[1] + 2 * (c2[1] - o[1])), steps=12)
+        q = pg.evaluate(CORN_JS); o, c2 = q[0], q[2]; dd = corner_out(pg, o, c2)   # pw-v7m: 5 px outside the corner, the offset kept
+        drag_page(pg, 1, (c2[0] + dd[0], c2[1] + dd[1]), (o[0] + 2 * (c2[0] - o[0]) + dd[0], o[1] + 2 * (c2[1] - o[1]) + dd[1]), steps=12)
         d2 = by_id()["ca"]["data"]
         s_ = math.hypot(d2["x2"] - d2["x1"], d2["y2"] - d2["y1"]) / math.hypot(CAD["x2"] - CAD["x1"], CAD["y2"] - CAD["y1"])
         check("a resize to twice the size keeps the type and scales the points", d2["type"] == "carrow" and abs(s_ - 2) < 0.08, [s_, d2])
@@ -2839,10 +2860,105 @@ try:
         check("no page errors in the curved arrow group", not (ec1 or ec2 or ec3 or ec4), [ec1, ec2, ec3, ec4])
         ctx.close()
 
+        # ------------------------------------------------------------ pw-v7m: inside the box always moves; a corner only from outside
+        group[0] = "inside the box moves (pw-v7m)"
+        ctx, pg, e13 = fresh(b); errs += e13
+        open_note(pg, "Handles")
+        z = zoom(pg); pad = 4 / z
+        ring = lambda: pg.evaluate("""(() => { const r = document.getElementById('handleRing'); if (!r || r.hidden) return null;
+          const b = r.getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; })()""")
+        selids = lambda: (sel(pg) or {}).get("ids")
+        draw(pg, 1, rough_triangle(), steps=3, hold=650)
+        tr = last(pg, "p2")
+        check("a rough triangle snaps to a triangle", tr["kind"] == "shape" and tr["data"]["type"] == "triangle", [tr["kind"], tr["data"]])
+        TP = lambda: [x for x in strokes(pg, "p2") if x["id"] == tr["id"]][0]["data"]["points"]
+        dash = lambda: (lambda bb: [bb[0] - pad, bb[1] - pad, bb[2] + pad, bb[3] + pad])(sel(pg)["box"])   # the dashed box (SEL.box)
+        tool(pg, "select")
+        P = TP()
+        tap_page(pg, 1, (P[0][0] + P[1][0]) / 2, (P[0][1] + P[1][1]) / 2)
+        check("a tap on the triangle's side selects it alone", selids() == [tr["id"]], sel(pg))
+        # 6 px inside the top-left corner (the triangle's own vertex is in handle reach there too): a move
+        B0 = dash(); W0, H0 = B0[2] - B0[0], B0[3] - B0[1]
+        ip = (B0[0] + 6 / z, B0[1] + 6 / z)
+        near_v = min(math.hypot(q[0] - ip[0], q[1] - ip[1]) for q in P) * z
+        check("... (that point is within 12 px of the corner and within 20 px of a vertex)", math.hypot(6, 6) <= 12 and near_v <= 20, near_v)
+        pg.mouse.move(*screen(pg, 1, *ip)); pg.wait_for_timeout(20)
+        check("hovering 6 px inside the corner: no ring (a touch there moves)", ring() is None, ring())
+        u0 = U(pg)
+        drag_page(pg, 1, ip, (ip[0] + 30, ip[1] + 20))
+        B1 = dash(); P1 = TP()
+        check("pen down 6 px inside the corner MOVES the selection: the box moves (+30, +20), its size does not",
+              abs(B1[0] - B0[0] - 30) <= 1.0 and abs(B1[1] - B0[1] - 20) <= 1.0 and abs((B1[2] - B1[0]) - W0) <= 0.5 and abs((B1[3] - B1[1]) - H0) <= 0.5, [B0, B1])
+        check("... every vertex moved the same (+30, +20), still a triangle, still selected, one undo step",
+              all(abs(a[0] - b_[0] - 30) <= 1.0 and abs(a[1] - b_[1] - 20) <= 1.0 for a, b_ in zip(P1, P)) and selids() == [tr["id"]] and U(pg) == u0 + 1, [P, P1])
+        # 6 px outside the same corner: a resize about the opposite corner
+        op = (B1[0] - 6 / z, B1[1] - 6 / z)
+        pg.mouse.move(*screen(pg, 1, *op)); pg.wait_for_timeout(20)
+        check("hovering 6 px outside the corner: no handle ring (the corner wins there)", ring() is None, ring())
+        u0 = U(pg)
+        drag_page(pg, 1, op, (op[0] - 40, op[1] - 40))
+        B2 = dash()
+        check("pen down 6 px outside the corner RESIZES: the box grows, the far corner holds, the aspect holds, one undo step",
+              (B2[2] - B2[0]) > (B1[2] - B1[0]) + 20 and abs(B2[2] - B1[2]) <= 3 and abs(B2[3] - B1[3]) <= 3
+              and abs((B2[2] - B2[0]) / (B2[3] - B2[1]) - (B1[2] - B1[0]) / (B1[3] - B1[1])) < 0.03 and U(pg) == u0 + 1, [B1, B2])
+        check("... no jump: the pen's offset from the corner is kept (the top-left corner moved by the drag, -40, about -40)",
+              abs(B2[0] - (B1[0] - 40)) <= 3, [B1, B2])
+        undo(pg)
+        if selids() != [tr["id"]]:
+            P = TP(); tap_page(pg, 1, (P[0][0] + P[1][0]) / 2, (P[0][1] + P[1][1]) / 2)
+        check("undo the resize; the triangle selected", selids() == [tr["id"]], sel(pg))
+        # a vertex from inside the box: the whole triangle moves
+        P = TP(); C = max(P, key=lambda q: q[1])                         # the apex at the bottom, mid-way between the box's corners
+        cx_, cy_ = screen(pg, 1, *C)
+        pg.mouse.move(cx_, cy_); pg.wait_for_timeout(20)
+        check("hovering ON the apex vertex (inside the box): no ring", ring() is None, ring())
+        u0 = U(pg)
+        drag_page(pg, 1, tuple(C), (C[0] + 40, C[1] + 30))
+        P1 = TP()
+        check("triangle selected, pen down on a vertex from inside the box: the WHOLE triangle moves (+40, +30), one undo step",
+              all(abs(a[0] - b_[0] - 40) <= 1.0 and abs(a[1] - b_[1] - 30) <= 1.0 for a, b_ in zip(P1, P)) and U(pg) == u0 + 1, [P, P1])
+        check("... and it is still selected", selids() == [tr["id"]], sel(pg))
+        # the same vertex approached from outside: just below the box's bottom edge
+        P = P1; C = max(P, key=lambda q: q[1]); k = P.index(C); B = dash()
+        bp = (C[0], B[3] + 6 / z)
+        reach = math.hypot(bp[0] - C[0], bp[1] - C[1]) * z
+        check("... (6 px below the box: within the 20 px reach of the apex, clear of the corners)", reach <= 20 and min(abs(bp[0] - B[0]), abs(bp[0] - B[2])) * z > 12, reach)
+        cx_, cy_ = screen(pg, 1, *C)
+        pg.mouse.move(*screen(pg, 1, *bp)); pg.wait_for_timeout(20)
+        check("hovering just outside the box below the apex: the ring shows on the apex", ring() is not None and near(ring(), (cx_, cy_), 2), [ring(), cx_, cy_])
+        u0 = U(pg)
+        drag_page(pg, 1, bp, (bp[0], bp[1] + 50))
+        P1 = TP()
+        check("the same vertex approached from outside the box: only that vertex moves (y +50), the other two stay, one undo step",
+              abs(P1[k][1] - (C[1] + 50)) <= 1.5 and abs(P1[k][0] - C[0]) <= 1.5 and all(P1[j] == P[j] for j in range(3) if j != k) and U(pg) == u0 + 1, [P, P1])
+        check("... the grab clears the selection", sel(pg) is None, sel(pg))
+        # no selection box at all: a vertex is grabbed from anywhere within reach (her 29 Oct 10:55 feature)
+        P = TP(); A_ = min(P, key=lambda q: (q[0], q[1])); k = P.index(A_)
+        u0 = U(pg)
+        drag_page(pg, 1, (A_[0] + 3, A_[1] + 3), (A_[0] - 37, A_[1] + 3))
+        P1 = TP()
+        check("no selection box: pen down on a vertex grabs that vertex alone (x -40), one undo step",
+              abs(P1[k][0] - (A_[0] - 40)) <= 1.5 and abs(P1[k][1] - A_[1]) <= 1.5 and all(P1[j] == P[j] for j in range(3) if j != k) and U(pg) == u0 + 1, [P, P1])
+        # outside the box, far from corners and handles: a new box
+        P = TP(); tap_page(pg, 1, (P[0][0] + P[1][0]) / 2, (P[0][1] + P[1][1]) / 2)
+        check("selected again", selids() == [tr["id"]], sel(pg))
+        drag_page(pg, 1, (600, 950), (700, 1050))
+        check("outside the box, far from corners and handles: a new box (here it takes nothing, so no selection)", sel(pg) is None and TP() == P, sel(pg))
+        # the turn ring above the box still turns
+        tap_page(pg, 1, (P[0][0] + P[1][0]) / 2, (P[0][1] + P[1][1]) / 2)
+        rot = pg.evaluate("(() => { const k = document.querySelector('svg.ink g.sel circle.selrot'); return [+k.getAttribute('cx'), +k.getAttribute('cy')]; })()")
+        cxr = (dash()[0] + dash()[2]) / 2; cyr = (dash()[1] + dash()[3]) / 2
+        u0 = U(pg)
+        drag_page(pg, 1, tuple(rot), (cxr + (cyr - rot[1]), cyr), steps=12)   # a quarter turn clockwise about the centre
+        P1 = TP()
+        check("the turn ring above the box turns as before (one undo step, the triangle changed)", U(pg) == u0 + 1 and P1 != P, [P, P1])
+        check("no page errors in the inside-the-box group", not e13, e13)
+        ctx.close()
+
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v7l", "pw-v7l" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v7m", "pw-v7m" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)

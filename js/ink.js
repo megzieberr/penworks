@@ -18,7 +18,7 @@
 // highlighter-born shape and lives in the highlighter layer (inHl below is that one rule).
 // Shape handles (pw-v4v, her ruling 26 Oct: "I want the drag in the select button rather"): the plain pen never grabs,
 // it always draws. With the SELECT tool, a pen landing within reach of an end point, corner or compass point of any shape
-// on the page grabs it and drags it (after the selection's own turn ring and corners, before a move inside the box); a grab
+// on the page grabs it and drags it (after the selection's own turn ring and corners and a move inside the box, pw-v7m below); a grab
 // that moves under 4 px on screen is a tap and selects as any select tap does (that shape when nothing else wins). The pen button (a contextmenu on the desk, page.js)
 // flips between Select and the last ink tool.
 // Arc snap (pw-v4f): an open curve held still snaps into a circular arc, data { type: 'arc', x1, y1, xm, ym, x2, y2 }
@@ -72,6 +72,16 @@
 // kept points are tidied (tidy: the end hook dropped, RDP at 0.25 page px, sharp corners keep their neighbours, no gap
 // over 6 page px); the drawing (pathD) and classify's raw path are as before. A held stroke snaps from 12 page px (SNAP_LEN) on; under
 // SNAP_MIN (30) it can only become a line; straight() never asks for less than 1.5 page px; HOLD_MS is 350.
+// Inside the box moves (pw-v7m, her ruling 29 Oct 15:10: "inside the box always moves; only the corner squares themselves
+// resize"). With the select tool and a selection box up, a pen down is read in this order: (1) the turn ring above the box
+// turns, as before; (2) a corner resizes only when the pen is within GRAB of it AND outside the box, so only the outer half
+// of a corner square (and just past it) resizes; (3) anywhere inside the box MOVES the whole selection, the 12 px band
+// inside each corner too, and no shape handle is grabbed from inside; (4) outside the box, a shape handle within
+// HANDLE_REACH is grabbed (as with no box at all); (5) else a new box. Inside means the closed rectangle of the dashed box
+// (SEL.box): a pen exactly on the dashed line counts as inside and moves. So what decides is where the PEN lands, never
+// where the handle sits: a handle on or inside the box's edge is grabbed only by a pen landing outside the box (a shape
+// selected alone has its handles 4 px plus half its width inside the box, so they are reached from outside). The hover
+// ring follows the same rule. A resize keeps the pen's offset from the corner, so it does not jump at the first move.
 
 import * as store from './store.js';
 import { pageAt, pagePoint, view, pageSize } from './page.js';
@@ -974,21 +984,29 @@ function showHandle(cx, cy) {
 function hideHandle() { if (hring) hring.hidden = true; }
 // the S Pen's side button (the barrel button) or the right mouse button: bit 2 in buttons, button 2 on a press
 const barrel = (e) => !!(e.buttons & 2) || e.button === 2;
-// the selection's own grips at page point `at` (page at.id): 'rot' on its turn ring, a corner index 0..3, else null
+// pw-v7m: page point `at` is inside the selection box (the closed rectangle: on the dashed line counts as inside)
+function inSel(at) {
+  if (!SEL || SEL.page !== at.id || !SEL.box) return false;
+  const b = SEL.box;
+  return at.x >= b[0] && at.x <= b[2] && at.y >= b[1] && at.y <= b[3];
+}
+// the selection's own grips at page point `at` (page at.id): 'rot' on its turn ring, a corner index 0..3, else null.
+// pw-v7m: a corner only from OUTSIDE the box (within GRAB of it); inside the box is always a move
 function selGrip(at, z) {
   if (!SEL || SEL.page !== at.id || !SEL.box) return null;
   const reach = GRAB / z;
   if (SEL.rot && Math.hypot(SEL.rot[0] - at.x, SEL.rot[1] - at.y) <= reach) return 'rot';
+  if (inSel(at)) return null;
   const k = selCorners(SEL.box).findIndex((q) => Math.hypot(q[0] - at.x, q[1] - at.y) <= reach);
   return k >= 0 ? k : null;
 }
 // the pen hovering (or a mouse moving), button or not, with the select tool: a small ring on a handle within reach,
-// meaning "a touch here grabs this point"; out of reach, or where the selection's ring or a corner would win, no ring.
-// The pen tool shows nothing: it only draws
+// meaning "a touch here grabs this point"; out of reach, where the selection's ring or a corner would win, or inside the
+// selection box (pw-v7m: a touch there moves), no ring. The pen tool shows nothing: it only draws
 function hover(e) {
   if (T.tool !== 'select' || G) { hideHandle(); return; }
   const at = pageAt(e.clientX, e.clientY), z = view().z;
-  const h = at && selGrip(at, z) === null && handleAt(at.id, at.x, at.y, HANDLE_REACH / z);
+  const h = at && selGrip(at, z) === null && !inSel(at) && handleAt(at.id, at.x, at.y, HANDLE_REACH / z);
   if (!h) { hideHandle(); return; }
   showHandle(e.clientX + (h.at[0] - at.x) * z, e.clientY + (h.at[1] - at.y) * z);
 }
@@ -1451,7 +1469,7 @@ function down(e) {
     eraseTo(e.clientX, e.clientY);
     return true;
   }
-  if (T.tool === 'select') {                                       // first match wins: ring, corner, shape handle, inside the box, a new box
+  if (T.tool === 'select') {                                       // first match wins (pw-v7m): ring, corner (from outside), inside the box, shape handle, a new box
     const grip = selGrip(at, z);
     if (grip === 'rot') {                                          // the ring: turn about the box's centre
       const b = SEL.box, c = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
@@ -1460,23 +1478,20 @@ function down(e) {
     }
     if (grip !== null) {                                           // a corner: scale about the opposite one
       const q = selCorners(SEL.box), o = q[(grip + 2) % 4], c = q[grip];
-      G = { kind: 'sresize', index: at.index, page: at.id, o, c, s: 1, recs: selRecs() };
+      G = { kind: 'sresize', index: at.index, page: at.id, o, c, s: 1, recs: selRecs(), off: [c[0] - at.x, c[1] - at.y] };   // pw-v7m: off, no jump
       return true;
     }
-    const h = handleAt(at.id, at.x, at.y, HANDLE_REACH / z);       // a shape's handle within reach, on any shape of the page
+    if (inSel(at)) {                                               // pw-v7m: inside the box (corner bands and handles too): move
+      G = { kind: 'smove', index: at.index, page: at.id, p0: [at.x, at.y], dx: 0, dy: 0, recs: selRecs() };
+      return true;
+    }
+    const h = handleAt(at.id, at.x, at.y, HANDLE_REACH / z);       // outside the box: a shape's handle within reach, on any shape of the page
     if (h) {
       clearSelection();                                            // no box or chips on a shape being reshaped
       G = { kind: 'grab', page: at.id, index: at.index, rec: h.rec, h: h.h, el: d.els.get(h.rec.id), now: h.rec, z,
             off: [h.at[0] - at.x, h.at[1] - at.y], p0: [at.x, at.y], far: 0 };   // the handle keeps its offset from the pen: no jump
       showHandle(e.clientX + (h.at[0] - at.x) * z, e.clientY + (h.at[1] - at.y) * z);
       return true;
-    }
-    if (SEL && SEL.page === at.id) {
-      const b = SEL.box;
-      if (at.x >= b[0] && at.x <= b[2] && at.y >= b[1] && at.y <= b[3]) {   // inside: move
-        G = { kind: 'smove', index: at.index, page: at.id, p0: [at.x, at.y], dx: 0, dy: 0, recs: selRecs() };
-        return true;
-      }
     }
     clearSelection();                                              // outside (or another page): a new box
     const band = document.createElementNS(SVGNS, 'rect');
@@ -1567,7 +1582,7 @@ function move(events) {
     return;
   }
   if (G.kind === 'sresize') {
-    const [x, y] = pagePoint(G.index, ev.clientX, ev.clientY), { o, c } = G;
+    const [px, py] = pagePoint(G.index, ev.clientX, ev.clientY), { o, c } = G, x = px + G.off[0], y = py + G.off[1];   // pw-v7m: the pen's offset kept
     const vx = c[0] - o[0], vy = c[1] - o[1], L2 = vx * vx + vy * vy || 1;
     G.s = Math.max(0.05, ((x - o[0]) * vx + (y - o[1]) * vy) / L2);   // along the diagonal, so the aspect holds
     liveSel(G);

@@ -382,9 +382,9 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v7l" not in keys:
+        if "pw-v7m" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v7l", "pw-v7l" in keys, keys)
+        check("cache is pw-v7m", "pw-v7m" in keys, keys)
         sw = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("sw.js keeps vendor/pdf-lib.min.js and js/pdfout.js for offline, and no jsPDF", "./vendor/pdf-lib.min.js" in sw and "./js/pdfout.js" in sw and "jspdf" not in sw)
         st = pg.evaluate("Promise.all(['./vendor/pdf-lib.min.js', './vendor/jspdf.umd.min.js'].map(u => fetch(u, { cache: 'no-store' }).then(r => r.status)))")
