@@ -1,11 +1,18 @@
 # PenWorks pw-v7e checks: pen strokes are smoothed (no more lumpy small writing; her "washy" 30°, 29 Oct).
+# pw-v7i: the smoothing is now the One Euro filter (ink.js oneEuro, OE), which smooths by the pen's SPEED, so the feed carries
+# its own time: every event has a timeStamp 1/240 s after the last (the S Pen's rate), and the jittery line is drawn slowly,
+# 750 moves over its 125 page px (40 page px/s, small careful writing, where the wobble lives). The stored points are also
+# tidied on lift (RDP at 0.25 page px), so there are far fewer of them.
 # Run: python tests/test_smooth.py        (local mode only: ?local=1, Supabase is never touched)
 # Seeds one note of one grid page into the localStorage twin and fires synthetic pen PointerEvents on the desk (like the
-# burst in tests/test_scroll.py): a straight line of 200 moves with +-0.4 page px of seeded noise (the S Pen's wobble),
+# burst in tests/test_scroll.py): a straight line of 750 moves with +-0.4 page px of seeded noise (the S Pen's wobble),
 # then a tap with no move, then a quick held arrow drawn with the mouse (the snap). The kept points are read from the stored record (window.__pw.ink.strokesOf).
-# The noise comes from a fixed-seed generator, so the run is the same every time. With fresh random noise the 0.35 px
-# bound holds for about 7 seeds in 8 (seeds 1 to 40 at zoom 1: worst point 0.27 to 0.40 px, middle 0.32; the old code went
-# past 0.4 on every seed tried: 0.44 to 0.51). Seed 21 is a middling one (0.317), not one picked to scrape by; seed 7 is one of the 1 in 8 (0.374).
+# The noise comes from a fixed-seed generator, so the run is the same every time. pw-v7i, seeds 1 to 40 at zoom 1 with this
+# feed: worst point 0.26 to 0.35 px, middle 0.30, so the 0.35 px bound holds on every seed tried. Seed 21 (kept from pw-v7e,
+# not re-picked) now lands low, 0.257. For the record, the pw-v7e feed (200 moves, all at one time, which the filter counts
+# as 240 Hz, so 150 page px/s) gives 0.30 to 0.41, middle 0.35, against the old fixed pull's 0.27 to 0.40, middle 0.32: at
+# that brisker speed the new filter smooths a little less than the old one did, on purpose (it lets go as the pen speeds
+# up, so the ink never trails the nib).
 import sys, subprocess, time, pathlib, math
 from playwright.sync_api import sync_playwright
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -31,18 +38,22 @@ SEED = """() => {
 # the last move exactly on b (where the pen lifts); returns the zoom and the number of events fired
 STROKE = """([a, b, n, noise, seed]) => {
   const desk = document.getElementById('desk'), sheet = document.querySelector('#stack .sheet[data-index="1"]');
-  const r = sheet.getBoundingClientRect(), z = +document.getElementById('stack').dataset.zoom;
+  const r = sheet.getBoundingClientRect(), z = +document.getElementById('stack').dataset.zoom, base = performance.now();
   let s = seed; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
   const cx = (x) => r.left + x * z, cy = (y) => r.top + y * z;
-  const ev = (type, x, y) => desk.dispatchEvent(new PointerEvent(type, { pointerId: 91, pointerType: 'pen', isPrimary: true, bubbles: true,
-    cancelable: true, button: type === 'pointermove' ? -1 : 0, buttons: type === 'pointerup' ? 0 : 1, pressure: type === 'pointerup' ? 0 : 0.5,
-    clientX: cx(x), clientY: cy(y) }));
-  ev('pointerdown', a[0], a[1]);
+  const ev = (type, x, y, k) => {                       // pw-v7i: event k happens k / 240 s after the pen lands
+    const e = new PointerEvent(type, { pointerId: 91, pointerType: 'pen', isPrimary: true, bubbles: true,
+      cancelable: true, button: type === 'pointermove' ? -1 : 0, buttons: type === 'pointerup' ? 0 : 1, pressure: type === 'pointerup' ? 0 : 0.5,
+      clientX: cx(x), clientY: cy(y) });
+    Object.defineProperty(e, 'timeStamp', { value: base + k * 1000 / 240 });
+    desk.dispatchEvent(e);
+  };
+  ev('pointerdown', a[0], a[1], 0);
   for (let k = 1; k <= n; k++) {
     const t = k / n, j = k === n ? 0 : 1;
-    ev('pointermove', a[0] + (b[0] - a[0]) * t + j * (rnd() * 2 - 1) * noise, a[1] + (b[1] - a[1]) * t + j * (rnd() * 2 - 1) * noise);
+    ev('pointermove', a[0] + (b[0] - a[0]) * t + j * (rnd() * 2 - 1) * noise, a[1] + (b[1] - a[1]) * t + j * (rnd() * 2 - 1) * noise, k);
   }
-  ev('pointerup', b[0], b[1]);
+  ev('pointerup', b[0], b[1], n);
   return { z, n };
 }"""
 TAP = """([p]) => {
@@ -76,14 +87,14 @@ try:
         pg.click("#tool-pen")
 
         group[0] = "a jittery straight line"
-        A, B = (120.0, 300.0), (240.0, 337.0)                    # a short slow line, 200 samples over ~125 page px
-        got = pg.evaluate(STROKE, [list(A), list(B), 200, 0.4, 21]); pg.wait_for_timeout(60)
+        A, B = (120.0, 300.0), (240.0, 337.0)                    # a short slow line, 750 samples at 240 Hz over ~125 page px (pw-v7i; it was 200)
+        got = pg.evaluate(STROKE, [list(A), list(B), 750, 0.4, 21]); pg.wait_for_timeout(60)
         L = pg.evaluate(LAST_JS)
         pts = L["pts"]
         dev = max(dist_line(q, A, B) for q in pts)
         check("set-up: the stroke was stored as a pen stroke", L["n"] == 1 and L["kind"] == "pen", [L["n"], L["kind"], got])
         check("every kept point is within 0.35 px of the straight line", dev <= 0.35, round(dev, 3))
-        check("fewer kept points than events (200)", 1 < len(pts) < got["n"], len(pts))
+        check("fewer kept points than events (750)", 1 < len(pts) < got["n"], len(pts))
         check("the first point is where the pen went down", pts[0] == [A[0], A[1]], pts[0])
         check("the last point is within 1 px of where it lifted", math.hypot(pts[-1][0] - B[0], pts[-1][1] - B[1]) <= 1, pts[-1])
         check("the path was drawn to the end (its d ends at the last kept point)", L["d"] and L["d"].rstrip().endswith(f"{pts[-1][1]:g}"), [L["d"][-40:] if L["d"] else None, pts[-1]])

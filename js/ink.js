@@ -63,19 +63,39 @@
 // { remote: true } (no page picture becomes due). A selection on that page clears first; while a gesture runs the rows
 // wait for the lift. replace() (the reconcile's swap) tells onChange { remote: true } too: the database's set is not
 // this device's ink, the device that wrote it makes the picture.
+// Stroke quality (pw-v7i, her 29 Oct 15:17: "how washy my strokes still look" and short held lines that never snapped):
+// the pen's samples go through a One Euro filter (oneEuro, OE: smooths a slow pen hard and a fast one hardly, so small
+// writing stops wobbling and nothing trails the nib; ?oe=<mincutoff>,<beta> tunes it, ?dbg=1 shows the pair); on lift the
+// kept points are tidied (tidy: the end hook dropped, RDP at 0.25 page px, sharp corners keep their neighbours, no gap
+// over 6 page px); the drawing (pathD) and classify's raw path are as before. A held stroke snaps from 12 page px (SNAP_LEN) on; under
+// SNAP_MIN (30) it can only become a line; straight() never asks for less than 1.5 page px; HOLD_MS is 350.
 
 import * as store from './store.js';
 import { pageAt, pagePoint, view, pageSize } from './page.js';
 
-// snap: the pen held still this long (ms) at the end of a stroke; ?hold=400 in the address overrides it
-export const HOLD_MS = (() => { const v = +new URLSearchParams(location.search).get('hold'); return v >= 100 && v <= 3000 ? v : 500; })();
+// snap: the pen held still this long (ms) at the end of a stroke; ?hold=400 in the address overrides it.
+// 350 is her number (29 Oct 15:30; it was 500)
+export const HOLD_MS = (() => { const v = +new URLSearchParams(location.search).get('hold'); return v >= 100 && v <= 3000 ? v : 350; })();
+// pw-v7i: the One Euro filter on the pen's samples (page px, seconds). mincutoff (Hz) is how hard a slow pen is smoothed
+// (lower = smoother, more lag), beta how fast that smoothing lets go as the pen speeds up (higher = less lag on fast
+// strokes), dcutoff (Hz) smooths the speed estimate itself. ?oe=4,0.2 in the address overrides mincutoff and beta
+// (?dbg=1 shows the pair), so she can tune it on the tablet. 4 and 0.2 come from tests/test_strokeq.py: the brief's
+// starting values (1 and 0.007, the paper's, made for screen px at mouse speeds) lagged 1.6 px behind slow writing and
+// cut the letter's turn by 2.5 px at 30 page px/s, and lagged 6 px behind a 600 page px/s line.
+export const OE = (() => {
+  const q = (new URLSearchParams(location.search).get('oe') || '').split(',').map(Number);
+  const ok = q.length === 2 && q[0] > 0 && q[0] <= 100 && q[1] >= 0 && q[1] <= 10;
+  return { mincutoff: ok ? q[0] : 4, beta: ok ? q[1] : 0.2, dcutoff: 1 };
+})();
 const SVGNS = 'http://www.w3.org/2000/svg';
 export const ERASE_REACH = 6;    // stroke eraser: px on screen around the pen (6 px at zoom 1)
 export const AREA_SIZE = 24;     // area eraser: circle diameter, px on screen (24 px at zoom 1)
 const MIN_STEP = 0.4;            // page px; the floor: the live step is one SCREEN px (pw-v7e), never less than this
-const SMOOTH = 0.5;              // pw-v7e: each pen sample pulls a smoothed point halfway to it (the S Pen's wobble on slow, small writing; her "washy" 30°, 29 Oct)
+const TIDY_EPS = 0.25;           // pw-v7i: on lift the kept points are simplified (RDP) to within this many page px
+const TIDY_GAP = 6;              // pw-v7i: ... but two kept points are never more than this far apart (page px) while a point between them exists
 const HOLD_PX = 4;               // snap: "still" means within 4 px on screen of where the pen settled
-const SNAP_MIN = 30;             // snap: a stroke shorter than this (page px) never snaps
+const SNAP_MIN = 30;             // snap: a stroke shorter than this (page px) only ever snaps to a line; also the arrow's shortest shaft
+const SNAP_LEN = 12;             // pw-v7i: a stroke shorter than this (page px, about 3 mm) never snaps (it was SNAP_MIN, 30)
 const SNAP_ANIM = 150;           // snap: the soft cross-fade, ms
 export const GRAB = 12;          // selection corners: px on screen (12 px at zoom 1)
 export const HANDLE_REACH = 20;  // shape handles (select tool): px on screen (20 px at zoom 1), a pen tip needs room
@@ -593,10 +613,10 @@ function bbox(pts) {
   for (const [x, y] of pts) { if (x < b[0]) b[0] = x; if (y < b[1]) b[1] = y; if (x > b[2]) b[2] = x; if (y > b[3]) b[3] = y; }
   return b;
 }
-// Ramer-Douglas-Peucker: the few points that keep the stroke's shape within eps
-function rdp(pts, eps) {
-  if (pts.length < 3) return pts.slice();
-  const keep = new Uint8Array(pts.length); keep[0] = keep[pts.length - 1] = 1;
+// Ramer-Douglas-Peucker: the few points that keep the stroke's shape within eps (rdpMask: which ones, 1 = kept)
+function rdpMask(pts, eps) {
+  const keep = new Uint8Array(pts.length).fill(pts.length < 3 ? 1 : 0); keep[0] = keep[pts.length - 1] = 1;
+  if (pts.length < 3) return keep;
   const todo = [[0, pts.length - 1]], e2 = eps * eps;
   while (todo.length) {
     const [i, j] = todo.pop();
@@ -604,11 +624,23 @@ function rdp(pts, eps) {
     for (let k = i + 1; k < j; k++) { const d2 = segDist2(pts[k][0], pts[k][1], pts[i], pts[j]); if (d2 > bd) { bd = d2; best = k; } }
     if (best > 0) { keep[best] = 1; todo.push([i, best], [best, j]); }
   }
+  return keep;
+}
+function rdp(pts, eps) {
+  if (pts.length < 3) return pts.slice();
+  const keep = rdpMask(pts, eps);
   return pts.filter((_, k) => keep[k]);
 }
-// every point within frac x the chord's length of the chord a-b
+// how far the path turns at b (a to b, then b to c), degrees 0 to 180
+function turnAt(a, b, c) {
+  const ax = b[0] - a[0], ay = b[1] - a[1], bx = c[0] - b[0], by = c[1] - b[1];
+  return Math.abs(Math.atan2(ax * by - ay * bx, ax * bx + ay * by)) * 180 / Math.PI;
+}
+// every point within frac x the chord's length of the chord a-b, and never less than 1.5 page px (pw-v7i: on a 15 px
+// line 6% is under 1 px, tighter than any hand; from 25 px on, 6% is the larger, so long strokes and arrow shafts,
+// which are at least SNAP_MIN, test exactly as before)
 function straight(pts, a, b, frac) {
-  const L = dist(a, b), lim = (frac * L) ** 2;
+  const L = dist(a, b), lim = Math.max(frac * L, 1.5) ** 2;
   return L > 0 && pts.every((q) => segDist2(q[0], q[1], a, b) <= lim);
 }
 // a closed polygon's corners: near points merged, nearly straight corners dropped
@@ -822,10 +854,13 @@ function headOk(tail, tip, u, L) {
 // A parabola leaves its two fit numbers in FIT (lastStroke().fit); every other answer leaves FIT null
 export function classify(raw) {
   FIT = null;
-  if (!raw || raw.length < 3 || polyLen(raw) < SNAP_MIN) return null;
+  const len = raw && raw.length >= 3 ? polyLen(raw) : 0;
+  if (len < SNAP_LEN) return null;                                // pw-v7i: from 12 page px on (it was 30)
   const b = bbox(raw), W = b[2] - b[0], H = b[3] - b[1], size = Math.hypot(W, H);
-  if (size < 10) return null;
+  if (size < 8) return null;                                       // pw-v7i: 8 (it was 10)
   const pts = rdp(raw, Math.max(0.75, 0.02 * size)), A = raw[0], Z = raw[raw.length - 1];
+  // pw-v7i: a short stroke (under SNAP_MIN) only ever becomes a line, so a small letter held still at its end stays ink
+  if (len < SNAP_MIN) return straight(raw, A, Z, 0.06) ? { type: 'line', x1: r1(A[0]), y1: r1(A[1]), x2: r1(Z[0]), y2: r1(Z[1]) } : null;
   // arrow: a straight shaft to the tip (the stroke's first sharp corner, tipIndex above), then a short tail that comes
   // back on both sides of the shaft (the V of the head)
   const ti = tipIndex(raw), shaft = ti < 0 ? 0 : dist(A, raw[ti]);
@@ -1293,6 +1328,46 @@ function eraseTo(cx, cy) {
   if (G.kind === 'area') showRing(cx, cy);
 }
 
+// pw-v7i: one pen sample through the One Euro filter (Casiez, Roussel and Vogel, CHI 2012). A low-pass filter whose
+// cutoff rises with the pen's speed: a slow pen (small writing, where the wobble lives) is smoothed hard, a fast one
+// hardly at all, so nothing trails behind the nib. f = { x, y, dx, dy, t }: the filtered point, its speed, the last time
+// (ms, the event's timeStamp). Two events with the same time (synthetic ones) count as one 240 Hz tick apart.
+const oeAlpha = (cutoff, dt) => 1 / (1 + 1 / (2 * Math.PI * cutoff * dt));
+function oneEuro(f, x, y, ts) {
+  const now = Number.isFinite(ts) ? ts : f.t + 1000 / 240;
+  let dt = (now - f.t) / 1000;
+  if (!(dt > 0.0005)) dt = 1 / 240;
+  f.t = now;
+  const ad = oeAlpha(OE.dcutoff, dt);                              // the speed, itself smoothed
+  f.dx += ad * ((x - f.x) / dt - f.dx); f.dy += ad * ((y - f.y) / dt - f.dy);
+  const a = oeAlpha(OE.mincutoff + OE.beta * Math.hypot(f.dx, f.dy), dt);
+  f.x += a * (x - f.x); f.y += a * (y - f.y);
+  return f;
+}
+// pw-v7i: a finished stroke's kept points, tidied. (1) The end hook goes: while the last point turns back by more than
+// 120 degrees and lies within 1 page px of the point before it, it is dropped (the lift sample lands behind the nib).
+// (2) RDP at TIDY_EPS drops the near-straight stair of points 0.5 px apart, rounded to 0.1 px, that made a slow line look
+// washy. (3) A corner that RDP keeps and that turns more than 90 degrees keeps its two neighbours too: pathD draws
+// through the midpoints, so with far neighbours it would cut the corner (a letter's turn lost up to 1 px in the test).
+// (4) Kept points stay at most TIDY_GAP apart (the middle point of a longer gap is kept, again and again): the same
+// midpoint drawing cut a gentle bend between two long straight runs by 1.7 px (tests/test_u2b.py, select all).
+function tidy(pts) {
+  const p = pts.slice();
+  while (p.length >= 3 && dist(p[p.length - 1], p[p.length - 2]) <= 1 && turnAt(p[p.length - 3], p[p.length - 2], p[p.length - 1]) > 120) p.pop();
+  if (p.length < 3) return p;
+  const keep = rdpMask(p, TIDY_EPS), idx = [];
+  for (let k = 0; k < p.length; k++) if (keep[k]) idx.push(k);
+  for (let i = 1; i < idx.length - 1; i++) {
+    if (turnAt(p[idx[i - 1]], p[idx[i]], p[idx[i + 1]]) > 90) keep[idx[i] - 1] = keep[idx[i] + 1] = 1;
+  }
+  const gaps = [];
+  for (let k = 0, last = 0; k < p.length; k++) if (keep[k] && k > last) { gaps.push([last, k]); last = k; }
+  while (gaps.length) {
+    const [i, j] = gaps.pop();
+    if (j - i > 1 && dist(p[i], p[j]) > TIDY_GAP) { const m = (i + j) >> 1; keep[m] = 1; gaps.push([i, m], [m, j]); }
+  }
+  return p.filter((_, k) => keep[k]);
+}
 // the pen held still: rearm the snap timer whenever the pen settles somewhere new
 function armHold(cx, cy) {
   clearTimeout(G.holdT);
@@ -1338,8 +1413,9 @@ function down(e) {
     const el = makeEl(rec);
     groupFor(d, rec).appendChild(el);                              // newest, so last in its group
     G = { kind: 'draw', index: at.index, page: at.id, rec, el, holdT: 0, anchor: null, pt: e.pointerType || 'mouse', z: view().z,
-          sm: [at.x, at.y], lastRaw: null, rawPts: [[r1(at.x), r1(at.y)]] };   // pw-v7e: the smoothed pen point (unrounded), the last raw
-                                                                   // one, and the raw path as before (MIN_STEP apart) for the snap
+          oe: { x: at.x, y: at.y, dx: 0, dy: 0, t: e.timeStamp }, lastRaw: null, rawPts: [[r1(at.x), r1(at.y)]] };
+    // pw-v7i: oe is the One Euro filter's state (the filtered pen point, unrounded, its speed in page px/s, the last event's
+    // time); lastRaw the last raw pen point; rawPts the raw path as before (MIN_STEP apart) for the snap
     armHold(e.clientX, e.clientY);                                 // pen and highlighter both snap when held
     return true;
   }
@@ -1424,8 +1500,8 @@ function move(events) {
       G.lastRaw = [x, y];
       const lr = G.rawPts[G.rawPts.length - 1];                    // pw-v7e: the raw path, kept exactly as before, for classify
       if (Math.hypot(x - lr[0], y - lr[1]) >= MIN_STEP) G.rawPts.push([r1(x), r1(y)]);
-      G.sm = [G.sm[0] + (x - G.sm[0]) * SMOOTH, G.sm[1] + (y - G.sm[1]) * SMOOTH];   // pw-v7e: the smoothed point is what is kept
-      if (Math.hypot(G.sm[0] - l[0], G.sm[1] - l[1]) >= step) pts.push([r1(G.sm[0]), r1(G.sm[1])]);
+      const f = oneEuro(G.oe, x, y, e.timeStamp);                  // pw-v7i: the filtered point is what is kept
+      if (Math.hypot(f.x - l[0], f.y - l[1]) >= step) pts.push([r1(f.x), r1(f.y)]);
       if (G.anchor && Math.hypot(e.clientX - G.anchor[0], e.clientY - G.anchor[1]) > HOLD_PX) armHold(e.clientX, e.clientY);
     }
     G.el.setAttribute('d', pathD(pts));
@@ -1478,16 +1554,17 @@ function up(e, cancelled) {
   if (!g) return;
   if (g.kind === 'draw' || g.kind === 'snapped') {
     clearTimeout(g.holdT);
+    let lag = null;
     if (g.kind === 'draw' && g.lastRaw) {                          // pw-v7e: the stroke reaches where the pen lifted (a tap keeps its one point)
       const pts = g.rec.data.points, l = pts[pts.length - 1], step = Math.max(MIN_STEP, 1 / g.z);
-      if (Math.hypot(g.lastRaw[0] - l[0], g.lastRaw[1] - l[1]) > step) {
-        pts.push([r1(g.lastRaw[0]), r1(g.lastRaw[1])]);
-        g.el.setAttribute('d', pathD(pts));
-      }
+      lag = Math.round(Math.hypot(g.lastRaw[0] - g.oe.x, g.lastRaw[1] - g.oe.y) * 100) / 100;   // pw-v7i: how far the filter trailed the pen
+      if (Math.hypot(g.lastRaw[0] - l[0], g.lastRaw[1] - l[1]) > step) pts.push([r1(g.lastRaw[0]), r1(g.lastRaw[1])]);
+      g.rec.data.points = tidy(pts);                               // pw-v7i: the end hook goes, the near-straight stair goes
+      g.el.setAttribute('d', pathD(g.rec.data.points));
     }
     const points = (g.raw || g.rawPts).map((p) => [p[0], p[1]]), c = classify(points);   // a snapped stroke keeps its freehand points in g.raw; pw-v7e: the pen's raw path
     LAST = { points, pointerType: g.pt || 'mouse', z: g.z, n: points.length, len: Math.round(polyLen(points) * 10) / 10,
-      classify: c ? c.type : null, snapped: g.kind === 'snapped', at: Date.now() };
+      classify: c ? c.type : null, snapped: g.kind === 'snapped', at: Date.now(), lag };
     if (FIT) LAST.fit = { ...FIT };                                 // a parabola: its fit and the arc's (pw-v4s)
     g.rec.seq = Date.now();
     data(g.page).els.set(g.rec.id, g.el);

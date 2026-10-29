@@ -260,7 +260,7 @@ try:
         pen_tint = pg.evaluate("(() => { document.getElementById('tool-pen').click(); return getComputedStyle(document.getElementById('tool-pen')).backgroundColor; })()")
         check("restyle selected shows the same soft tint as the pen", on == ["restyle"] and tint == pen_tint and tint != "rgba(0, 0, 0, 0)", [on, tint, pen_tint])
         check("tray still fits (no tray scroll)", pg.evaluate("(() => { const t = document.getElementById('tray'); return t.scrollHeight <= t.clientHeight; })()"))
-        check("HOLD_MS default is 500", pg.evaluate("import('./js/ink.js').then(m => m.HOLD_MS)") == 500)
+        check("HOLD_MS default is 350 (pw-v7i, her number; it was 500)", pg.evaluate("import('./js/ink.js').then(m => m.HOLD_MS)") == 350)
 
         # ------------------------------------------------------------ hold-to-snap
         group[0] = "snap"
@@ -322,7 +322,7 @@ try:
         draw(pg, 1, [(450, 1040), (700, 1042)], steps=8, hold=250)
         check("a straight stroke held only 250 ms: stays pen", last(pg, "p1")["kind"] == "pen")
         draw(pg, 1, [(30, 60), (40, 62)], steps=4, hold=650)
-        check("a short stroke (under 30 px) held: stays pen", last(pg, "p1")["kind"] == "pen")
+        check("a short stroke (10 px, under the 12 px of pw-v7i; it was 30) held: stays pen", last(pg, "p1")["kind"] == "pen")
         tool(pg, "highlighter")
         draw(pg, 1, [(450, 120), (720, 124)], steps=8, hold=650)
         check("a highlighter stroke held: snaps too now (fix round point 3)", last(pg, "p1")["kind"] == "shape" and last(pg, "p1")["style"]["opacity"] < 1, last(pg, "p1"))
@@ -2840,7 +2840,7 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v7h", "pw-v7h" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v7i", "pw-v7i" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)

@@ -15,6 +15,7 @@
 // pw-v7b: #dbgView has a second line, "resize <n> | fit <n> (<last cause>) | lock on/off" (page.js viewStats()): the
 // window resizes seen and the zoom resets, so the next "the page shot back" can be read off the screen. The boxes sit
 // 64 px in from the left, clear of the zoom lock chip (bottom-left, 12 + 44 px).
+// pw-v7i: that second line ends with "| oe <mincutoff> <beta>", the pen filter's pair (ink.OE; ?oe= in the address sets it).
 import { view, deskScroll, viewStats } from './page.js';
 
 const KEEP = 4;                                   // the last event and the three before it
@@ -75,7 +76,8 @@ export function startDbg(desk, ink) {
     const dx = sr.left - dr.left - v.x, dy = sr.top - dr.top - v.y;
     const s = viewStats();
     vbox.textContent = `scroll ${st} ${sl} | view ${v.x.toFixed(0)} ${v.y.toFixed(0)} z${v.z.toFixed(2)} | drift ${dx.toFixed(0)} ${dy.toFixed(0)}`
-      + `\nresize ${s.resizes} | fit ${s.fits} (${s.cause || 'none'}) | lock ${s.lock ? 'on' : 'off'}`;
+      + `\nresize ${s.resizes} | fit ${s.fits} (${s.cause || 'none'}) | lock ${s.lock ? 'on' : 'off'}`
+      + (ink && ink.OE ? ` | oe ${ink.OE.mincutoff} ${ink.OE.beta}` : '');
   };
   const tick = () => { showView(); paint(); };
   tick(); setInterval(tick, 250);

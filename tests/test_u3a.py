@@ -289,9 +289,9 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v7h" not in keys:
+        if "pw-v7i" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v7h", "pw-v7h" in keys, keys)
+        check("cache is pw-v7i", "pw-v7i" in keys, keys)
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the shell lists ./js/store.js, not store-local.js", "./js/store.js" in swt and "store-local" not in swt)
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in
