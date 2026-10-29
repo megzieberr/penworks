@@ -43,6 +43,8 @@
 # Duplicate chip (pw-v4o): a third chip (+, aria-label Duplicate) between Copy and Delete copies the selection 24 px right
 # and down, kept inside the page, selected, one undo step, the clipboard untouched; the "two chips" checks in "select" and
 # "select polish (pw-v4j)" now expect Copy, Duplicate, Delete. The "duplicate chip (pw-v4o)" group.
+# Cut chip (pw-v7l): a fourth chip (scissors, aria-label Cut) after Copy; the chip checks now expect Copy, Cut, Duplicate,
+# Delete and four chips inside the viewport. Cut itself (and the phone width) is checked in tests/test_cut.py.
 # Select all (pw-v4p): the finger hold menu has two items, Select all (disabled "Nothing to select" on an empty page)
 # then Paste; Select all selects every record on that page, select tool on, no undo step. The clipboard group's menu
 # checks now expect two items (and tap Paste by its label). The "select all (pw-v4p)" group.
@@ -568,7 +570,7 @@ try:
         check("a box around two of three: those two are selected", sl and sorted(sl["ids"]) == sorted([A, B]), sl)
         ui = selui(pg)
         check("a dashed blue box with four corner handles", ui["box"] and ui["dash"] and ui["corners"] == 4, ui)
-        check("three chips above it: Copy, Duplicate and Delete (pw-v4o)", ui["chips"] == ["Copy", "Duplicate", "Delete"] and ui["chipsShown"], ui)
+        check("four chips above it: Copy, Cut, Duplicate and Delete (pw-v7l)", ui["chips"] == ["Copy", "Cut", "Duplicate", "Delete"] and ui["chipsShown"], ui)
         cb = pg.locator(".selChips").bounding_box(); bb = pg.locator("svg.ink g.sel rect.selbox").bounding_box()
         check("the chips sit above the box", cb["y"] + cb["height"] <= bb["y"] + 1, [cb, bb])
         check("selecting is not an undo step", U(pg) == u0)
@@ -1644,7 +1646,7 @@ try:
                   abs(rg[0] - (bx[0] + bx[2]) / 2) < 0.2 and abs(((bx[1] - 4 / z) - rg[1]) * z - 28) < 0.3 and abs(rg[2] - cr[0][2]) < 1e-6, [rg, bx, z, cr[0]])
             rx_, ry_ = screen(pg, 1, rg[0], rg[1])
             hit = pg.evaluate("([x, y]) => { const e = document.elementFromPoint(x, y); return e ? !!e.closest('button') : true; }", [rx_, ry_])
-            check("the Copy and Delete chips never cover the ring (they move right of it on a narrow box)", not hit)
+            check("the four chips never cover the ring (they move right of it on a narrow box)", not hit)
         u0 = U(pg)
         c = turn_sel(40)
         P1 = by_id()["r1"]["data"]["points"]; exp = [rot_about(q, c, 40) for q in R0]
@@ -1895,9 +1897,9 @@ try:
 
             # the chips are icons
             cs = pg.evaluate(CHIP_JS)
-            check("three chips, copy, duplicate, delete, no words, one svg each, aria-label and title Copy / Duplicate / Delete (pw-v4o)",
-                  [c_["act"] for c_ in cs] == ["copy", "duplicate", "delete"] and all(c_["text"] == "" and c_["svgs"] == 1 for c_ in cs)
-                  and [c_["label"] for c_ in cs] == ["Copy", "Duplicate", "Delete"] and [c_["title"] for c_ in cs] == ["Copy", "Duplicate", "Delete"], cs)
+            check("four chips, copy, cut, duplicate, delete, no words, one svg each, aria-label and title Copy / Cut / Duplicate / Delete (pw-v7l)",
+                  [c_["act"] for c_ in cs] == ["copy", "cut", "duplicate", "delete"] and all(c_["text"] == "" and c_["svgs"] == 1 for c_ in cs)
+                  and [c_["label"] for c_ in cs] == ["Copy", "Cut", "Duplicate", "Delete"] and [c_["title"] for c_ in cs] == ["Copy", "Cut", "Duplicate", "Delete"], cs)
             check("each chip is a 38 px round button", all(c_["w"] == 38 and c_["h"] == 38 and c_["round"] == "50%" for c_ in cs), cs)
             n1 = len(strokes(pg, "p4"))
             pg.locator(".selChips .chip[aria-label='Copy']").click(); pg.wait_for_timeout(30)
@@ -2148,7 +2150,7 @@ try:
                 for x, y in r["data"]["points"]: b_ = [min(b_[0], x - w), min(b_[1], y - w), max(b_[2], x + w), max(b_[3], y + w)]
             return b_
 
-        # 1: three chips, Copy, Duplicate, Delete
+        # 1: four chips, Copy, Cut, Duplicate, Delete (pw-v7l: Cut after Copy)
         draw(pg, 1, [(150, 200), (250, 220), (350, 200)])
         draw(pg, 1, [(150, 280), (250, 300), (350, 280)])
         draw(pg, 1, [(150, 600), (250, 620), (350, 600)])
@@ -2156,8 +2158,8 @@ try:
         tool(pg, "select")
         drag_page(pg, 1, (120, 170), (380, 330))
         ch = pg.evaluate(CHIPS_JS)
-        check("two strokes selected: three chips, aria-labels in order Copy, Duplicate, Delete",
-              selids() == sorted([A, B]) and ch and ch["n"] == 3 and ch["labels"] == ["Copy", "Duplicate", "Delete"] and ch["acts"] == ["copy", "duplicate", "delete"], [sel(pg), ch])
+        check("two strokes selected: four chips, aria-labels in order Copy, Cut, Duplicate, Delete (pw-v7l)",
+              selids() == sorted([A, B]) and ch and ch["n"] == 4 and ch["labels"] == ["Copy", "Cut", "Duplicate", "Delete"] and ch["acts"] == ["copy", "cut", "duplicate", "delete"], [sel(pg), ch])
         ds = pg.evaluate(DUPSTYLE_JS)
         check("the Duplicate chip looks like the Copy chip (colours, size, round, icon stroke and size), one svg, no words, title Duplicate",
               ds and ds["dup"] == ds["copy"] and ds["svgs"] == 1 and ds["text"] == "" and ds["title"] == "Duplicate", ds)
@@ -2216,10 +2218,10 @@ try:
         check("... moved 24 px up and left instead (the plain +24 would leave the page; a copy never lands on itself), selected", len(cn) == 1 and moved(pre["dc1"]["data"]["points"], cn[0]["data"]["points"], -24) and selids() == [cn[0]["id"]], [cn and cn[0]["data"]["points"]])
         undo(pg)
 
-        # 6: three chips stay inside the viewport near the right edge and near the page top (the ring flip case)
+        # 6: the four chips (pw-v7l) stay inside the viewport near the right edge and near the page top (the ring flip case)
         pg.evaluate(PUTD_JS, ["p4", [{"id": "dr1", "page_id": "p4", "seq": int(time.time() * 1000) + 6, "kind": "pen", "style": st2, "data": {"points": [[780, 480], [782, 540], [784, 600]]}},
                                      {"id": "dt1", "page_id": "p4", "seq": int(time.time() * 1000) + 7, "kind": "pen", "style": st2, "data": {"points": [[200, 8], [300, 30], [400, 12]]}}]])
-        def inside(c_): return c_ and c_["n"] == 3 and c_["left"] >= 0 and c_["top"] >= 0 and c_["right"] <= c_["vw"] and c_["bottom"] <= c_["vh"]
+        def inside(c_): return c_ and c_["n"] == 4 and c_["left"] >= 0 and c_["top"] >= 0 and c_["right"] <= c_["vw"] and c_["bottom"] <= c_["vh"]
         def ring_free():
             rg = pg.evaluate(RINGD_JS)
             if not rg: return False
@@ -2228,12 +2230,12 @@ try:
         tap_page(pg, 1, 400, 900)
         drag_page(pg, 1, (770, 470), (792, 610))
         c6 = pg.evaluate(CHIPS_JS)
-        check("near the right edge: the narrow stroke is selected, three chips inside the viewport", selids() == ["dr1"] and inside(c6), [sel(pg), c6])
-        check("near the right edge: the three chips do not cover the turn ring", ring_free())
+        check("near the right edge: the narrow stroke is selected, four chips inside the viewport", selids() == ["dr1"] and inside(c6), [sel(pg), c6])
+        check("near the right edge: the four chips do not cover the turn ring", ring_free())
         tap_page(pg, 1, 400, 900)
         drag_page(pg, 1, (180, 2), (420, 60))
         c7 = pg.evaluate(CHIPS_JS); rg7 = pg.evaluate(RINGD_JS); bx7 = sel(pg)["box"] if sel(pg) else None
-        check("near the page top: the ring flips below the box, three chips inside the viewport",
+        check("near the page top: the ring flips below the box, four chips inside the viewport",
               selids() == ["dt1"] and rg7 and bx7 and rg7[1] > bx7[3] and inside(c7), [sel(pg), c7, rg7, bx7])
         check("no page errors in the duplicate chip group", not e25, e25)
         ctx.close()
@@ -2285,8 +2287,8 @@ try:
         check("Select all: the tool is select and the tray's select button is lit", tool_now() == "select" and tray_on("select") and not tray_on("pen"))
         check("Select all: the menu is closed", not menu()["shown"])
         check("Select all: no undo step", U(pg) == u0, [U(pg), u0])
-        check("Select all: the box, its corners, the three chips (Copy, Duplicate, Delete) and the turn ring are shown",
-              ui1["box"] and ui1["corners"] == 4 and ui1["chips"] == ["Copy", "Duplicate", "Delete"] and ui1["chipsShown"] and pg.evaluate(RING_JS) == 1, ui1)
+        check("Select all: the box, its corners, the four chips (Copy, Cut, Duplicate, Delete) and the turn ring are shown",
+              ui1["box"] and ui1["corners"] == 4 and ui1["chips"] == ["Copy", "Cut", "Duplicate", "Delete"] and ui1["chipsShown"] and pg.evaluate(RING_JS) == 1, ui1)
         bx = s1["box"] if s1 else None
         wd = {r["id"]: r["style"]["width"] / 2 for r in strokes(pg, "p4")}
         eb = [[e["b"][0] - wd[e["id"]], e["b"][1] - wd[e["id"]], e["b"][2] + wd[e["id"]], e["b"][3] + wd[e["id"]]] for e in pg.evaluate(ELBOX_JS, 1) if e["id"] in wd]
@@ -2840,7 +2842,7 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v7k", "pw-v7k" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v7l", "pw-v7l" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)

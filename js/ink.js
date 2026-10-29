@@ -41,6 +41,9 @@
 // lastStroke() returns it; ?dbg=1 shows and copies it (js/dbg.js), so a real pen stroke can be caught on the tablet.
 // Duplicate chip (pw-v4o): a + chip between Copy and Delete puts a copy of the selection 24 px right and down (kept inside
 // the page), selected, as one undo step; the clipboard is not touched.
+// Cut chip (pw-v7l, her ask 29 Oct): a scissors chip after Copy (Copy, Cut, Duplicate, Delete) puts the selection on the
+// clipboard as Copy does and takes its strokes off the page as Delete does, one undo step, toast "Cut."; Paste as before.
+// The chips are kept inside the desk (a phone is 375 px wide, four chips are 170 px), still clear of the turn ring.
 // Select all (pw-v4p): the finger hold menu has Select all above Paste; it selects every stroke on the page under the finger.
 // Parabola snap (pw-v4s): an open curve with one turn whose arms straighten, held still, snaps into a parabola, data
 // { type: 'parabola', x1, y1, cx, cy, x2, y2 }: a quadratic Bezier (start, control, end; drawn M x1 y1 Q cx cy x2 y2), which
@@ -115,9 +118,10 @@ let ring = null, hring = null, deskEl = null, deskBox = null;
 let SEL = null;                  // the selection: { page, ids, g, chips, deg, z }
 let CLIP = null;                 // the selection clipboard: { recs (deep copies, by seq), box (their selBox) }
 let toast = null, openMenuAt = null, selectTool = null;   // optional, from app.js: a toast, the menu at a point, the tray's select tool
-// the chips' three icons (the same drawing style as SVG_BIN in js/app.js)
+// the chips' four icons (the same drawing style as SVG_BIN in js/app.js)
 const ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">';
 const SVG_COPY = ICON + '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>';
+const SVG_CUT = ICON + '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.3 8L20 18M8.3 16L20 6"/></svg>';   // scissors: two loops, two crossed blades
 const SVG_PLUS = ICON + '<path d="M12 5v14M5 12h14"/></svg>';
 const SVG_BIN = ICON + '<path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13"/></svg>';
 
@@ -1073,10 +1077,20 @@ function renderSel(t) {                          // t: a live transform while dr
 function placeChips(m) {                         // m: [s, ox, oy, dx, dy] while dragging, so the chips ride along
   let [x0, y0] = SEL.box, rx = SEL.rot && SEL.rot[1] < SEL.box[1] ? SEL.rot[0] : Infinity;   // only a ring ABOVE the box crowds the chips (Infinity: nothing to dodge)
   if (m) { const [s, ox, oy, dx, dy] = m; x0 = ox + (x0 - ox) * s + dx; y0 = oy + (y0 - oy) * s + dy; rx = ox + (rx - ox) * s + dx; }
-  const c = SEL.chips, gap = 14 / SEL.z;
-  if (x0 + c.offsetWidth / SEL.z > rx - gap) x0 = rx + gap;      // they would cover the turn ring: they start just right of it
+  const c = SEL.chips, z = SEL.z, gap = 14 / z, w = c.offsetWidth / z;
+  if (x0 + w > rx - gap) x0 = rx + gap;      // they would cover the turn ring: they start just right of it
   c.style.left = f1(x0) + 'px'; c.style.top = f1(y0) + 'px';
-  c.style.transform = `scale(${1 / SEL.z}) translateY(calc(-100% - 8px))`;
+  c.style.transform = `scale(${1 / z}) translateY(calc(-100% - 8px))`;
+  // pw-v7l: the four chips are 170 px wide on screen, so on a phone they would run off the desk beside a selection near the
+  // page's right edge: they are pulled back inside the desk (8 px in); pulled back over the ring, they sit just left of it
+  // (or, with no room there, just right of it)
+  if (!deskEl || !c.isConnected) return;
+  const d = deskEl.getBoundingClientRect(), r = c.getBoundingClientRect(), M = 8;
+  const lo = x0 + (d.left + M - r.left) / z, hi = x0 + (d.right - M - r.right) / z;   // where x0 may go, the chips inside the desk
+  let nx = Math.max(Math.min(x0, hi), lo);
+  if (nx === x0) return;
+  if (nx < rx + gap && nx + w > rx - gap) nx = rx - gap - w >= lo ? rx - gap - w : rx + gap;
+  c.style.left = f1(nx) + 'px';
 }
 function syncSel() {
   const d = data(SEL.page);
@@ -1095,7 +1109,8 @@ function makeSel(page, ids) {
     btn.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
     chips.appendChild(btn);
   };
-  chip('copy', 'Copy', SVG_COPY, copySel); chip('duplicate', 'Duplicate', SVG_PLUS, duplicateSel); chip('delete', 'Delete', SVG_BIN, deleteSel);
+  chip('copy', 'Copy', SVG_COPY, copySel); chip('cut', 'Cut', SVG_CUT, cutSel);
+  chip('duplicate', 'Duplicate', SVG_PLUS, duplicateSel); chip('delete', 'Delete', SVG_BIN, deleteSel);
   const deg = document.createElement('div'); deg.className = 'selDeg';   // the turn's degrees, shown only while turning
   SEL = { page, ids: new Set(ids), g, chips, deg, z: 0, box: null, rot: null, live: null };
   renderSel();
@@ -1107,6 +1122,17 @@ function copySel() {
   if (!recs.length) return;
   CLIP = { recs: JSON.parse(JSON.stringify(recs)), box: selBox(recs) };
   if (toast) toast('Copied.');
+}
+// Cut (pw-v7l): Copy, then Delete. The selection goes on the clipboard exactly as Copy puts it there, then its strokes
+// come off the page as one undo step (undo brings them back, the clipboard keeps them); Paste puts them anywhere after
+function cutSel() {
+  if (!SEL) return;
+  const page = SEL.page, recs = selRecs().sort(bySeq);
+  if (!recs.length) return;
+  CLIP = { recs: JSON.parse(JSON.stringify(recs)), box: selBox(recs) };
+  clearSelection();
+  doOp(changeOp([{ page, removed: recs, added: [] }]));
+  if (toast) toast('Cut.');
 }
 export function hasClip() { return !!CLIP; }
 // Paste: the clipboard's strokes on page pageId, the box's centre on (x, y) (page px), nudged inside the page where

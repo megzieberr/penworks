@@ -281,9 +281,9 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v7k" not in keys:
+        if "pw-v7l" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v7k", "pw-v7k" in keys, keys)
+        check("cache is pw-v7l", "pw-v7l" in keys, keys)
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/app.js", "./css/app.css", "./sw.js", "./tests/test_share.py"])
         check("no em-dashes in the changed files", chr(0x2014) not in srcs)
         labels = ["Send", "Save", "Share note", "Share page", "Shared", "Could not open the share sheet, Save instead", "Ready: "]

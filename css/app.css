@@ -299,7 +299,7 @@ input.rename {
   position: absolute; left: -8px; top: -8px; width: 16px; height: 16px; z-index: 4; border-radius: 50%; pointer-events: none;
   border: 2px solid #2F4BB8; background: rgba(255,255,255,.6); box-shadow: 0 0 0 1px rgba(255,255,255,.8);
 }
-/* the selection's two chips above its dashed box (on the white paper, so fixed colours in both modes) */
+/* the selection's four chips (Copy, Cut, Duplicate, Delete) above its dashed box (on the white paper, so fixed colours in both modes) */
 .selChips { position: absolute; z-index: 3; display: flex; gap: 6px; transform-origin: 0 0; white-space: nowrap; }
 .selChips .chip {   /* pw-v4j: a round icon button, the word in aria-label and title */
   width: 38px; height: 38px; padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center; background: #2F4BB8;
