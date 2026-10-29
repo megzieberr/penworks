@@ -261,6 +261,10 @@ const liveApi = {
   // filter DELETE events (a filter on owner_id would never match an old row that holds only the id), so that listener has
   // no filter: an id that is not one of hers matches no stroke on this device and is ignored. The socket carries her
   // login (setAuth), so RLS sees her. Answers { unsubscribe }.
+  // Round 6b (pw-v7h): the same channel also carries her notes and pages rows to h.onTree(table, type, row): INSERT and
+  // UPDATE filtered to her rows (the whole new row), DELETE unfiltered (only old.id, as for strokes). The database
+  // publishes notes and pages on supabase_realtime; folders are not published, so a folder change still waits for the
+  // tree refresh.
   subscribeStrokes(userId, h) {
     let ch = null, dead = false;
     (async () => {
@@ -273,8 +277,17 @@ const liveApi = {
       const where = { schema: 'public', table: 'strokes' };
       ch = c.channel('strokes:' + userId)
         .on('postgres_changes', { ...where, event: 'INSERT', filter: 'owner_id=eq.' + userId }, (p) => h.onRow('INSERT', p.new))
-        .on('postgres_changes', { ...where, event: 'DELETE' }, (p) => h.onRow('DELETE', p.old))
-        .subscribe((status) => { if (!dead) h.onStatus(status); });
+        .on('postgres_changes', { ...where, event: 'DELETE' }, (p) => h.onRow('DELETE', p.old));
+      if (h.onTree) {
+        for (const table of ['notes', 'pages']) {
+          const t = { schema: 'public', table };
+          ch = ch
+            .on('postgres_changes', { ...t, event: 'INSERT', filter: 'owner_id=eq.' + userId }, (p) => h.onTree(table, 'INSERT', p.new))
+            .on('postgres_changes', { ...t, event: 'UPDATE', filter: 'owner_id=eq.' + userId }, (p) => h.onTree(table, 'UPDATE', p.new))
+            .on('postgres_changes', { ...t, event: 'DELETE' }, (p) => h.onTree(table, 'DELETE', p.old));
+        }
+      }
+      ch.subscribe((status) => { if (!dead) h.onStatus(status); });
     })().catch(() => { if (!dead) h.onStatus('CHANNEL_ERROR'); });
     return {
       unsubscribe() {

@@ -8,13 +8,16 @@
 // (the first one too: rows written between load() and the subscribe) and every time the app comes back to the front,
 // onGap() runs (app.js: store.reconcile of the open note's pages). On `online` and on coming back to the front, a
 // channel that is not subscribed is opened again.
+// Round 6b (pw-v7h): the same channel carries her notes and pages rows too; each goes to onTree(table, type, row)
+// (app.js remoteTree decides whether the tree is read again). onGap(why) says why it runs: 'first' (the first
+// subscribe), 'drop' (a subscribe after a dropped channel: tree rows may have been missed too) or 'front'.
 
-const L = { api: null, userId: null, onRow: () => {}, onGap: () => {} };
+const L = { api: null, userId: null, onRow: () => {}, onTree: () => {}, onGap: () => {} };
 let handle = null;          // the open subscription: { unsubscribe }
 let st = 'closed';          // subscribed | closed | error
 let dropped = true;         // the next SUBSCRIBED follows a gap (true at start)
-let on = false, wired = false;
-const stats = { subscribes: 0, gaps: 0, rows: 0 };
+let on = false, wired = false, first = true;
+const stats = { subscribes: 0, gaps: 0, rows: 0, tree: 0 };
 
 export function initLive(o) {
   Object.assign(L, o);
@@ -31,7 +34,7 @@ export function initLive(o) {
 function front() {
   if (!on) return;
   if (st !== 'subscribed') open();
-  gap();
+  gap('front');
 }
 
 function open() {
@@ -45,6 +48,11 @@ function open() {
       stats.rows++;
       try { L.onRow(type, row); } catch (e) { console.warn('PenWorks: a live stroke could not be shown', e); }
     },
+    onTree: (table, type, row) => {
+      if (!on || handle !== me) return;
+      stats.tree++;
+      try { L.onTree(table, type, row); } catch (e) { console.warn('PenWorks: a live note or page could not be shown', e); }
+    },
     onStatus: (s) => { if (handle === me) status(s); },
   };
   try { me = L.api.subscribeStrokes(L.userId, h); }
@@ -56,16 +64,16 @@ function status(s) {
   if (s === 'SUBSCRIBED') {
     const gapBefore = dropped;
     st = 'subscribed'; dropped = false;
-    if (gapBefore) gap();
+    if (gapBefore) { gap(first ? 'first' : 'drop'); first = false; }
     return;
   }
   st = s === 'CLOSED' ? 'closed' : 'error';     // CHANNEL_ERROR, TIMED_OUT
   dropped = true;
 }
 
-function gap() {
+function gap(why) {
   stats.gaps++;
-  try { L.onGap(); } catch (_) { /* the next trigger tries again */ }
+  try { L.onGap(why); } catch (_) { /* the next trigger tries again */ }
 }
 
 // logout: the channel closes and stays closed

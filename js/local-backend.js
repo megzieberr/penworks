@@ -83,6 +83,29 @@ function maybeFail() {
 const storage = new Map();   // the snapshots bucket: path -> Blob
 let reads = 0;
 const bus = new EventTarget();   // U3d: the twin's Realtime
+// Round 6b (pw-v7h): the twin's Realtime for notes and pages, as the database's publication sends them: every write
+// that lands (an insert, an update, a delete, a picture, a cover, and the note a page insert or page edit touches) goes
+// to every open subscription's onTree(table, type, row), a DELETE as { id } only. This device's own writes come back
+// the same way, as they do from the database. Switched on by localStorage penworks.local.livetree = '1' (the tests set
+// it): off, a test's direct write stays quiet until a tree refresh, which the suites written before 6b rely on.
+const LIVE_TREE = 'penworks.local.livetree';
+function liveTree() { try { return localStorage.getItem(LIVE_TREE) === '1'; } catch (_) { return false; } }
+function tell(table, type, rows) {
+  if (!liveTree() || (table !== 'notes' && table !== 'pages')) return;
+  for (const r of rows) {
+    const row = type === 'DELETE' ? { id: r.id } : clone(r);
+    setTimeout(() => bus.dispatchEvent(new CustomEvent('tree', { detail: { table, type, row } })), 0);
+  }
+}
+const notesOf = (d, ids) => { const set = new Set(ids); return d.notes.filter((n) => set.has(n.id)); };
+// a stroke pushed or removed: the database's touch triggers update the page and then its note, and both are published
+// (the twin's notes keep their updated_at here, as touchPages always did; only the events are sent)
+function echoTouch(d, pageIds, now) {
+  if (!liveTree() || !pageIds.length) return;
+  const set = new Set(pageIds), pages = d.pages.filter((p) => set.has(p.id));
+  tell('pages', 'UPDATE', pages);
+  tell('notes', 'UPDATE', notesOf(d, pages.map((p) => p.note_id)).map((n) => ({ ...n, updated_at: now })));
+}
 let refuseNext = 0; // test hook: the next n writes (stroke pushes and tree writes) are refused the way RLS refuses them (code 42501)
 function maybeRefuse(table = 'strokes') {
   if (refuseNext > 0) { refuseNext--; refuse(`new row violates row-level security policy for table "${table}"`, '42501'); }
@@ -155,6 +178,8 @@ export const localApi = {
     if (table === 'pages') touchNotes(d, [r.note_id], now);
     write(d);
     logged('insert', table, [id]);
+    tell(table, 'INSERT', [r]);
+    if (table === 'pages') tell('notes', 'UPDATE', notesOf(d, [r.note_id]));
     return clone(r);
   },
 
@@ -169,6 +194,8 @@ export const localApi = {
     });
     if (table === 'pages' && PAGE_EDIT.some((k) => k in patch)) touchNotes(d, hit.map((r) => r.note_id), now);
     write(d);
+    tell(table, 'UPDATE', hit);
+    if (table === 'pages' && PAGE_EDIT.some((k) => k in patch)) tell('notes', 'UPDATE', notesOf(d, hit.map((r) => r.note_id)));
     if (hit.length !== set.size) throw new Error('Not every row was saved');   // the rows it found took the patch, as in the database
     logged('update', table, [...set]);
   },
@@ -181,9 +208,13 @@ export const localApi = {
       d.folders.forEach((f) => { if (set.has(f.parent_id)) set.add(f.id); });
       d.notes.forEach((n) => { if (set.has(n.folder_id)) n.folder_id = null; });
     }
+    const cascade = table === 'notes' ? d.pages.filter((p) => set.has(p.note_id)) : [];
+    const goneRows = d[table].filter((r) => set.has(r.id));
+    const touched = table === 'pages' ? goneRows.map((p) => p.note_id) : [];
     if (table === 'notes') d.pages = d.pages.filter((p) => !set.has(p.note_id));
-    if (table === 'pages') touchNotes(d, d.pages.filter((p) => set.has(p.id)).map((p) => p.note_id), now);
+    if (table === 'pages') touchNotes(d, touched, now);
     d[table] = d[table].filter((r) => !set.has(r.id));
+    tell(table, 'DELETE', goneRows); tell('pages', 'DELETE', cascade); tell('notes', 'UPDATE', notesOf(d, touched));
     if (table === 'pages' || table === 'notes') dropStrokes(d);
     write(d);
     logged('remove', table, [...ids]);
@@ -206,6 +237,7 @@ export const localApi = {
       d.strokes = d.strokes.filter((s) => !rm.has(s.id));
       touchPages(d, hit.map((s) => s.page_id), now);
       write(d);
+      echoTouch(d, hit.map((s) => s.page_id), now);
     }
     if (added.length) {
       const d = read(), pages = new Set(d.pages.map((p) => p.id)), have = new Set(d.strokes.map((s) => s.id));
@@ -216,6 +248,7 @@ export const localApi = {
       d.strokes.push(...rows);
       touchPages(d, rows.map((s) => s.page_id), now);
       write(d);
+      echoTouch(d, rows.map((s) => s.page_id), now);
     }
     logged('putStrokes', 'strokes', [...new Set(added.map((r) => r.page_id))]);
   },
@@ -242,6 +275,7 @@ export const localApi = {
     const now = new Date().toISOString();
     p.snapshot_path = path; p.snapshot_at = now; p.updated_at = now;      // not a note edit: touch_note fires only when an update names position, orientation, background or updated_at
     write(d);
+    tell('pages', 'UPDATE', [p]);
     return now;
   },
   async setCover(noteId, path) {
@@ -249,6 +283,7 @@ export const localApi = {
     if (!n) throw new Error('The cover was not saved');
     n.cover_path = path;                                                  // never bumps updated_at
     write(d);
+    tell('notes', 'UPDATE', [n]);
   },
   async removeSnapshots(paths) { paths.forEach((p) => storage.delete(p)); },
 
@@ -290,9 +325,11 @@ export const localApi = {
   subscribeStrokes(userId, h) {
     let dead = false;
     const on = (e) => { if (!dead) h.onRow(e.detail.type, clone(e.detail.row)); };
+    const onTree = (e) => { if (!dead && h.onTree) h.onTree(e.detail.table, e.detail.type, clone(e.detail.row)); };   // round 6b
     bus.addEventListener('stroke', on);
+    bus.addEventListener('tree', onTree);
     setTimeout(() => { if (!dead) h.onStatus('SUBSCRIBED'); }, 0);
-    return { unsubscribe() { if (dead) return; dead = true; bus.removeEventListener('stroke', on); } };
+    return { unsubscribe() { if (dead) return; dead = true; bus.removeEventListener('stroke', on); bus.removeEventListener('tree', onTree); } };
   },
   // test hook: another device wrote this row (INSERT, the whole row) or deleted it (DELETE, { id }). No page check: the
   // database would hold the row whatever this device's tree says.

@@ -11,6 +11,8 @@
 // U3d: the live mirror (js/live.js): a stroke another device writes shows here a second later (remoteRow), the open
 // note catches up after a dropped channel (liveGap), and the tree (folders, notes, pages) is read again when the app
 // comes back to the front after a minute (refreshTree).
+// Round 6b (pw-v7h): notes and pages come over the same channel; a row from outside (another device, tools/drop_pdf.py)
+// reads the tree again about a second later (remoteTree), so a dropped note shows on an open tablet without a switch.
 // U3e: tree writes (folders, notes, pages) go up through a persistent queue (js/treeq.js), like her ink: a page or note
 // made without wifi reaches the server when wifi is back, and the device opens offline from its tree snapshot.
 // U4a: PDF in. The folder grid's "Open PDF" tile (beside "New note") makes a new note from a PDF, named after the file;
@@ -1501,7 +1503,7 @@ async function enter(user) {
                   render: (p, recs) => renderPage(p, 'image/webp', 0.8, 1, recs), idle: settledBoth });
   await load();
   pics.scan();                                              // U3b rule (b): pages whose picture is older than their ink
-  live.initLive({ api, userId: user.id, onRow: remoteRow, onGap: liveGap });   // U3d: after load(), one channel per login
+  live.initLive({ api, userId: user.id, onRow: remoteRow, onTree: remoteTree, onGap: liveGap });   // U3d: after load(), one channel per login
   document.addEventListener('visibilitychange', () => { if (!document.hidden) maybeRefreshTree(); });
   addEventListener('online', maybeRefreshTree);
   shareLanding();                                           // U4b: a PDF shared to PenWorks, after the login and the tree
@@ -1523,9 +1525,54 @@ function remoteRow(type, row) {
     if (pid) ink.applyRemote(pid, [row.id], []);
   }
 }
-// after a gap (a dropped channel, the app back at the front): the open note's pages against the database
-function liveGap() {
+// after a gap (a dropped channel, the app back at the front): the open note's pages against the database. Round 6b:
+// after a dropped channel the tree may have missed rows too, so it is read again (once, the channel's own catch-up)
+function liveGap(why) {
   if (S.openNote) store.reconcile(pagesOf(S.openNote).map((p) => p.id));
+  if (why === 'drop') refreshTree();
+}
+
+// Round 6b (pw-v7h): the tree live. The same channel carries her notes and pages rows (INSERT, UPDATE, DELETE). Each
+// event goes on a short list; about a second after the first one, the list is weighed against this device's tree, and
+// if any row is news, refreshTree() reads the tree once (its merge rules stay: a row this device wrote is never removed
+// while its change is queued, the open note's new pages bring their strokes). News = a row this device does not have, a
+// row it has that is deleted upstream, or a row whose content differs from what this device holds. This device's own
+// writes come back the same way (every new page, and every stroke bumps its page's and its note's updated_at): their
+// content matches what this device holds already, so they cost no read. The time stamps are left out of the weighing:
+// the database sets them, so they never match this device's clock. Weighing a second later, not at once, also lets a
+// write's reply reach this device's tree before its echo is judged.
+const TREE_LIVE_MS = 1000;
+const TREE_KEYS = {
+  notes: ['folder_id', 'name', 'pinned', 'cover_path', 'deleted_at'],
+  pages: ['note_id', 'position', 'orientation', 'background', 'bookmark', 'pdf_path', 'pdf_page', 'snapshot_path', 'deleted_at'],
+};
+const treeStats = { events: 0, news: 0, reads: 0, covers: 0 };   // for the tests (window.__pw.treeLive)
+let treeEvents = [], treeEvT = 0;
+function remoteTree(table, type, row) {
+  if (!TREE_KEYS[table] || !row || !row.id) return;
+  treeStats.events++;
+  treeEvents.push([table, type, row]);
+  if (!treeEvT) treeEvT = setTimeout(treeWeigh, TREE_LIVE_MS);
+}
+const treeVal = (k, v) => (k === 'bookmark' ? v === true : v ?? null);
+function treeNews(table, type, row) {
+  const have = S[table].find((r) => r.id === row.id);
+  if (type === 'DELETE') return !!have;
+  if (!have) return true;
+  return TREE_KEYS[table].some((k) => !sameVal(treeVal(k, have[k]), treeVal(k, row[k])));
+}
+function treeWeigh() {
+  treeEvT = 0;
+  const list = treeEvents;
+  treeEvents = [];
+  if (!S.user || !list.some(([t, ty, r]) => treeNews(t, ty, r))) return;
+  if (treeBusy) {                                           // a read is under way and may have started before this row
+    treeEvents = list.concat(treeEvents);
+    treeEvT = setTimeout(treeWeigh, TREE_LIVE_MS);
+    return;
+  }
+  treeStats.news++;
+  refreshTree();                                            // busy with a gesture or a dialog: it tries again itself
 }
 
 // The tree on this device is read once at load(). When the app comes back to the front (or the connection does) and
@@ -1553,6 +1600,7 @@ async function refreshTree() {
   try {
     const gen = writeGen;
     let d;
+    treeStats.reads++;
     try { d = await api.loadAll(); } catch (_) { return false; }   // no connection: the next trigger tries again
     if (gen !== writeGen || treeq.length() || treeBlocked()) { treeLater(); return false; }
     lastLoad = Date.now();
@@ -1561,6 +1609,21 @@ async function refreshTree() {
     await mergeTree(d);
     return true;
   } finally { treeBusy = false; }
+}
+// Round 6b: a note whose first page came from outside in this merge (tools/drop_pdf.py, or another device that has not
+// pictured it yet), with no cover and a PDF first page with no picture: this device asks for that page's picture the way
+// addPdfPages does, and js/snap.js makes it the cover once it is up. Two open devices may both do it; that is safe, the
+// newer picture wins as for any page picture (setSnapshot's stamp), so the second only draws the same page again.
+function coverFresh(fresh) {
+  if (!fresh.length) return;
+  const came = new Set(fresh);
+  for (const nid of new Set(S.pages.filter((p) => came.has(p.id)).map((p) => p.note_id))) {
+    const n = note(nid), first = pagesOf(nid)[0];
+    if (n && liveNote(n) && !n.cover_path && first && came.has(first.id) && first.pdf_path && !first.snapshot_path) {
+      treeStats.covers++;
+      pics.changed(first.id);
+    }
+  }
 }
 async function mergeTree(d) {
   const gone = [], fresh = [];
@@ -1587,6 +1650,7 @@ async function mergeTree(d) {
   if (!changed) return;
   gone.forEach((id) => orphans.add(id));                    // a page gone upstream: its ink goes once no undo step holds it
   tidyInk();
+  coverFresh(fresh);
   if (S.sel !== 'loose' && S.sel !== 'bin' && !liveFolder(folder(S.sel))) { S.sel = 'loose'; remember(); }
   if (S.openNote && !liveNote(note(S.openNote))) {
     closeNote(true);
@@ -1750,6 +1814,7 @@ window.__pw = { S, api, idle: settledBoth, failed: () => treeq.dropCount(), curr
                 pageDrag: () => (pd ? { lifted: pd.lifted, from: pd.from, to: pd.to } : null),
                 tick: () => (S.tick ? { ids: ticked(), moving: S.tick.moving } : null),
                 live: { state: live.state, stats: live.liveStats, simulateDrop: live.simulateDrop }, refreshTree,
+                treeLive: () => ({ ...treeStats, waiting: treeEvents.length, timer: !!treeEvT }),
                 pdf: { importPdf: (f, t) => pdfin.importPdf(f, t), stats: () => ({ ...pdfin.pdfStats(), ...pdfview.viewStats() }),
                        cached: pdfin.cached, uploadsPending: pdfin.uploadsPending, budget: pdfview.setBudget,
                        shared: () => pdfin.sharedFile().then((f) => (f ? { name: f.name, size: f.size } : null)) } };

@@ -9,7 +9,7 @@
    update would go with it. Then a 303 to ./?share=1, where the app picks it up (js/pdfin.js sharedFile).
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v7e";
+const CACHE = "pw-v7h";
 const SHARE_DB = "penworks.share";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",
