@@ -468,6 +468,14 @@ body.trayLeft #counter { right: auto; left: 14px; }
   #tray .tool, #tray .slot, #tray > .ib, #tray #undoBtn { width: 38px; height: 38px; }   /* undo sits in .tools now (pw-v6c) */
 }
 
+/* pw-v7d: the calculator card (js/calcpanel.js). Above the pen panels (40), below the menu (50) and the toast (60). The card is
+   only the fixed box; the look is Blipwork's own .calc-wrap (css/calc.css, lifted from Blipwork by _build/extract_calc_css.py).
+   The head drags it, so only the head gives up touch scrolling. */
+#calcCard { position: fixed; z-index: 45; width: min(344px, calc(100vw - 8px)); left: 0; top: 0; }
+#calcCard .calcHead { touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+#calcCard .calcHead:active { cursor: grabbing; }
+#calcCard .calc-close { min-width: 40px; min-height: 32px; }
+
 /* the pen and highlighter panels: a small card to the left of the tray */
 .panel {
   position: fixed; z-index: 40; width: 236px; background: var(--card); color: var(--graphite); border-radius: 10px;

@@ -28,6 +28,7 @@ import { api } from './api.js';
 import { initPage, showStack, fit, scrollToPage, relayout, current, bookmarkTab, markSheet, bgSvg, pageSize, A4, setLock, locked } from './page.js';
 import * as ink from './ink.js';
 import * as store from './store.js';
+import { initCalc } from './calcpanel.js';
 import { initTray, closePanel, closePicker, trayState, chooseTool, localTray, adopt as adoptTray } from './tray.js';
 import * as pics from './snap.js';
 import * as live from './live.js';
@@ -1672,6 +1673,7 @@ function wire() {
   // remembered here, before the tray's and the menu's own closers run, so that contextmenu does not flip the tool
   document.addEventListener('pointerdown', (e) => { rightOverOpen = e.button === 2 && overlayOpen(); }, true);   // any other press forgets it
   initTray({ onKeep: (tray, at) => trayKeep(tray, at) });
+  initCalc({ trayBtn: $('toolsBtn') });                            // pw-v7d: the calculator card beside the tray
   initPage({ desk: $('desk'), stack: $('stack'), addBelow: $('addBelow'),
              onCurrent: (i) => { S.cur = Math.max(0, i); updateCount(); ink.clearSelection(); },   // a new page: the selection clears
              onSheets: (sheets) => { ink.attach(sheets); pdfview.attach(sheets); }, onView: pdfview.view,

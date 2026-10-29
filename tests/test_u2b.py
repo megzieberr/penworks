@@ -253,7 +253,7 @@ try:
         check("restyle and select are real tool buttons: icon only, a title each, the pen's size",
               all(t[0] == "BUTTON" and "tool" in t[1] and t[2] and t[3] and [t[4], t[5]] == pen_r and t[6] and t[7] == "" for t in tb), [tb, pen_r])
         check("their titles: Restyle, Select", [t[2] for t in tb] == ["Restyle", "Select"], tb)
-        check("only the Tools slot is still an empty slot", pg.evaluate("[...document.querySelectorAll('#tray .slot')].map(s => s.dataset.slot + ':' + s.children.length)") == ["tools:0"])
+        check("the Tools slot is now the calculator button (pw-v7d), no empty slot is left", pg.evaluate("[...document.querySelectorAll('#tray .slot')].length") == 0 and pg.evaluate("document.getElementById('toolsBtn').dataset.slot") == "tools")
         tool(pg, "restyle")
         on = pg.evaluate("[...document.querySelectorAll('#tray .tool.on')].map(e => e.dataset.tool)")
         tint = pg.evaluate("getComputedStyle(document.getElementById('tool-restyle')).backgroundColor")
@@ -2836,7 +2836,7 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v7c", "pw-v7c" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v7d", "pw-v7d" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)

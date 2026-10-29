@@ -306,9 +306,9 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v7c" not in keys:
+        if "pw-v7d" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v7c", "pw-v7c" in keys, keys)
+        check("cache is pw-v7d", "pw-v7d" in keys, keys)
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the shell lists ./js/snap.js", "./js/snap.js" in swt)
         check("Supabase (its /storage/ too) is never cached: other origins go straight to the network", "url.origin !== location.origin" in swt)

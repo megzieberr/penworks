@@ -102,7 +102,7 @@ try:
         check("undo is inside .tools, redo is a child of #tray (after the gap)",
               pg.evaluate("document.getElementById('undoBtn').parentNode.classList.contains('tools') && document.getElementById('redoBtn').parentNode.id === 'tray'"))
         geo = pg.evaluate("""() => { const r = (s) => document.querySelector(s).getBoundingClientRect();
-          const h = r('#tool-highlighter'), u = r('#undoBtn'), e = r('#tool-eraser'), rd = r('#redoBtn'), s = r('#tray .slot');
+          const h = r('#tool-highlighter'), u = r('#undoBtn'), e = r('#tool-eraser'), rd = r('#redoBtn'), s = r('#toolsBtn');
           return { hu: Math.round(u.top - h.bottom), ue: Math.round(e.top - u.bottom), uw: u.width, uh: u.height, rw: rd.width, rh: rd.height,
                    redoLast: rd.bottom <= s.top + 0.5 && rd.top > e.bottom, centred: Math.abs((u.left + u.width / 2) - (h.left + h.width / 2)) < 0.6 }; }""")
         check("undo sits straight under the highlighter (the tools' 2 px gap above and below)", geo["hu"] == 2 and geo["ue"] == 2, geo)
@@ -251,9 +251,9 @@ try:
         group[0] = "cache"
         pg.evaluate("navigator.serviceWorker.ready"); pg.wait_for_timeout(300)
         keys = pg.evaluate("caches.keys()")
-        if "pw-v7c" not in keys:
+        if "pw-v7d" not in keys:
             pg.reload(); ready(pg); pg.wait_for_timeout(600); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v7c", "pw-v7c" in keys, keys)
+        check("cache is pw-v7d", "pw-v7d" in keys, keys)
         ctx.close()
         b.close()
 finally:

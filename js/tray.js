@@ -46,6 +46,8 @@ const ICONS = {
   select: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h3M10 4h4M17 4h3v3M20 10v4M20 17v3h-3M14 20h-4M7 20H4v-3M4 14v-4"/></svg>',
   area: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7.4 15L3.6 11.2a1.3 1.3 0 0 1 0-1.8l5.8-5.8a1.3 1.3 0 0 1 1.8 0l3.8 3.8a1.3 1.3 0 0 1 0 1.8L9.2 15z"/><path d="M6.6 6.4l5 5"/><circle cx="16.8" cy="16.8" r="4.6"/></svg>',
 };
+// pw-v7d: the calculator button at the very bottom of the tray (later it becomes the Tools panel)
+const CALC_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M8.5 7.5h7"/><path d="M9 13h.01M12 13h.01M15 13h.01M9 16.5h.01M12 16.5h.01M15 16.5h.01" stroke-width="2.4"/></svg>';
 const TITLES = { pen: 'Pen', highlighter: 'Highlighter', eraser: 'Stroke eraser', area: 'Area eraser', restyle: 'Restyle', select: 'Select' };
 
 let st, tray, panel, picker, colours, specBtn, btns = {}, swatches = [];
@@ -395,7 +397,8 @@ export function initTray(o = {}) {
     if (t === 'highlighter') tools.append(undo);       // pw-v6c: undo straight under the highlighter, where her hand goes (27 Oct)
   }
   tray.textContent = '';
-  tray.append(colours, tools, el('div', { class: 'gap' }), redo, el('div', { class: 'slot', 'data-slot': 'tools' }));   // redo stays at the bottom
+  tray.append(colours, tools, el('div', { class: 'gap' }), redo,
+    el('button', { type: 'button', class: 'ib tool', id: 'toolsBtn', 'data-slot': 'tools', 'aria-label': 'Calculator', title: 'Calculator', 'aria-pressed': 'false', html: CALC_ICON }));   // redo stays above it; js/calcpanel.js wires the tap (pw-v7d)
   panel = el('div', { id: 'toolPanel', class: 'panel', hidden: true, role: 'dialog', 'aria-label': 'Tool settings' });
   picker = el('div', { id: 'specPicker', class: 'panel picker', hidden: true, role: 'dialog', 'aria-label': 'Any colour' });
   document.body.append(panel, picker);

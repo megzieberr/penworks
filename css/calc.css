@@ -1,0 +1,146 @@
+/* pw-v7d: the Blipwork calculator's rules, lifted out of maths-homework-quest/css/styles.css by
+   _build/extract_calc_css.py. Never edit by hand: re-run the script. Blipwork is the master. */
+.calc-wrap {
+  --accent: #3aa0ff;
+  --brd-2: rgba(58,160,255,.42);
+  --font-display: "Space Grotesk",system-ui,sans-serif;
+  --font-num: "JetBrains Mono",ui-monospace,monospace;
+  --ink: #dbeaff;
+  --panel: rgba(11,20,40,.62);
+  --panel-solid: #0b1220;
+  --r-lg: 4px;
+  --r-md: 3px;
+  --r-sm: 2px;
+  --warn: #fcd34d;
+}
+/* what Blipwork's styles.css gives every element through `*` and `body` (box-sizing, margin 0, padding 0, the body
+   text settings), scoped to the calculator: PenWorks has its own base. :where() keeps the reset at zero
+   specificity so the extracted rules below always win over it, as they do in Blipwork. */
+:where(.calc-wrap, .calc-wrap *, .calc-scrim) { box-sizing: border-box; margin: 0; padding: 0; }
+.calc-wrap { font-family: "Sora",system-ui,sans-serif; color: var(--ink); line-height: 1.5;
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+
+.play-tip .tip-calc {font-size:14px;background:rgba(58,160,255,.08);border:1px solid rgba(58,160,255,.18);border-radius:var(--r-sm);padding:1px 6px;cursor:pointer;line-height:1.4}
+.q-calc {max-width:340px;margin:8px auto 4px}
+.q-calc.locked {opacity:.55;pointer-events:none;filter:saturate(.55)}
+.keypad {margin-top:4px}
+.modal-scrim {position:fixed;inset:0;z-index:50;background:rgba(3,6,14,.74);backdrop-filter:blur(4px);display:flex;align-items:flex-end;justify-content:center;padding:0}
+.calc-scrim {align-items:center;padding:16px}
+.calc-wrap {width:100%;max-width:344px;background:#2a2f3a;border:1px solid #11141b;border-radius:18px;padding:12px;box-shadow:0 26px 64px rgba(0,0,0,.6)}
+.calc-head {display:flex;align-items:center;justify-content:space-between;padding:2px 4px 10px;color:#aeb6c6}
+.calc-name {font-family:var(--font-display);font-weight:600;font-size:11px;letter-spacing:.6px}
+.calc-close {background:none;border:0;color:#aeb6c6;font-size:18px;cursor:pointer;line-height:1}
+.calc {display:flex;flex-direction:column;gap:10px}
+.calc-lcd {background:#b8c6ae;border:2px solid #161a22;border-radius:6px;padding:8px 10px;min-height:100px;display:flex;flex-direction:column;color:#1c241a;font-family:var(--font-num)}
+.calc-ind {font-size:9px;letter-spacing:1.5px;color:#3a4434;min-height:12px;line-height:12px;display:flex;align-items:center;white-space:nowrap;overflow:hidden}
+.calc-ind>span {flex:none;display:block;overflow:hidden}
+.calc-ind .ind-sa {width:13px}
+.calc-ind .ind-sa b {display:inline-block;border:1px solid currentColor;border-radius:1px;padding:0 1px;line-height:9px;letter-spacing:0;font-weight:700}
+.calc-ind .ind-m {width:11px}
+.calc-ind .ind-sto,.calc-ind .ind-rcl {width:25px}
+.calc-ind .ind-stat,.calc-ind .ind-freq {width:32px}
+.calc-ind .ind-fix {width:25px}
+.calc-ind .ind-gap {flex:1 1 auto;min-width:0}
+.calc-ind .ind-drg {width:11px}
+.calc-ind .ind-math {width:32px}
+.calc-ind .ind-hist {width:22px;text-align:right;letter-spacing:0}
+.calc-main {flex:1;display:flex;flex-direction:column;justify-content:center}
+.lcd-expr {font-size:13px;min-height:16px;overflow-x:hidden;overflow-y:hidden;white-space:nowrap;max-width:100%}
+.lcd-res {font-size:24px;text-align:right;font-weight:700;min-height:28px;overflow-x:auto;overflow-y:hidden;white-space:nowrap;max-width:100%}
+.lcd-line {position:relative;min-width:0;max-width:100%}
+.lcd-lmark {position:absolute;left:0;top:0;bottom:0;z-index:1;display:flex;align-items:center;padding-right:2px;font-size:9px;line-height:1;background:#b8c6ae}
+.lcd-lmark[hidden] {display:none}
+.lcd-err {display:flex;flex-direction:column;gap:3px}
+.lcd-res.lcd-err-msg {font-size:15px;text-align:left;min-height:0}
+.lcd-err-line {font-size:12px;white-space:nowrap}
+.calc-x10 {font-size:.62em;margin-left:1px}
+.calc-x10-exp {font-size:.55em;line-height:0;vertical-align:super}
+.lcd-title {font-size:12px;font-weight:700;margin-bottom:3px}
+.lcd-menu {display:grid;grid-template-columns:1fr 1fr;gap:2px 10px;font-size:12px}
+.lcd-ov {border-top:1px solid currentColor;display:inline-block;line-height:1.05}
+.lcd-note {font-size:11px;margin-top:8px}
+.lcd-more {text-align:right;font-size:11px;margin-top:2px}
+.lcd-tab {width:100%;border-collapse:collapse;font-size:12px}
+.lcd-tab th,.lcd-tab td {border:1px solid #6c7a64;padding:1px 5px;text-align:center;min-width:22px}
+.lcd-tab th {font-weight:700}
+.lcd-tab u {text-decoration:none;border-bottom:2px solid #1c241a;padding-bottom:1px}
+.calc-frac {display:inline-flex;flex-direction:column;align-items:center;vertical-align:middle;margin:0 1px;line-height:1.15}
+.calc-frac-num,.calc-frac-den {display:block;padding:0 2px;font-size:.92em}
+.calc-frac-bar {display:block;width:100%;height:0;border-top:1.4px solid currentColor;margin:1px 0}
+.calc-rad {display:inline-flex;align-items:flex-start;vertical-align:middle;margin:0 1px}
+.calc-rad-deg {font-size:.55em;line-height:1;margin-right:-.3em;position:relative;top:-.3em}
+.calc-rad-idx {margin-right:0}
+.calc-rad-sign {font-size:1em;line-height:1}
+.calc-rad-body {display:inline-block;border-top:1.4px solid currentColor;padding:0 2px 0 1px;margin-top:2px}
+.calc-pow-exp {font-size:.68em;line-height:1;vertical-align:super;padding:0 1px}
+.calc-slot {display:inline-block;width:.65em;height:.85em;border:1.3px dashed currentColor;border-radius:1px;opacity:.6;vertical-align:middle;margin:0 1px}
+.calc-cursor {display:inline-block;width:0;border-left:1.4px solid currentColor;height:1em;vertical-align:middle;margin:0 -.5px;animation:calc-blink 1s step-end infinite}
+.calc-logb-base {font-size:.68em;line-height:1;vertical-align:sub;padding:0 1px}
+.calc-abs-body {display:inline-block;border-left:1.4px solid currentColor;border-right:1.4px solid currentColor;padding:0 2px;margin:0 1px;line-height:1.15}
+.calc-comb {font-weight:700;font-size:1.05em;padding:0 1px}
+.calc-mixed-whole {padding-right:1px}
+.lcd-pr-typing .lcd-expr {font-size:16px;min-height:20px}
+.lcd-pr-typing .calc-frac {line-height:1.05}
+.lcd-pr+.lcd-res {line-height:28px}
+.lcd-solve {display:flex;flex-direction:column;gap:2px;min-width:0}
+.lcd-sv-row {display:flex;justify-content:space-between;align-items:baseline;gap:6px;font-size:13px;line-height:16px;white-space:nowrap;min-width:0}
+.lcd-sv-lab {flex:none}
+.lcd-sv-val {min-width:0;overflow:hidden;text-align:right}
+.lcd-tab.lcd-tbl {table-layout:fixed;font-size:10px;line-height:10px}
+.lcd-tbl th,.lcd-tbl td {border:0;border-left:1px solid #6c7a64;padding:0 2px;height:10px;min-width:0;white-space:nowrap;overflow:hidden}
+.lcd-tbl th {border-bottom:1px solid #6c7a64}
+.lcd-tbl .lcd-tbl-n {width:15px;border-left:0;padding:0 1px;font-size:8px;font-weight:400}
+.lcd-tbl .lcd-tbl-sel,.lcd-tbl .lcd-tbl-lit {background:#1c241a;color:#b8c6ae}
+.lcd-tbl .calc-x10 {line-height:0}
+.lcd-tbl .calc-x10-exp {vertical-align:baseline;position:relative;top:-3px;line-height:0}
+.lcd-res.lcd-tbl-val {min-height:0;height:26px;line-height:26px}
+.lcd-tbl.lcd-eqn th,.lcd-tbl.lcd-eqn td {border:0}
+.lcd-tbl.lcd-eqn .lcd-eqn-bk {width:4px;padding:0}
+.lcd-tbl.lcd-eqn td.lcd-eqn-bl {border-left:1.4px solid currentColor}
+.lcd-tbl.lcd-eqn td.lcd-eqn-br {border-right:1.4px solid currentColor}
+.lcd-tbl.lcd-eqn td.lcd-eqn-t {border-top:1.4px solid currentColor}
+.lcd-tbl.lcd-eqn td.lcd-eqn-b {border-bottom:1.4px solid currentColor}
+.lcd-line.lcd-eqn-in {height:26px;display:flex;align-items:center}
+.lcd-eqn-in .lcd-expr {flex:1 1 auto;min-width:0;font-size:16px;line-height:1}
+.lcd-eqn-in .calc-frac {line-height:1;font-size:.72em}
+.lcd-eqn-val .calc-frac {line-height:1}
+.lcd-ineq {font-size:11px;line-height:13px;white-space:nowrap}
+.lcd-menu.lcd-menu-list {grid-template-columns:1fr;gap:0;font-size:11px;line-height:14px}
+.lcd-mi-n {background:#1c241a;color:#b8c6ae;padding:0 2px;border-radius:1px}
+.lcd-menu.lcd-menu-boxed {gap:0 10px;line-height:14px}
+.lcd-menu-boxed+.lcd-more {line-height:12px;margin-top:0}
+.lcd-menu.lcd-menu-packed {gap:0 10px;line-height:14px}
+.lcd-hat {position:relative;display:inline-block;line-height:1.05}
+.lcd-hat::before {content:"";position:absolute;left:50%;top:.1em;width:.24em;height:.24em;border-left:1px solid currentColor;border-top:1px solid currentColor;transform:translateX(-50%) rotate(45deg)}
+.lcd-done {text-align:center;font-size:13px;line-height:18px}
+@keyframes calc-blink {0%,49%{opacity:1}50%,100%{opacity:0}}
+.calc-pad {display:flex;flex-direction:column;gap:8px}
+.calc-fngrid {display:grid;grid-template-columns:repeat(6,1fr);grid-auto-rows:minmax(27px,auto);gap:3px}
+.calc-fngrid .calc-key {min-height:27px;font-size:10px;padding:12px 1px 3px}
+.calc-fngrid .calc-key .ksh,.calc-fngrid .calc-key .kred {font-size:6px}
+.calc-dpad-ring {width:100%;height:100%;min-height:56px;border-radius:50%;background:#20242e;border:1px solid #11141b;display:grid;grid-template-columns:1fr 1fr 1fr;grid-template-rows:1fr 1fr 1fr}
+.calc-dpad-btn {background:none;border:0;color:#c7cedb;cursor:pointer;font-size:11px;display:flex;align-items:center;justify-content:center;transition:color .1s}
+.calc-dpad-btn:hover {color:#fff}
+.calc-dpad-btn:active {color:#fff;transform:scale(.9)}
+.calc-dpad-btn.k-up {grid-column:2;grid-row:1}
+.calc-dpad-btn.k-down {grid-column:2;grid-row:3}
+.calc-dpad-btn.k-left {grid-column:1;grid-row:2}
+.calc-dpad-btn.k-right {grid-column:3;grid-row:2}
+.calc-numgrid {display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.calc-numgrid .calc-key {min-height:41px;font-size:16px;font-weight:600;padding:16px 0 6px}
+.calc-numgrid .calc-key .ksh,.calc-numgrid .calc-key .kred {font-size:7px}
+.calc-key {position:relative;background:#3b4250;border:1px solid #20242e;border-radius:7px;color:#eef1f6;font-family:var(--font-num);font-weight:500;cursor:pointer;transition:transform .08s,background .1s}
+.calc-key:hover {background:#454d5d}
+.calc-key:active {transform:scale(.94)}
+.calc-key .kmain {display:block;line-height:1}
+.calc-key .ksh {position:absolute;top:2px;left:3px;color:#f0a93a;font-weight:700;letter-spacing:.1px;line-height:1}
+.calc-key .kred {position:absolute;top:2px;right:3px;color:#e2555c;font-weight:700;letter-spacing:.1px;line-height:1}
+.calc-btn {background:var(--panel);border:1px solid var(--brd-2);color:var(--ink);font-size:18px;width:42px;height:42px;border-radius:var(--r-lg);cursor:pointer;display:grid;place-items:center;transition:.15s}
+.calc-btn:hover {border-color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--panel))}
+.calc-btn-float {position:fixed;top:calc(14px + env(safe-area-inset-top));right:14px;z-index:75;
+  width:38px;height:38px;font-size:16px;border-radius:var(--r-lg);cursor:pointer;
+  display:grid;place-items:center;transition:.15s;
+  background:var(--panel-solid);color:var(--ink);border:1px solid var(--brd-2);
+  box-shadow:0 8px 24px -8px rgba(0,0,0,.6)}
+.calc-btn-float:hover {border-color:var(--accent)}
+.calc-btn-float[hidden] {display:none}
