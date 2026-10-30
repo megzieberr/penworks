@@ -32,7 +32,7 @@ const DEFAULTS = {
   folders: { parent_id: null, name: '', colour: null, position: 0, deleted_at: null },
   notes: { folder_id: null, name: 'Untitled', pinned: false, cover_path: null, deleted_at: null },
   pages: { note_id: null, position: 0, orientation: 'portrait', background: 'grid', bookmark: false,
-           pdf_path: null, pdf_page: null, pdf_w: null, pdf_h: null,
+           pdf_path: null, pdf_page: null, pdf_w: null, pdf_h: null, pdf_rot: 0,
            snapshot_path: null, snapshot_at: null, flagged: false, deleted_at: null },
 };
 const IMPORT_MAX = 52428800;
@@ -110,10 +110,11 @@ let refuseNext = 0; // test hook: the next n writes (stroke pushes and tree writ
 function maybeRefuse(table = 'strokes') {
   if (refuseNext > 0) { refuseNext--; refuse(`new row violates row-level security policy for table "${table}"`, '42501'); }
 }
-// U4a: 0005's pages_pdf_size_check
+// U4a: 0005's pages_pdf_size_check; pw-v7p: 0006's pages_pdf_rot_check
 function pdfSize(r) {
   const w = r.pdf_w ?? null, h = r.pdf_h ?? null;
   if (!((w === null && h === null) || (w > 0 && h > 0))) refuse('new row for relation "pages" violates check constraint "pages_pdf_size_check"');
+  if (![0, 90, 180, 270].includes(r.pdf_rot ?? 0)) refuse('new row for relation "pages" violates check constraint "pages_pdf_rot_check"');
 }
 // U4a: the imports bucket, kept in IndexedDB
 let importDb = null, importReads = 0;

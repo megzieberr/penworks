@@ -12,9 +12,10 @@ const TABLES = ['folders', 'notes', 'pages'];
 const COLS = {
   folders: 'id,owner_id,parent_id,name,colour,position,deleted_at,created_at,updated_at',
   notes: 'id,owner_id,folder_id,name,pinned,cover_path,deleted_at,created_at,updated_at',
-  pages: 'id,owner_id,note_id,position,orientation,background,bookmark,pdf_path,pdf_page,pdf_w,pdf_h,snapshot_path,snapshot_at,flagged,deleted_at,created_at,updated_at',
+  pages: 'id,owner_id,note_id,position,orientation,background,bookmark,pdf_path,pdf_page,pdf_w,pdf_h,pdf_rot,snapshot_path,snapshot_at,flagged,deleted_at,created_at,updated_at',
 };
 // U4a: pdf_w and pdf_h exist from migration 0005 on; until it is applied every loadAll above fails on the live project.
+// pw-v7p: the same for pdf_rot and migration 0006: the migration lands BEFORE the push.
 // the signed-in person's own row (U3c): settings.tray = the pen tray's state (js/tray.js), settings.tray_at = when it was
 // saved (newer wins across devices). pen_colours is not used: her 13 colours are code in tray.js, only their order follows her.
 const PROFILE_COLS = 'id,username,display_name,pen_colours,settings';
@@ -331,9 +332,9 @@ export const api = {
   // pages: numbered by position inside their note
   // U4a: a page made from a PDF page carries pdf_path, pdf_page (1-based), pdf_w and pdf_h (that page's size in points)
   createPage: (r) => base.insert('pages', pick(r, ['id', 'note_id', 'position', 'orientation', 'background', 'bookmark',
-    ...(r.pdf_path ? ['pdf_path', 'pdf_page', 'pdf_w', 'pdf_h'] : [])])),
+    ...(r.pdf_path ? ['pdf_path', 'pdf_page', 'pdf_w', 'pdf_h', 'pdf_rot'] : [])])),
   reorderPages: (pairs) => eachPos('pages', pairs),
-  setPages: (ids, patch) => base.update('pages', ids, pick(patch, ['orientation', 'background'])),
+  setPages: (ids, patch) => base.update('pages', ids, pick(patch, ['orientation', 'background', 'pdf_rot'])),
   // the bookmark (U3c, a column since 0004): not an edit, the note's "last edited" stays where it was
   setBookmark: (id, on) => base.update('pages', [id], { bookmark: !!on }),
   deletePage: (id) => base.remove('pages', [id]),             // gone for good; the app's undo puts it back

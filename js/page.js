@@ -50,10 +50,14 @@ const stats = { resizes: 0, fits: 0, cause: '' };   // pw-v7b: window resizes, f
 export function pageSize(p) {
   const o = typeof p === 'string' ? p : (p && p.orientation);
   if (p && typeof p === 'object' && p.pdf_w > 0 && p.pdf_h > 0) {
-    const w = p.pdf_w > p.pdf_h ? A4.h : A4.w;
-    return { w, h: Math.max(1, Math.round(w * p.pdf_h / p.pdf_w)) };
+    const s = pdfShape(p), w = s.w > s.h ? A4.h : A4.w;
+    return { w, h: Math.max(1, Math.round(w * s.h / s.w)) };
   }
   return o === 'landscape' ? { w: A4.h, h: A4.w } : { ...A4 };
+}
+// pw-v7p: a PDF page's shape as it is shown, in points: pdf_w, pdf_h are the file's, a quarter turn (pages.pdf_rot) swaps them
+export function pdfShape(p) {
+  return (p.pdf_rot || 0) % 180 ? { w: p.pdf_h, h: p.pdf_w } : { w: p.pdf_w, h: p.pdf_h };
 }
 
 // the paper pattern as its own <svg> (also drawn into a shared page, pw-v4t)

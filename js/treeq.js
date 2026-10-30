@@ -41,7 +41,7 @@ const DEFAULTS = {
   folders: { parent_id: null, name: '', colour: null, position: 0, deleted_at: null },
   notes: { folder_id: null, name: 'Untitled', pinned: false, cover_path: null, deleted_at: null },
   pages: { note_id: null, position: 0, orientation: 'portrait', background: 'grid', bookmark: false,
-           pdf_path: null, pdf_page: null, pdf_w: null, pdf_h: null,          // U4a: a normal page
+           pdf_path: null, pdf_page: null, pdf_w: null, pdf_h: null, pdf_rot: 0,   // U4a: a normal page
            snapshot_path: null, snapshot_at: null, flagged: false, deleted_at: null },
 };
 

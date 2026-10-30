@@ -43,7 +43,8 @@ const KEEP = 2;             // pages either side of the screen that keep their c
 // scan would need about 200 Mpx (800 MB) to keep every page, well past what Android Chrome gives one tab.
 const BUDGET_PX = 60e6;
 const cfg = { page: () => null };
-const R = new Map();        // page id -> { id, el, layer, idx, canvas, s, failAt, used, ph }
+const turnOf = (p) => (p && p.pdf_rot) || 0;   // pw-v7p: how far she turned the page (pages.pdf_rot), 0 to 270 clockwise
+const R = new Map();        // page id -> { id, el, layer, idx, canvas, s, failAt, used, ph, turn }
 let order = [];             // the records of the PDF pages in the stack, in stack order
 let range = [-1, -1], zoom = 1, timer = 0, working = false, again = false;   // again: asked for while a render ran
 let dir = 1, useN = 0, job = null, placeT = 0, budget = BUDGET_PX;           // dir: 1 = she last moved down the pages, -1 up
@@ -69,7 +70,9 @@ export function attach(sheets) {
     here.add(id);
     let r = R.get(id);
     if (r) known++;
-    else { r = { id, canvas: null, s: 0, failAt: 0, used: 0, ph: null }; R.set(id, r); }
+    else { r = { id, canvas: null, s: 0, failAt: 0, used: 0, ph: null, turn: turnOf(cfg.page(id)) }; R.set(id, r); }
+    const turn = turnOf(cfg.page(id));
+    if (r.turn !== turn) { free(r); unplace(r); r.turn = turn; }           // pw-v7p: turned: the old picture goes, also at the same size (180 degrees)
     if (r.layer !== layer) {
       const p = cfg.page(id), sz = p && pageSize(p), same = sz && r.w === sz.w && r.h === sz.h;
       if (r.canvas) { if (same) layer.append(r.canvas); else free(r); }
@@ -192,15 +195,15 @@ async function work() {
 async function draw(r, p, w, h, s, ahead) {
   const doc = await docOf(p.pdf_path), pg = await doc.getPage(p.pdf_page);
   if (sinceMove() < QUIET) { pg.cleanup(); throw MOVED; }                 // pw-v7n: she moved while the page was fetched
-  const W = Math.max(1, Math.round(w * s)), H = Math.max(1, Math.round(h * s));
+  const W = Math.max(1, Math.round(w * s)), H = Math.max(1, Math.round(h * s)), turn = turnOf(p);
   const c = document.createElement('canvas');
   c.width = W; c.height = H; c.className = 'pdfCanvas';
   const g = c.getContext('2d', { alpha: false });
   job = { r, ahead, task: null };
-  try { await renderInto(pg, g, W, H, true, (task) => { job.task = task; holdWhileMoving(task); }); }
+  try { await renderInto(pg, turn, g, W, H, true, (task) => { job.task = task; holdWhileMoving(task); }); }
   catch (e) { c.width = 0; c.height = 0; throw e; }
   finally { pg.cleanup(); }
-  if (!r.layer || !r.layer.isConnected || !cfg.page(r.id)) { c.width = 0; c.height = 0; return; }
+  if (!r.layer || !r.layer.isConnected || !cfg.page(r.id) || r.turn !== turn) { c.width = 0; c.height = 0; return; }   // pw-v7p: turned meanwhile
   if (r.canvas) { const old = r.canvas; old.replaceWith(c); old.width = 0; old.height = 0; } else r.layer.append(c);
   unplace(r);
   r.canvas = c; r.s = s; r.w = w; r.h = h; r.used = ++useN;
@@ -211,8 +214,10 @@ async function draw(r, p, w, h, s, ahead) {
   stats.peak = Math.max(stats.peak, live());
 }
 // the PDF page fills W x H exactly (the page's own aspect; a rounding px is stretched, never a bar)
-async function renderInto(pg, g, W, H, white, hold) {
-  const v1 = pg.getViewport({ scale: 1 }), vp = pg.getViewport({ scale: W / v1.width });
+// pw-v7p: turn = pages.pdf_rot, clockwise on top of the page's own rotation (a viewport's rotation replaces pg.rotate, so add it)
+async function renderInto(pg, turn, g, W, H, white, hold) {
+  const rotation = (pg.rotate + turn) % 360;
+  const v1 = pg.getViewport({ scale: 1, rotation }), vp = pg.getViewport({ scale: W / v1.width, rotation });
   const sy = H / vp.height;
   if (white) { g.fillStyle = '#FFFFFF'; g.fillRect(0, 0, W, H); }
   const task = pg.render({ canvasContext: g, viewport: vp, transform: sy !== 1 ? [1, 0, 0, sy, 0, 0] : undefined });
@@ -244,18 +249,19 @@ export async function paint(g, p, W, H) {
   // after an import, a page picture's render started and ran inside the first pan through the new note)
   while (sinceMove() < QUIET) await stillFor();
   g.save();
-  try { await renderInto(pg, g, W, H, false, holdWhileMoving); } finally { g.restore(); pg.cleanup(); }
+  try { await renderInto(pg, turnOf(p), g, W, H, false, holdWhileMoving); } finally { g.restore(); pg.cleanup(); }
 }
 
 // small renders, one blob: URL per PDF page, made one at a time. The desk's asks go first (nearest the screen first);
 // one for a page the desk has scrolled away from, that nothing else asked for, is dropped (asked for again when needed)
 // pw-v7n: a thumb is looked for on the device first (js/pdfin.js thumbGet); only a thumb not kept there is rendered, and
 // only once the stack is still; every thumb made is kept there (thumbPut)
-const thumbs = new Map();   // pdf_path#page -> { key, p (Promise<url|null>), ok, page, recs (desk records), list, run }
+const thumbs = new Map();   // keyOf(page) -> { key, p (Promise<url|null>), ok, page, recs (desk records), list, run }
 const thumbQ = [];
 let thumbBusy = false, thumbDrawing = false;
 let kept = null, keptP = null;                // pw-v7n: the keys of the thumbs kept on the device (loaded once, then kept up to date)
-const keyOf = (p) => p.pdf_path + '#' + p.pdf_page;
+// pw-v7p: a turned page is a picture of its own (a page never turned keeps the key it always had)
+const keyOf = (p) => p.pdf_path + '#' + p.pdf_page + (turnOf(p) ? '@' + turnOf(p) : '');
 const thumbH = (p) => { const { w, h } = pageSize(p); return Math.max(1, Math.round(THUMB_W * h / w)); };
 function keptKeys() { return (keptP ||= thumbKeys().then((s) => { kept = s; return s; })); }
 // render false: from the device or not at all (the desk's pages on screen: their sharp render comes instead)
@@ -263,7 +269,7 @@ function thumbUrl(p, rec, render = true) {
   const key = keyOf(p);
   let e = thumbs.get(key);
   if (!e) {
-    e = { key, page: p, recs: new Set(), list: false, run: false };
+    e = { key, page: { ...p }, recs: new Set(), list: false, run: false };   // pw-v7p: a copy: a turn of the row must not change what this key draws
     e.p = new Promise((ok) => { e.ok = ok; });
     thumbs.set(key, e);
     fromDevice(e, render);
@@ -323,7 +329,7 @@ async function makeThumb(p) {
   while (sinceMove() < QUIET) await stillFor();                           // she moved while the page was fetched: after
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   thumbDrawing = true;
-  try { await renderInto(pg, c.getContext('2d', { alpha: false, willReadFrequently: true }), W, H, true, holdWhileMoving); }
+  try { await renderInto(pg, turnOf(p), c.getContext('2d', { alpha: false, willReadFrequently: true }), W, H, true, holdWhileMoving); }
   finally { pg.cleanup(); thumbDrawing = false; }
   stats.thumbRenders++;
   return jpeg(c);
@@ -377,8 +383,9 @@ async function fill() {
     for (let gen = fillGen; ;) {
       while (!idle()) await sleep(100);
       if (gen !== fillGen) gen = fillGen;                                 // another note (or its PDF arrived): from its top
-      const p = fillNext();
-      if (!p) break;
+      const row = fillNext();
+      if (!row) break;
+      const p = { ...row };                                                 // pw-v7p: as it is now: the key and the picture must agree
       let blob = null;
       try { blob = await makeThumb(p); } catch (_) { break; }               // the PDF is not on this device yet
       if (!blob) break;

@@ -23,7 +23,7 @@
 // (pdf.js, as before this round) with the ink still vector on top. Bytes not on this device: the export stops with
 // "The PDF is not on this device yet", the same toast as before.
 import * as ink from './ink.js';
-import { pageSize, A4, CM, GRID, GRID_TOP, LINE_GAP, LINE_TOP } from './page.js';
+import { pageSize, pdfShape, A4, CM, GRID, GRID_TOP, LINE_GAP, LINE_TOP } from './page.js';
 import * as pdfin from './pdfin.js';
 import * as pdfview from './pdfview.js';
 
@@ -49,7 +49,7 @@ export function loadPdfLib() {
 // a page's size in PDF points, the rule the jsPDF export had
 export function pdfSize(p) {
   const sz = pageSize(p), wpt = sz.w === A4.h ? A4_PT[1] : A4_PT[0];
-  if (p.pdf_path) return [wpt, wpt * p.pdf_h / p.pdf_w];
+  if (p.pdf_path) { const s = pdfShape(p); return [wpt, wpt * s.h / s.w]; }
   return sz.w > sz.h ? [A4_PT[1], A4_PT[0]] : [A4_PT[0], A4_PT[1]];
 }
 
@@ -266,8 +266,9 @@ async function embedSource(L, doc, path, pages) {
 }
 
 // an embedded source page drawn to fill the page W x H points, turned by its own /Rotate (clockwise, as pdf.js shows it)
-function drawSource(L, page, e, W, H) {
-  const bw = e.emb.width, bh = e.emb.height, r = e.rot;
+// plus her turn (pw-v7p, pages.pdf_rot)
+function drawSource(L, page, e, W, H, turn) {
+  const bw = e.emb.width, bh = e.emb.height, r = (e.rot + turn) % 360;
   if (r === 90) page.drawPage(e.emb, { x: 0, y: H, xScale: H / bw, yScale: W / bh, rotate: L.degrees(-90) });
   else if (r === 180) page.drawPage(e.emb, { x: W, y: H, xScale: W / bw, yScale: H / bh, rotate: L.degrees(180) });
   else if (r === 270) page.drawPage(e.emb, { x: W, y: 0, xScale: H / bw, yScale: W / bh, rotate: L.degrees(90) });
@@ -303,7 +304,7 @@ export async function buildPdf(pages, name, progress = () => {}, recsOf = (p) =>
     if (p.pdf_path) {
       if (!sources.has(p.pdf_path)) sources.set(p.pdf_path, await embedSource(L, doc, p.pdf_path, pages));
       const e = sources.get(p.pdf_path).get(p.pdf_page);
-      if (e) drawSource(L, page, e, W, H);
+      if (e) drawSource(L, page, e, W, H, p.pdf_rot || 0);
       else page.drawImage(await sourcePicture(doc, p), { x: 0, y: 0, width: W, height: H });
     }
     const names = new Map();

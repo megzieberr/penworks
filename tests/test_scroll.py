@@ -522,8 +522,8 @@ try:
         check("(j) closing the note turns the lock off", vj0["lock"] is False and pressed() == "false", vj0)
         pg4.locator(".nrow").first.click(); pg4.wait_for_selector("#noteView:not([hidden])"); pg4.wait_for_timeout(200)
         vj = vw()
-        check("(j) opened again: unlocked (aria-pressed false), fitted (zoom back to the fit value, page 1), the second fit, cause 'open'",
-              vj["lock"] is False and pressed() == "false" and abs(vj["z"] - v0["z"]) < 1e-9 and abs(vj["y"] - v0["y"]) < 0.01
+        check("(j) opened again: unlocked (aria-pressed false), fitted (zoom back to the fit value, on the page she left, pw-v7p), the second fit, cause 'open'",
+              vj["lock"] is False and pressed() == "false" and abs(vj["z"] - v0["z"]) < 1e-9 and vj["cur"] > 0
               and vj["fits"] == 2 and vj["cause"] == "open" and lockbtn.is_visible(), vj)
         lockbtn.click(); pg4.wait_for_timeout(60); lockbtn.click(); pg4.wait_for_timeout(60)
         check("a second tap unlocks: aria-pressed false, the toast 'Zoom unlocked', the open padlock again",

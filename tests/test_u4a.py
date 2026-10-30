@@ -550,12 +550,12 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v7o" not in keys:
+        if "pw-v7p" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v7o", "pw-v7o" in keys, keys)
+        check("cache is pw-v7p", "pw-v7p" in keys, keys)
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the shell lists pdfin.js, pdfview.js and both pdf.js files", all(x in swt for x in ["./js/pdfin.js", "./js/pdfview.js", "./vendor/pdf.min.mjs", "./vendor/pdf.worker.min.mjs"]))
-        shell = pg.evaluate("""async () => { const c = await caches.open('pw-v7o'); const out = [];
+        shell = pg.evaluate("""async () => { const c = await caches.open('pw-v7p'); const out = [];
           for (const u of ['./vendor/pdf.min.mjs', './vendor/pdf.worker.min.mjs', './js/pdfin.js', './js/pdfview.js']) out.push(!!(await c.match(u))); return out; }""")
         check("... and they are in the cache (PDF pages draw offline)", shell == [True] * 4, shell)
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in

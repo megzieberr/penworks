@@ -120,6 +120,17 @@ function treeDropped(what) {
 function remember() {
   try { localStorage.setItem(PREF + 'open', JSON.stringify({ sel: S.sel, note: S.openNote })); } catch (_) { /* ignore */ }
 }
+// pw-v7p (her ask 30 Oct): a note opens on the page she was last on. Kept per note on this device, as a page id, so
+// moving pages around keeps it; a page that is gone = the first page.
+function rememberPage() {
+  const p = pagesOf(S.openNote)[S.cur];
+  if (p) try { localStorage.setItem(PREF + 'page.' + S.openNote, p.id); } catch (_) { /* ignore */ }
+}
+function lastPage(id) {
+  let pid = null;
+  try { pid = localStorage.getItem(PREF + 'page.' + id); } catch (_) { /* ignore */ }
+  return Math.max(0, pagesOf(id).findIndex((p) => p.id === pid));
+}
 function rememberFold() {
   try { localStorage.setItem(PREF + 'fold', JSON.stringify(S.fold)); } catch (_) { /* ignore */ }
 }
@@ -296,11 +307,12 @@ function binItems() {
 
 // ---------------------------------------------------------------- the open note
 let openTok = 0;
-async function openNote(id, index = 0) {
+async function openNote(id, index) {                       // no index: the page she was last on (pw-v7p)
   if (!liveNote(note(id))) return;
   const tok = ++openTok;
   await store.ensure(pagesOf(id).map((p) => p.id));        // the pages' strokes from the device cache before the sheets attach
   if (tok !== openTok || !liveNote(note(id))) return;       // another note was opened meanwhile
+  index ??= lastPage(id);
   S.openNote = id; S.cur = index; S.listOpen = false; S.renaming = null; remember();
   document.body.classList.add('noteMode');
   if (!(history.state && history.state.note)) history.pushState({ note: id }, '');
@@ -400,7 +412,7 @@ function deletePage(i) {
 // (pw-v4q): S.clip = [page, page, ...], one entry per page in list order; a single-page Copy makes a list of one.
 // It is not tied to a note, so pages cut in one note paste into another (her ruling, 26 Oct).
 // U4a: a PDF page carries its PDF (pdf_path, pdf_page, pdf_w, pdf_h); the file in storage is shared, never copied
-const PDF_KEYS = ['pdf_path', 'pdf_page', 'pdf_w', 'pdf_h'];
+const PDF_KEYS = ['pdf_path', 'pdf_page', 'pdf_w', 'pdf_h', 'pdf_rot'];
 const pdfOf = (p) => (p && p.pdf_path ? Object.fromEntries(PDF_KEYS.map((k) => [k, p[k]])) : {});
 const clipEntry = (p) => ({ orientation: p.orientation, background: p.background, bookmark: !!p.bookmark, ...pdfOf(p), strokes: ink.copyStrokes(p.id) });
 function copyPage(i, quiet) {
@@ -481,6 +493,31 @@ function setPaper(field, value, all) {
     shown(at);
   };
   doOp({ redo: () => put(changes.map((c) => [c.id, value])), undo: () => put(changes.map((c) => [c.id, c.old])) });
+}
+
+// pw-v7p: PDF pages a quarter turn clockwise, ONE undo step (her ask 30 Oct: scanned pages lying on their side). Only
+// pages.pdf_rot and the orientation change, the file never does. A page with writing stays as it is (the pw-v6c rule).
+function rotatePages(ids) {
+  const list = ids.map(page).filter((p) => p && p.pdf_path), free = list.filter((p) => !written(p)), kept = list.length - free.length;
+  if (kept) toast(kept === 1 ? 'A page with writing can\'t turn' : `${kept} pages with writing did not turn`);
+  if (!free.length) return;
+  const at = S.cur, turns = free.map((p) => ({ id: p.id, old: p.pdf_rot || 0 }));
+  const put = (pairs) => {
+    const groups = new Map();
+    pairs.forEach(([id, rot]) => {
+      const p = page(id);
+      if (!p) return;
+      p.pdf_rot = rot;
+      const { w, h } = pageSize(p), o = w > h ? 'landscape' : 'portrait', k = rot + o;
+      p.orientation = o;
+      groups.set(k, { ids: [...(groups.get(k)?.ids || []), id], patch: { pdf_rot: rot, orientation: o } });
+      pics.changed(id);
+    });
+    groups.forEach((g) => save('setPages', g.ids, g.patch));
+    touchNote(S.openNote);
+    shown(at);
+  };
+  doOp({ redo: () => put(turns.map((t) => [t.id, (t.old + 90) % 360])), undo: () => put(turns.map((t) => [t.id, t.old])) });
 }
 
 // a page's bookmark (pw-v4r), on or off from the page menu. Toggling is NOT an undo step (like Samsung Notes: a
@@ -610,11 +647,12 @@ function paperMenu(anchor) {
   openMenu(anchor, [{ head: 'Page' },
     { label: 'Portrait', on: !pdf && p.orientation === 'portrait', disabled: shape, keep: true, fn: () => ask('orientation', 'portrait') },
     { label: 'Landscape', on: !pdf && p.orientation === 'landscape', disabled: shape, keep: true, fn: () => ask('orientation', 'landscape') },
+    pdf ? { label: 'Rotate page', keep: true, fn: () => rotatePages([p.id]) } : null,   // pw-v7p: the menu stays, a tap = a quarter turn
+    p.id ? { label: p.bookmark ? 'Remove bookmark' : 'Bookmark', fn: () => setBookmark(p.id, !p.bookmark) } : null,     // pw-v7p: under Page, she missed it under Paper
     { head: 'Paper' },
     { label: 'Blank', on: !pdf && p.background === 'blank', disabled: pdf, keep: true, fn: () => ask('background', 'blank') },
     { label: 'Grid, 1 cm squares', on: !pdf && p.background === 'grid', disabled: pdf, keep: true, fn: () => ask('background', 'grid') },
     { label: 'Lined', on: !pdf && p.background === 'lined', disabled: pdf, keep: true, fn: () => ask('background', 'lined') },
-    p.id ? { label: p.bookmark ? 'Remove bookmark' : 'Bookmark', fn: () => setBookmark(p.id, !p.bookmark) } : null,
     { head: 'Note' },
     { label: trayLeft ? 'Tray to the right' : 'Tray to the left', fn: flipTray },   // pw-v7c: names what a tap does
     { label: 'Share note', fn: shareNote },                           // pw-v6b: every page, no ticking
@@ -913,6 +951,7 @@ function tickAction(kind) {
     if (kind === 'cut') deletePages(ids); else renderTick();
     toast(pagesWord(n) + (kind === 'cut' ? ' cut' : ' copied'));
   } else if (kind === 'move') { S.tick.moving = true; renderTick(); }
+  else if (kind === 'rotate') rotatePages(ids);                             // pw-v7p: the ticks stay, another tap turns them again
   else if (kind === 'share') openShare(ids);
 }
 function moveTo(g) {
@@ -952,8 +991,10 @@ function renderTick() {
     }
     return;
   }
-  for (const [act, label] of [['delete', 'Delete'], ['copy', 'Copy'], ['cut', 'Cut'], ['move', 'Move'], ['share', 'Share']]) {
-    const off = !n || (act === 'move' && (n === total || bmOnly));          // moving every page changes nothing; no Move in the filter
+  const pdfNote = pagesOf(S.openNote).some((p) => p.pdf_path);              // pw-v7p: Rotate only in a note with PDF pages
+  for (const [act, label] of [['delete', 'Delete'], ['copy', 'Copy'], ['cut', 'Cut'], ['move', 'Move'], ...(pdfNote ? [['rotate', 'Rotate']] : []), ['share', 'Share']]) {
+    const off = !n || (act === 'move' && (n === total || bmOnly))           // moving every page changes nothing; no Move in the filter
+      || (act === 'rotate' && !shownPages().some((p) => ids.has(p.id) && p.pdf_path));
     B.append(h('button', { type: 'button', class: 'plAct', 'data-act': act, disabled: off, onclick: () => tickAction(act) }, label));
   }
 }
@@ -1315,7 +1356,7 @@ function renderNote() {
   else N.append(h('button', { class: 'nn', type: 'button', title: 'Rename',
     onclick: () => { S.renaming = { kind: 'note', id: n.id, where: 'head' }; renderNote(); } }, n.name));
   const list = pagesOf(n.id);
-  const key = n.id + '#' + list.map((p) => p.id + p.orientation[0] + p.background[0]).join(',');
+  const key = n.id + '#' + list.map((p) => p.id + p.orientation[0] + p.background[0] + (p.pdf_rot || '')).join(',');
   if (key !== stackKey) { stackKey = key; showStack(list); }
   S.cur = Math.max(0, Math.min(current(), list.length - 1));
   renderPageList();
@@ -1519,7 +1560,7 @@ function liveGap(why) {
 const TREE_LIVE_MS = 1000;
 const TREE_KEYS = {
   notes: ['folder_id', 'name', 'pinned', 'cover_path', 'deleted_at'],
-  pages: ['note_id', 'position', 'orientation', 'background', 'bookmark', 'pdf_path', 'pdf_page', 'snapshot_path', 'deleted_at'],
+  pages: ['note_id', 'position', 'orientation', 'background', 'bookmark', 'pdf_path', 'pdf_page', 'pdf_rot', 'snapshot_path', 'deleted_at'],
 };
 const treeStats = { events: 0, news: 0, reads: 0, covers: 0 };   // for the tests (window.__pw.treeLive)
 let treeEvents = [], treeEvT = 0;
@@ -1529,7 +1570,7 @@ function remoteTree(table, type, row) {
   treeEvents.push([table, type, row]);
   if (!treeEvT) treeEvT = setTimeout(treeWeigh, TREE_LIVE_MS);
 }
-const treeVal = (k, v) => (k === 'bookmark' ? v === true : v ?? null);
+const treeVal = (k, v) => (k === 'bookmark' ? v === true : k === 'pdf_rot' ? v || 0 : v ?? null);
 function treeNews(table, type, row) {
   const have = S[table].find((r) => r.id === row.id);
   if (type === 'DELETE') return !!have;
@@ -1714,7 +1755,7 @@ function wire() {
   initTray({ onKeep: (tray, at) => trayKeep(tray, at) });
   initCalc({ trayBtn: $('toolsBtn') });                            // pw-v7d: the calculator card beside the tray
   initPage({ desk: $('desk'), stack: $('stack'), addBelow: $('addBelow'),
-             onCurrent: (i) => { S.cur = Math.max(0, i); updateCount(); ink.clearSelection(); },   // a new page: the selection clears
+             onCurrent: (i) => { S.cur = Math.max(0, i); updateCount(); ink.clearSelection(); rememberPage(); },   // a new page: the selection clears
              onSheets: (sheets) => { ink.attach(sheets); pdfview.attach(sheets); }, onView: pdfview.view,
              ink: ink.hook, onPenButton: penButton });
   pdfview.initView({ page });
@@ -1764,6 +1805,8 @@ function wire() {
   $('undoBtn').addEventListener('click', undo);
   $('redoBtn').addEventListener('click', redo);
   document.addEventListener('pointerdown', (e) => { if (!$('menu').hidden && !e.target.closest('#menu')) closeMenu(); });
+  // pw-v7p: the tap that closes a menu over the desk never draws (Rotate page keeps the menu open; a dot would lock the page)
+  document.addEventListener('pointerdown', (e) => { if (!$('menu').hidden && e.target.closest('#desk')) { closeMenu(); e.stopPropagation(); } }, true);
   document.addEventListener('keydown', (e) => {
     if (e.target.closest && e.target.closest('input')) return;
     if (e.key === 'Escape') {
