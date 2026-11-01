@@ -324,6 +324,28 @@ function styleEl(el, rec) {
 // line and an open head, a curved arrow a <g> of its arc's path and the same head (the head never dashed, so every arrow
 // ends the same way)
 const SHAPE_TAG = { line: 'line', arrow: 'g', carrow: 'g', rect: 'polygon', triangle: 'polygon', circle: 'circle', ellipse: 'ellipse', arc: 'path', parabola: 'path' };
+// U5c (pw-v8c): a compass's shape (a FIXED arc or circle) has its needle mark, a filled dot at the centre of radius
+// max(1.6, w * 0.55) page px in the shape's colour (the constructions app's drawStroke): it is a <g> of the arc's path
+// (or the <circle>) and the dot (circle.needle). Derived from the record every time, never stored, so a move, a turn or a
+// resize carries it. { cx, cy, r } or null (not fixed, not an arc or circle, or an arc whose three points lie in a line)
+export function needleOf(rec) {
+  const d = rec && rec.kind === 'shape' && rec.data;
+  if (!d || !d.fixed || (d.type !== 'arc' && d.type !== 'circle')) return null;
+  const r = Math.max(1.6, ((rec.style && rec.style.width) || 2.5) * 0.55);
+  if (d.type === 'circle') return Number.isFinite(d.cx) && Number.isFinite(d.cy) ? { cx: d.cx, cy: d.cy, r } : null;
+  const g = arcGeom(d);
+  return g ? { cx: g.ox, cy: g.oy, r } : null;
+}
+const hasNeedle = (rec) => rec.kind === 'shape' && !!rec.data && !!rec.data.fixed && (rec.data.type === 'arc' || rec.data.type === 'circle');
+function setNeedle(dot, rec) {
+  const n = needleOf(rec), s = rec.style || {};
+  if (!n) { dot.setAttribute('display', 'none'); return; }
+  dot.removeAttribute('display');
+  dot.setAttribute('cx', f1(n.cx)); dot.setAttribute('cy', f1(n.cy)); dot.setAttribute('r', f1(n.r));
+  dot.setAttribute('fill', s.colour || '#000000');
+  if (!inHl(rec) && s.opacity !== undefined && s.opacity !== 1) dot.setAttribute('fill-opacity', String(s.opacity));
+  else dot.removeAttribute('fill-opacity');
+}
 // the head's three points [one barb's end, the tip, the other barb's end] for a tip, the unit direction the shaft arrives
 // in (ux, uy), the shaft's length L (a short shaft gets a smaller head) and the ink width w; both arrow kinds use it
 function headPts(tip, ux, uy, L, w) {
@@ -345,7 +367,15 @@ export function arcD(d) {                                             // M start
     : 'M' + p(d.x1, d.y1) + 'L' + p(d.xm, d.ym) + 'L' + p(d.x2, d.y2);
 }
 function setGeom(el, rec) {
-  const d = rec.data, at = (k, v) => el.setAttribute(k, f1(v));
+  const d = rec.data;
+  if ((d.type === 'arc' || d.type === 'circle') && el.tagName === 'g') {   // U5c: a compass shape: the shape, then its needle mark
+    const [sh, dot] = el.children;
+    if (d.type === 'arc') sh.setAttribute('d', arcD(d));
+    else for (const k of ['cx', 'cy', 'r']) sh.setAttribute(k, f1(d[k]));
+    setNeedle(dot, rec);
+    return;
+  }
+  const at = (k, v) => el.setAttribute(k, f1(v));
   if (d.type === 'line') { at('x1', d.x1); at('y1', d.y1); at('x2', d.x2); at('y2', d.y2); }
   else if (d.type === 'arrow') {
     const [ln, hd] = el.children;
@@ -368,7 +398,7 @@ function setGeom(el, rec) {
   }
 }
 function makeEl(rec) {
-  const shape = rec.kind === 'shape' && rec.data && SHAPE_TAG[rec.data.type];
+  const shape = rec.kind === 'shape' && rec.data && (hasNeedle(rec) ? 'g' : SHAPE_TAG[rec.data.type]);
   const el = document.createElementNS(SVGNS, shape || 'path');
   el.dataset.id = rec.id;
   styleEl(el, rec);
@@ -378,6 +408,10 @@ function makeEl(rec) {
       const hd = document.createElementNS(SVGNS, 'path');
       hd.setAttribute('class', 'head'); hd.setAttribute('stroke-dasharray', 'none');
       el.append(document.createElementNS(SVGNS, rec.data.type === 'arrow' ? 'line' : 'path'), hd);
+    } else if (shape === 'g') {                                      // U5c: a compass shape, then its needle mark (filled, no stroke)
+      const dot = document.createElementNS(SVGNS, 'circle');
+      dot.setAttribute('class', 'needle'); dot.setAttribute('stroke', 'none'); dot.setAttribute('stroke-dasharray', 'none');
+      el.append(document.createElementNS(SVGNS, rec.data.type === 'arc' ? 'path' : 'circle'), dot);
     }
     setGeom(el, rec);
   } else el.setAttribute('d', dOf(rec));

@@ -25,9 +25,10 @@
 // - A line drawn along an edge lands as ONE shape record { type: 'line', x1, y1, x2, y2, fixed: true } in the current
 //   ink tool's style (the pen's for select, an eraser or restyle), through ink.liveShape (snapNow's own commit).
 // - Stick points, on a tool's page: both ends of every line, arrow, arc and curved arrow, and every crossing of two
-//   of them or of a fixed circle; never freehand ink. Reach: HANDLE_REACH screen px (20), so HANDLE_REACH / zoom page px.
+//   of them or of a fixed circle; never freehand ink. Reach: HANDLE_REACH screen px (20), so HANDLE_REACH / zoom page px
+//   (U5c: the constructions app's reaches now, see below).
 //
-// U5b (pw-v8b, tools round 2): the COMPASS, Mathspad-exact (her ruling 23 Oct), the constructions app's cGeo,
+// U5b (tools round 2): the COMPASS, Mathspad-exact (her ruling 23 Oct), the constructions app's cGeo,
 // hitCompass, drawCompass and the four compass gestures, in SVG on the page, scaled by K like the ruler.
 // - One size: arm ARM (7.5 cm), width R_MIN .. R_MAX, handle HANDLE. Out it comes at a width of 5 cm, hinge up, the
 //   needle at (0.42, 0.68) of the CURRENT page; put away and brought out again it comes out fresh there.
@@ -45,6 +46,18 @@
 //   { type: 'circle', cx, cy, r, fixed: true } from a full turn on; a swing of 0.004 rad or less lands nothing.
 // - Ruler and compass may be out together (a real desk): the tool touched LAST (or brought out last) is on top and
 //   gets the press where they overlap.
+//
+// U5c (pw-v8c): the constructions app's FEEL for sticking (her tablet pass on the U5b build: the needle left no mark and the
+// ruler would not stick to a circle's centre).
+// - A FIXED arc or circle (the compass's) has its centre as a stick point (derived from the record, nothing stored, so a
+//   Select move, turn or resize carries it) and ink.js draws its needle mark there (ink.needleOf). Snapped (not fixed)
+//   arcs and circles: no centre, no mark. Stick points closer than 0.75 page px are one.
+// - snapPt (the needle and the pencil tip) is the constructions app's snapPoint: the nearest stick POINT within PT_REACH,
+//   else the nearest point ON a stick curve (a line or arrow's segment, a fixed arc along its sweep, a fixed circle)
+//   within CURVE_REACH. The ruler's edge (stickRuler) sticks to points only, EDGE_STICK (a ruler line's ends: U5a's 20).
+// - Reaches are the constructions app's, screen px / zoom: PT_REACH 16, CURVE_REACH 9, EDGE_STICK 14, TURN_PULL 10 (a
+//   point that close to a stuck ruler's edge line pulls the turn through it); a free turn clicks onto a 45 degree step
+//   only within TURN_SNAP (1.2 degrees).
 import { CM, view, pagePoint, current } from './page.js';
 import * as ink from './ink.js';
 import { trayState } from './tray.js';
@@ -56,10 +69,13 @@ const MM = CM / 10;
 const RULER_LEN = 20 * CM, RULER_W = 2.2 * CM, RULER_PAD = 14 * K, KNOB_R = 17 * K, KNOB_OFF = 28 * K;
 const EDGE_IN = 14, EDGE_OUT = 26;                   // the edge band, screen px inside and outside an edge
 const KNOB_REACH = 9;                                // screen px past a knob's rim that still turns it
-const STICK = ink.HANDLE_REACH;                      // stick reach, screen px (the Select tool's 20)
+const PT_REACH = 16, CURVE_REACH = 9;                // U5c: screen px: a stick point, else a point on a stick curve (needle, tip)
+const EDGE_STICK = 14;                               // U5c: screen px: the ruler's edge (and a ruler line's end) to a stick point
+const LINE_END = 14;                                 // U5c: screen px: a ruler line's end to a point on the edge (the constructions app's 14)
+const TURN_PULL = 10;                                // U5c: screen px: a point this near a stuck ruler's edge line pulls the turn
 const ON_EDGE = 2.5;                                 // screen px: a stick point this close to an edge lies on it
 const MIN_PIVOT = 24;                                // screen px: a stick point this close to the pivot never sets a turn
-const TURN_SNAP = 6 * PI / 180;                      // a turn within 6 degrees of a 45 degree step lands on the step
+const TURN_SNAP = 1.2 * PI / 180;                    // U5c: a turn within 1.2 degrees of a 45 degree step lands on the step
 const MIN_LINE = 1.5;                                // page px: a shorter ruler line lands nothing
 const RING_BLUE = '#2F4BB8';                         // the handle ring's blue (ink.js SEL_BLUE)
 const HALO = 'rgba(242,179,61,.55)';
@@ -163,36 +179,65 @@ function cross(s, t) {
 
 // ---------------------------------------------------------------- stick points (one page, cached until its records change)
 // U5b: a FIXED circle (a compass's full turn) is a curve too: no ends, its crossings are stick points
+// U5c: a FIXED arc's or circle's centre (the needle's spot) is a stick point; points closer than 0.75 px are one
 function stickData(pageId) {
   if (SP.has(pageId)) return SP.get(pageId);
   const pts = [], curves = [];
+  const push = (p) => { for (const q of pts) if (dist(p, q) < 0.75) return; pts.push(p); };
   for (const r of ink.strokesOf(pageId)) {
     if (r.kind !== 'shape' || !r.data) continue;
     const d = r.data;
     if (d.type === 'circle') {
-      if (d.fixed && [d.cx, d.cy, d.r].every(Number.isFinite) && d.r > 0) curves.push({ t: 'arc', c: [d.cx, d.cy], r: d.r, t1: 0, sw: TAU });
+      if (d.fixed && [d.cx, d.cy, d.r].every(Number.isFinite) && d.r > 0) {
+        curves.push({ t: 'arc', c: [d.cx, d.cy], r: d.r, t1: 0, sw: TAU });
+        push([d.cx, d.cy]);
+      }
       continue;
     }
     if (d.type !== 'line' && d.type !== 'arrow' && d.type !== 'arc' && d.type !== 'carrow') continue;
     const a = [d.x1, d.y1], b = [d.x2, d.y2];
     if (![a, b].every((q) => Number.isFinite(q[0]) && Number.isFinite(q[1]))) continue;
-    pts.push(a, b);
-    curves.push(d.type === 'line' || d.type === 'arrow' ? { t: 'seg', a, b } : arcOf(d) || { t: 'seg', a, b });
+    push(a); push(b);
+    const arc = d.type === 'line' || d.type === 'arrow' ? null : arcOf(d);
+    curves.push(arc || { t: 'seg', a, b });
+    if (arc && d.type === 'arc' && d.fixed) push(arc.c.slice());
   }
-  for (let i = 0; i < curves.length; i++) for (let j = i + 1; j < curves.length; j++) pts.push(...cross(curves[i], curves[j]));
+  for (let i = 0; i < curves.length; i++) for (let j = i + 1; j < curves.length; j++) for (const p of cross(curves[i], curves[j])) push(p);
   const out = { page: pageId, pts, curves };
   SP.set(pageId, out);
   return out;
 }
-// the stick point nearest q within reach (skip: points never to take), or q itself
+// the point on a stick curve nearest p (a segment: its closest point; an arc: p put on its circle, only where the arc
+// runs), or null (the constructions app's nearestOnCurve)
+function nearestOnCurve(p, s) {
+  if (s.t === 'seg') {
+    const ab = sub(s.b, s.a), L = dot(ab, ab), t = L ? clamp(dot(sub(p, s.a), ab) / L, 0, 1) : 0;
+    return add(s.a, mul(ab, t));
+  }
+  const v = sub(p, s.c), d = Math.hypot(v[0], v[1]);
+  if (d < 1e-9) return null;
+  const q = add(s.c, mul(v, s.r / d));
+  return onArc(s, q) ? q : null;
+}
+// U5c, the constructions app's snapPoint: the stick point nearest q within PT_REACH, else the point ON a stick curve
+// nearest q within CURVE_REACH (skip: points never to take), else q itself
 function snapPt(pageId, q, z, skip) {
-  let best = null, bd = STICK / z;
-  for (const s of stickData(pageId).pts) {
+  const { pts, curves } = stickData(pageId);
+  let best = null, bd = PT_REACH / z;
+  for (const s of pts) {
     if (skip && skip(s)) continue;
     const d = dist(s, q);
     if (d < bd) { bd = d; best = s; }
   }
-  return best ? { p: best.slice(), hit: true } : { p: q, hit: false };
+  if (best) return { p: best.slice(), hit: true };
+  bd = CURVE_REACH / z;
+  for (const s of curves) {
+    const c = nearestOnCurve(q, s);
+    if (!c || (skip && skip(c))) continue;
+    const d = dist(c, q);
+    if (d < bd) { bd = d; best = c; }
+  }
+  return best ? { p: best, hit: true } : { p: q, hit: false };
 }
 
 // ---------------------------------------------------------------- the ruler (ported: rGeo, hitRuler, stickRuler, snapTurn, edgeTargets, snapEdgeX)
@@ -217,7 +262,7 @@ function hitRuler(p, z) {
 }
 function stickRuler(z) {
   const g = rGeo(R);
-  let best = null, bd = STICK / z;
+  let best = null, bd = EDGE_STICK / z;
   for (const q of stickData(R.page).pts) {
     const [x, y] = g.toL(q);
     if (x < -RULER_PAD || x > RULER_LEN + RULER_PAD) continue;
@@ -228,7 +273,7 @@ function stickRuler(z) {
 function snapTurn(raw, pivot, lx, usePoints, z) {
   if (usePoints) {
     const u = dirOf(raw), n = [-u[1], u[0]];
-    let best = null, bd = STICK / z;
+    let best = null, bd = TURN_PULL / z;
     for (const q of stickData(R.page).pts) {
       const v = sub(q, pivot);
       if (Math.hypot(v[0], v[1]) < MIN_PIVOT / z) continue;
@@ -258,7 +303,7 @@ function edgeTargets(base, u, n, z) {
   return xs;
 }
 function snapEdgeX(x, targets, z) {
-  let best = null, bd = STICK / z;
+  let best = null, bd = LINE_END / z;
   for (const t of targets) { const d = Math.abs(t - x); if (d < bd) { bd = d; best = t; } }
   if (best !== null) return { x: clamp(best, -RULER_PAD, RULER_LEN + RULER_PAD), hit: true };
   return { x: clamp(x, -RULER_PAD, RULER_LEN + RULER_PAD), hit: false };
@@ -691,9 +736,10 @@ export const hook = { down: penDown, move: penMove, up: penUp, hover: penHover }
 // is gone lets go
 export function changed(pageId) {
   SP.delete(pageId);
-  const gone = (q) => !stickData(pageId).pts.some((s) => dist(s, q) < 0.75);
+  const sd = stickData(pageId), gone = (q) => !sd.pts.some((s) => dist(s, q) < 0.75);
+  const offCurves = (q) => !sd.curves.some((s) => { const c = nearestOnCurve(q, s); return c && dist(c, q) < 0.75; });
   if (R && R.page === pageId && R.stuck && !G) { if (gone(R.stuck.p)) R.stuck = null; }
-  if (C && C.page === pageId && C.stuck && !G) { if (gone(C.stuck)) C.stuck = null; }
+  if (C && C.page === pageId && C.stuck && !G) { if (gone(C.stuck) && offCurves(C.stuck)) C.stuck = null; }   // U5c: the needle may sit on a curve
   if ((R && R.page === pageId) || (C && C.page === pageId)) render();
 }
 // page.js rebuilt the stack (app.js onSheets): each tool goes back on its page's new sheet, or away when its page is gone

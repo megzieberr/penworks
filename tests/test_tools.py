@@ -6,7 +6,7 @@
 # touch PointerEvents on the desk (test_scroll.py's way). The PDF is read with PyMuPDF.
 # What it proves: the button sits straight under the calculator on both tray sides; the panel opens and closes by the pen
 # panel's rule and only Ruler is live; the ruler comes out on the current page in page px (the zoom scales it), never a
-# record, never in a thumb or the PDF; body moves, knobs turn (a 50 degree turn lands on 45), the edge band draws ONE fixed
+# record, never in a thumb or the PDF; body moves, knobs turn (a 46 degree turn lands on 45, U5c: within 1.2 degrees), the edge band draws ONE fixed
 # line record in the current ink style (highlighter lines in their group), short drags land nothing, undo and redo; a
 # finger pans and two fingers pinch even on the ruler; stick points (an end, a crossing) catch the edge, the line's start
 # and a turn; Select moves a fixed line whole with no end handles, Copy and Paste keep fixed; it may hang off the page;
@@ -249,19 +249,19 @@ try:
         r2 = R(pg)
         check("the mouse (real pointer events) moves it too", abs(r2["o"][0] - r1["o"][0] - 30 / zz) < 1e-6 and abs(r2["o"][1] - r1["o"][1] - 20 / zz) < 1e-6 and recs(pg) == [], [r1, r2])
         ctr = local(pg, r2["len"] / 2, r2["w"] / 2); k1 = knob(pg, 1)
-        pen(pg, turn_path(ctr, k1, -50), up=False)
+        pen(pg, turn_path(ctr, k1, -46), up=False)                  # U5c: the 45 degree click is 1.2 degrees wide
         mid = R(pg)
         deg = pg.evaluate("() => { const e = document.querySelector('#stack .sheet .toolDeg'); return e ? [e.textContent, e.classList.contains('on'), e.classList.contains('selDeg')] : null; }")
-        pen_up(pg, turn_path(ctr, k1, -50)[-1])
+        pen_up(pg, turn_path(ctr, k1, -46)[-1])
         r3 = R(pg); ctr3 = local(pg, r3["len"] / 2, r3["w"] / 2)
-        check("a pen drag on the right knob turns it: a 50 degree raw turn lands on 45", abs(r3["ang"] + math.pi / 4) < 1e-9, r3["ang"])
+        check("a pen drag on the right knob turns it: a 46 degree raw turn lands on 45", abs(r3["ang"] + math.pi / 4) < 1e-9, r3["ang"])
         check("... about its centre (unstuck: the centre stays put)", math.hypot(ctr3[0] - ctr[0], ctr3[1] - ctr[1]) < 1e-6, [ctr, ctr3])
         check("while turning, the selection's degree pill shows '45°'", mid["gesture"] == "turn" and deg == ["45°", True, True], deg)
         check("after the lift the pill is gone", not pg.evaluate("() => { const e = document.querySelector('#stack .toolDeg'); return !!e && e.classList.contains('on'); }"))
         k0 = knob(pg, 0)
-        pen(pg, turn_path(ctr3, k0, 50))
+        pen(pg, turn_path(ctr3, k0, 46))
         r4 = R(pg)
-        check("the left knob turns it too: 50 degrees back from 45 lands on 0 (5 degrees from the step)", abs(r4["ang"]) < 1e-9, r4["ang"])
+        check("the left knob turns it too: 46 degrees back from 45 lands on 0 (1 degree from the step)", abs(r4["ang"]) < 1e-9, r4["ang"])
         pen(pg, turn_path(ctr3, knob(pg, 1), 20))
         r5 = R(pg)
         check("a 20 degree turn stays at 20 (no step near it)", abs(math.degrees(r5["ang"]) - 20) < 0.05, math.degrees(r5["ang"]))
@@ -356,17 +356,17 @@ try:
         end_id = pg.evaluate("window.__T.line('s0', 450, 100, 450, 300)")      # a snapped line: its end (450, 300) is a stick point
         r0 = R(pg)
         g0 = local(pg, 300, r0["w"] / 2)
-        dy = (300 + 15 / zz) - r0["o"][1]                           # edge A to 15 screen px below the end
+        dy = (300 + 13 / zz) - r0["o"][1]                           # edge A to 13 screen px below the end (U5c: the reach is 14)
         pen(pg, [g0, [g0[0], g0[1] + dy / 2], [g0[0], g0[1] + dy]])
         r1 = R(pg)
-        check("a ruler edge released 15 px (screen) from a line's end sticks: edge A runs exactly through the end",
+        check("a ruler edge released 13 px (screen) from a line's end sticks: edge A runs exactly through the end",
               r1["stuck"] is not None and r1["stuck"]["edge"] == "A" and edge_perp(r1, [450, 300], "A") < 1e-6 and r1["stuck"]["p"] == [450, 300], r1)
         ring = pg.evaluate("""() => [...document.querySelectorAll('#stack svg.toolLayer circle.stickRing')].filter((c) => c.getAttribute('display') !== 'none')
           .map((c) => [+c.getAttribute('cx'), +c.getAttribute('cy'), +c.getAttribute('r')])""")
         check("... and a small ring marks the stuck point", len(ring) == 1 and abs(ring[0][0] - 450) < 0.01 and abs(ring[0][1] - 300) < 0.01 and ring[0][2] > 0, ring)
         pen(pg, [local(pg, 300, r1["w"] / 2), local(pg, 300, r1["w"] / 2 + 60 / zz)])
         r2 = R(pg)
-        check("moved 60 px away (past the 20 px reach) it lets go, the ring goes",
+        check("moved 60 px away (past the 14 px reach) it lets go, the ring goes",
               r2["stuck"] is None and pg.evaluate("[...document.querySelectorAll('#stack circle.stickRing')].every((c) => c.getAttribute('display') === 'none')"), r2)
         pg.evaluate("window.__T.clear('s0')")
         la = pg.evaluate("window.__T.line('s0', 250, 350, 550, 650)"); lb = pg.evaluate("window.__T.line('s0', 250, 650, 550, 350)")   # crossing at (400, 500)

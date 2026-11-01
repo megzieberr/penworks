@@ -178,6 +178,13 @@ function pathsOf(rec) {
     default: return [];
   }
 }
+// U5c: a compass shape's needle mark (ink.needleOf) as a closed path of four quarter arcs, to fill; '' for none
+function needleD(rec) {
+  const n = ink.needleOf(rec);
+  if (!n) return '';
+  const p = (x, y) => f1(n.cx + x) + ' ' + f1(n.cy + y), a = 'A' + f1(n.r) + ' ' + f1(n.r) + ' 0 0 1 ';
+  return 'M' + p(n.r, 0) + a + p(0, n.r) + a + p(-n.r, 0) + a + p(0, -n.r) + a + p(n.r, 0) + 'Z';
+}
 
 // one page's paper and ink as content stream text. gsOf(opacity) = the page's ExtGState name for that opacity
 function pageOps(sz, background, recs, k, H, gsOf) {
@@ -191,6 +198,11 @@ function pageOps(sz, background, recs, k, H, gsOf) {
     if (opacity !== undefined) ops.push('q', gsOf(opacity) + ' gs', head, pdfPath(d), 'S', 'Q');
     else ops.push(head, pdfPath(d), 'S');
   };
+  const fill = (d, colour, opacity) => {                          // U5c: a needle mark, filled in the shape's colour
+    const head = rgOf(colour).replace(/RG$/, 'rg');
+    if (opacity !== undefined) ops.push('q', gsOf(opacity) + ' gs', head, pdfPath(d), 'f', 'Q');
+    else ops.push(head, pdfPath(d), 'f');
+  };
   const hl = new Map(), pen = [];
   for (const rec of recs) {
     if (ink.inHl(rec)) {
@@ -199,12 +211,21 @@ function pageOps(sz, background, recs, k, H, gsOf) {
         if (!d) continue;
         const key = op + '|' + (st.colour || '#000000') + '|' + w + '|' + dashed;
         let g = hl.get(key);
-        if (!g) hl.set(key, (g = { op, colour: st.colour, w, dashed, ds: [] }));
+        if (!g) hl.set(key, (g = { op, colour: st.colour, w, dashed, ds: [], fs: [] }));
         g.ds.push(d);
+      }
+      const nd = needleD(rec);
+      if (nd) {                                                    // the dot rides with the first group of the record's colour and see-through
+        const key = op + '|' + (st.colour || '#000000') + '|' + w + '|' + (st.dash === 'dashed');
+        const g = hl.get(key);
+        if (g) g.fs.push(nd); else hl.set(key, { op, colour: st.colour, w, dashed: st.dash === 'dashed', ds: [], fs: [nd] });
       }
     } else pen.push(rec);
   }
-  [...hl.values()].sort((a, b) => a.op - b.op).forEach((g) => stroke(g.ds.join(''), g.colour, g.w, g.dashed, g.op));
+  [...hl.values()].sort((a, b) => a.op - b.op).forEach((g) => {
+    if (g.ds.length) stroke(g.ds.join(''), g.colour, g.w, g.dashed, g.op);
+    if (g.fs.length) fill(g.fs.join(''), g.colour, g.op);
+  });
   // the pen layer in seq order; a run of opaque paths with the same colour, width and dash is one path (the same
   // opaque colour painted twice looks the same as once, and a dash pattern starts again on every m, as on every SVG path)
   let run = null;
@@ -220,6 +241,8 @@ function pageOps(sz, background, recs, k, H, gsOf) {
       if (!run) run = { key, colour: st.colour, w, dashed, ds: [] };
       run.ds.push(d);
     }
+    const nd = needleD(rec);
+    if (nd) { end(); fill(nd, st.colour, op); }                    // U5c: the needle mark, after its arc
   }
   end();
   ops.push('Q');

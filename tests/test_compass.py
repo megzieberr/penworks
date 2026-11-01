@@ -1,4 +1,4 @@
-# PenWorks U5b checks (pw-v8b, tools round 2): the COMPASS on the paper, Mathspad-exact (the constructions app's compass,
+# PenWorks U5b + U5c checks (pw-v8c, tools round 2 and the stick feel): the COMPASS on the paper, Mathspad-exact (the constructions app's compass,
 # ported to the page; briefs/U5-TOOLS-DESIGN.md and _build/U5B-COMPASS-BRIEF.md).
 # Run: python tests/test_compass.py        (local mode only: ?local=1, Supabase is never touched)
 # Seeds one note of 3 grid pages into the localStorage twin, 1280 x 800 (the tablet landscape size), the way
@@ -123,6 +123,9 @@ def zoom_to(pg, target):
     pg.evaluate("""(t) => { const d = document.getElementById('desk'), b = d.getBoundingClientRect();
       d.dispatchEvent(new WheelEvent('wheel', { ctrlKey: true, deltaY: Math.log(window.__T.z() / t) / 0.0025, clientX: b.left + 400, clientY: b.top + 300, bubbles: true, cancelable: true })); }""", target)
     pg.wait_for_timeout(80)
+def edge_perp_(r, q):                                            # q's distance from the stuck edge's line (A or B), page px
+    u = (math.cos(r["ang"]), math.sin(r["ang"])); n = (-u[1], u[0]); v = (q[0] - r["o"][0], q[1] - r["o"][1]); y = v[0] * n[0] + v[1] * n[1]
+    return abs(y - (0 if r["stuck"]["edge"] == "A" else r["w"]))
 def pen_live(pg):
     return pg.evaluate("window.__T.sheet('s0').querySelectorAll('svg.ink g.pen > *').length")
 
@@ -277,8 +280,8 @@ try:
         tr = pg.evaluate("window.__pw.tray()")
         c = C(pg); g = c["geo"]; path = turn_path(c["c1"], g["c2"], 90)
         pen(pg, path[:19], up=False)                                # 45 degrees in, the pen still down
-        mid = C(pg)
-        live = pg.evaluate("""() => { const l = [...window.__T.sheet('s0').querySelectorAll('svg.ink g.pen > path')]; const e = l[l.length - 1];
+        mid = C(pg)                                       # U5c: the live arc is a <g> (its path and the needle mark)
+        live = pg.evaluate("""() => { const l = [...window.__T.sheet('s0').querySelectorAll('svg.ink g.pen > g')]; const e = l[l.length - 1];
           return e ? [l.length, e.getAttribute('stroke'), e.getAttribute('stroke-width')] : null; }""")
         midlook = pg.evaluate("""() => { const gc = window.__T.sheet('s0').querySelector('g.compass');
           return [gc.querySelector('circle.lockBtn').getAttribute('fill'), [...gc.querySelectorAll('.halo')].map((h) => h.tagName), window.__T.rings().length,
@@ -330,7 +333,7 @@ try:
         check("a full swing lands ONE circle record, fixed, centre the needle, radius the width (0.01 px)",
               len(nw) == 1 and cd.get("type") == "circle" and cd.get("fixed") is True and abs(cd["cx"] - c["c1"][0]) < 0.006 and abs(cd["cy"] - c["c1"][1]) < 0.006
               and abs(cd["r"] - c["r"]) < 0.006, [nw, c])
-        check("... drawn as one <circle> in the pen group", pg.evaluate("(id) => { const e = window.__T.sheet('s0').querySelector(`svg.ink [data-id=\"${id}\"]`); return e ? e.tagName : null; }", nw[0]["id"] if nw else "") == "circle")
+        check("... drawn as one <g> in the pen group: its <circle> and (U5c) the needle mark", pg.evaluate("(id) => { const e = window.__T.sheet('s0').querySelector(`svg.ink g.pen > [data-id=\"${id}\"]`); return e ? [e.tagName, ...[...e.children].map((k) => k.tagName + '.' + (k.getAttribute('class') || ''))] : null; }", nw[0]["id"] if nw else "") == ["g", "circle.", "circle.needle"])
         c = C(pg); g = c["geo"]; before = ids(pg); n1 = pen_live(pg)
         pen(pg, turn_path(c["c1"], g["c2"], 0.2, steps=4))          # 0.0035 rad
         check("a swing under 0.004 rad lands nothing and leaves no live arc behind", ids(pg) == before and pen_live(pg) == n1, [len(before), len(ids(pg))])
@@ -459,16 +462,16 @@ try:
         rs = recs(pg)
         check("strokesOf carries the arcs and the circle and nothing else (3 'shape' records), the compass still out",
               len(rs) == 3 and sorted(x["data"]["type"] for x in rs) == ["arc", "arc", "circle"] and C(pg) is not None, [x["data"]["type"] for x in rs])
-        th = pg.evaluate("""() => { const s = window.__pw.ink.thumbSvg('s0'); return { paths: s.querySelectorAll('g.pen > path').length, circles: s.querySelectorAll('g.pen > circle').length,
-          compass: s.querySelectorAll('.compass, .toolLayer, polygon, line').length }; }""")
-        check("the thumb draws the 2 arcs and the circle and no compass", th == {"paths": 2, "circles": 1, "compass": 0}, th)
+        th = pg.evaluate("""() => { const s = window.__pw.ink.thumbSvg('s0'); return { paths: s.querySelectorAll('g.pen > g > path').length, circles: s.querySelectorAll('g.pen > g > circle:not(.needle)').length,
+          needles: s.querySelectorAll('g.pen > g > circle.needle').length, compass: s.querySelectorAll('.compass, .toolLayer, polygon, line').length }; }""")
+        check("the thumb draws the 2 arcs and the circle (U5c: each a <g> with its needle mark) and no compass", th == {"paths": 2, "circles": 1, "needles": 3, "compass": 0}, th)
         pdf64 = pg.evaluate("""async () => { const m = await import('./js/pdfout.js');
           const blob = await m.buildPdf([{ id: 's0', orientation: 'portrait', background: 'blank', pdf_path: null }], 'Compass');
           const b = new Uint8Array(await blob.arrayBuffer()); let s = ''; for (let i = 0; i < b.length; i += 8192) s += String.fromCharCode(...b.subarray(i, i + 8192));
           return btoa(s); }""")
         doc = fitz.open(stream=base64.b64decode(pdf64), filetype="pdf"); page = doc[0]
         drs = page.get_drawings(); kpt = 595.28 / 794
-        items = [it for dr in drs for it in dr["items"]]
+        items = [it for dr in drs if dr.get("type") != "f" for it in dr["items"]]     # the strokes (U5c: the needle marks are fills)
         def circ_of(dA):                                            # an arc record's circle (centre, radius), page px
             ax, ay = dA["x1"], dA["y1"]; bx, by = dA["xm"], dA["ym"]; cx_, cy_ = dA["x2"], dA["y2"]
             D = 2 * (ax * (by - cy_) + bx * (cy_ - ay) + cx_ * (ay - by))
@@ -516,6 +519,172 @@ try:
         check("... and the layer draws them in that order (the ruler over the compass)", lay == ["compass", "ruler"], lay)
         show(pg, C(pg)["geo"]["c2"])
         pg.screenshot(path=str(SHOTS / "compass-out.png"))
+
+        # ------------------------------------------------------------ L: U5c, the needle mark and the constructions app's stick feel
+        group[0] = "L. U5c needle mark + feel"
+        if R(pg) is not None: toggle(pg, "ruler")
+        if C(pg) is not None: toggle(pg, "compass")
+        close_panel(pg); pg.evaluate("window.__T.clear('s0')"); pg.evaluate("window.__P.scrollToPage(0)"); pg.wait_for_timeout(60)
+        zz = z(pg)
+        PINK = "#FF0C84"
+        def arc_data(cx, cy, r, a0, a1, fixed=True):                 # three points rounded to 0.01, as the compass lands them
+            at = lambda a: [round(cx + r * math.cos(math.radians(a)), 2), round(cy + r * math.sin(math.radians(a)), 2)]
+            p1, pm, p2 = at(a0), at((a0 + a1) / 2), at(a1)
+            d = {"type": "arc", "x1": p1[0], "y1": p1[1], "xm": pm[0], "ym": pm[1], "x2": p2[0], "y2": p2[1]}
+            if fixed: d["fixed"] = True
+            return d
+        def put(data, style=None):
+            return pg.evaluate("""([d, s]) => { const r = { id: crypto.randomUUID(), page_id: 's0', seq: Date.now() + Math.floor(Math.random() * 1000), kind: 'shape',
+              style: s || { colour: '#FF0C84', width: 2.5, dash: 'solid', opacity: 1 }, data: d }; window.__pw.ink.put('s0', [r]); return r.id; }""", [data, style])
+        def el_of(i):
+            return pg.evaluate("""(id) => { const e = window.__T.sheet('s0').querySelector(`svg.ink [data-id="${id}"]`); if (!e) return null;
+              const n = e.querySelector('circle.needle');
+              return { tag: e.tagName, kids: [...e.children].map((k) => k.tagName + (k.getAttribute('class') ? '.' + k.getAttribute('class') : '')), group: e.parentNode.getAttribute('class'),
+                       needle: n ? { cx: +n.getAttribute('cx'), cy: +n.getAttribute('cy'), r: +n.getAttribute('r'), fill: n.getAttribute('fill'), stroke: n.getAttribute('stroke'),
+                                     op: n.getAttribute('fill-opacity'), shown: n.getAttribute('display') !== 'none' } : null }; }""", i)
+        def near(a, b, tol): return abs(a[0] - b[0]) <= tol and abs(a[1] - b[1]) <= tol
+        def needle_to(want, up=True):                                 # drag the needle by its arm so it would land on want
+            c = C(pg); q = needle_pt(c); dlt = subv(want, c["c1"])
+            pen(pg, [q, addv(q, lerp([0, 0], dlt, 0.5)), addv(q, dlt)], up=False)
+            mid_ = pg.evaluate("window.__T.rings()")
+            if up: pen_up(pg, addv(q, dlt))
+            return C(pg), mid_
+        def tip_to(want):                                             # drag the pencil so its tip would land on want
+            c = C(pg); p0 = pencil_pt(c); dlt = subv(want, c["geo"]["c3"])
+            pen(pg, [p0, addv(p0, lerp([0, 0], dlt, 0.5)), addv(p0, dlt)], up=False)
+            mid_ = pg.evaluate("window.__T.rings()")
+            pen_up(pg, addv(p0, dlt))
+            return C(pg), mid_
+        def ruler_to(y):                                              # drag the (level) ruler straight so edge A would sit at y
+            r0 = R(pg); g0 = local(pg, 300, r0["w"] / 2); dy = y - r0["o"][1]
+            pen(pg, [g0, [g0[0], g0[1] + dy / 2], [g0[0], g0[1] + dy]])
+            return R(pg)
+
+        # the needle mark on the page, in the thumb and in the PDF
+        A = arc_data(400, 500, 100, 30, 150)                         # below its centre (400, 500): ends (486.6, 550) and (313.4, 550)
+        aid = put(A)
+        tid = put(arc_data(200, 250, 80, 0, 90), {"colour": "#0D0DFF", "width": 6, "dash": "solid", "opacity": 1})
+        hid = put(arc_data(600, 650, 70, 180, 300), {"colour": "#FFD400", "width": 12, "dash": "solid", "opacity": 0.4})
+        cid = put({"type": "circle", "cx": 600, "cy": 300, "r": 60, "fixed": True})
+        nid = put(arc_data(200, 850, 80, 0, 120, fixed=False))
+        pid = put({"type": "circle", "cx": 600, "cy": 950, "r": 50})
+        e = el_of(aid); n = e and e["needle"]
+        check("a fixed arc is a <g> of its path and its needle mark (circle.needle), in the pen group",
+              e and e["tag"] == "g" and e["kids"] == ["path", "circle.needle"] and e["group"] == "pen", e)
+        check("... the dot at the arc's centre (0.1 px), radius max(1.6, w x 0.55) = 1.6 at width 2.5, filled in the arc's colour, no stroke",
+              n and near([n["cx"], n["cy"]], [400, 500], 0.1) and n["r"] == 1.6 and n["fill"] == PINK and n["stroke"] == "none" and n["shown"] and n["op"] is None, n)
+        e = el_of(tid); n = e and e["needle"]
+        check("a width-6 arc's dot: radius 6 x 0.55 = 3.3, in its own colour", n and near([n["cx"], n["cy"]], [200, 250], 0.1) and n["r"] == 3.3 and n["fill"] == "#0D0DFF", e)
+        e = el_of(hid); n = e and e["needle"]
+        check("a highlighter arc's dot is a highlighter dot: in the see-through group, its colour, radius 6.6, the group does the 0.4",
+              e and e["group"] == "hlo" and n and near([n["cx"], n["cy"]], [600, 650], 0.1) and n["r"] == 6.6 and n["fill"] == "#FFD400" and n["op"] is None, e)
+        e = el_of(cid); n = e and e["needle"]
+        check("a fixed circle is a <g> of its <circle> and the dot at its centre", e and e["kids"] == ["circle", "circle.needle"] and n and [n["cx"], n["cy"], n["r"]] == [600, 300, 1.6], e)
+        e1 = el_of(nid); e2 = el_of(pid)
+        check("a snapped (not fixed) arc and circle: a plain <path> and <circle>, no dot", e1 and e1["tag"] == "path" and e1["needle"] is None
+              and e2 and e2["tag"] == "circle" and e2["needle"] is None, [e1, e2])
+        th = pg.evaluate("""() => [...window.__pw.ink.thumbSvg('s0').querySelectorAll('circle.needle')].map((n) => [+n.getAttribute('cx'), +n.getAttribute('cy'), +n.getAttribute('r'), n.getAttribute('fill')])""")
+        want_dots = [[400, 500, 1.6, PINK], [200, 250, 3.3, "#0D0DFF"], [600, 650, 6.6, "#FFD400"], [600, 300, 1.6, PINK]]
+        check("the page thumb draws the same 4 needle marks (none for the snapped shapes)",
+              len(th) == 4 and all(any(near(t[:2], w_[:2], 0.1) and t[2] == w_[2] and t[3] == w_[3] for t in th) for w_ in want_dots), th)
+        show(pg, [400, 520]); pg.screenshot(path=str(SHOTS / "u5c-needle-marks.png"))
+        pdf64 = pg.evaluate("""async () => { const m = await import('./js/pdfout.js');
+          const blob = await m.buildPdf([{ id: 's0', orientation: 'portrait', background: 'blank', pdf_path: null }], 'Needle');
+          const b = new Uint8Array(await blob.arrayBuffer()); let s = ''; for (let i = 0; i < b.length; i += 8192) s += String.fromCharCode(...b.subarray(i, i + 8192));
+          return btoa(s); }""")
+        doc = fitz.open(stream=base64.b64decode(pdf64), filetype="pdf"); kpt = 595.28 / 794
+        fills = [dr for dr in doc[0].get_drawings() if dr.get("type") == "f"]
+        def pdf_dot(cx, cy, r):
+            for dr in fills:
+                rc = dr["rect"]
+                if abs((rc.x0 + rc.x1) / 2 - cx * kpt) < 0.15 and abs((rc.y0 + rc.y1) / 2 - cy * kpt) < 0.15 and abs(rc.width - 2 * r * kpt) < 0.15: return dr
+            return None
+        d1 = pdf_dot(400, 500, 1.6); d2 = pdf_dot(600, 650, 6.6)
+        check("Share as PDF: a filled circle at each of the 4 centres (PyMuPDF get_drawings), and no other fill",
+              len(fills) == 4 and all(pdf_dot(w_[0], w_[1], w_[2]) for w_ in want_dots), [(round(f["rect"].x0, 1), round(f["rect"].y0, 1), round(f["rect"].width, 2)) for f in fills])
+        check("... in the shape's colour (pink, opaque), the highlighter's yellow at 0.4",
+              d1 and d2 and all(abs(a - b_) < 0.01 for a, b_ in zip(d1["fill"], (1, 12 / 255, 132 / 255))) and (d1.get("fill_opacity") in (None, 1, 1.0))
+              and all(abs(a - b_) < 0.01 for a, b_ in zip(d2["fill"], (1, 212 / 255, 0))) and abs((d2.get("fill_opacity") or 0) - 0.4) < 0.01,
+              [d1 and (d1["fill"], d1.get("fill_opacity")), d2 and (d2["fill"], d2.get("fill_opacity"))])
+        doc.close()
+
+        # the centre is a stick point: the ruler's edge (14 px) and the needle (16 px) stick to it; not a snapped arc's
+        pg.evaluate("window.__T.clear('s0')"); put(A)
+        pg.evaluate("window.__P.scrollToPage(0)"); pg.wait_for_timeout(60)
+        toggle(pg, "ruler"); close_panel(pg)
+        r1 = ruler_to(500 + 10 / zz)
+        check("the ruler's edge released 10 px from a fixed arc's centre sticks to it",
+              r1["stuck"] is not None and near(r1["stuck"]["p"], [400, 500], 0.02) and edge_perp_(r1, r1["stuck"]["p"]) < 1e-6, r1)
+        r1 = ruler_to(500 + 13 / zz); r2 = ruler_to(500 + 15 / zz)
+        check("... the ruler's reach is 14 px: 13 px sticks, 15 px does not", r1["stuck"] is not None and r2["stuck"] is None, [r1["stuck"], r2["stuck"]])
+        pg.evaluate("window.__T.clear('s0')"); put({"type": "circle", "cx": 400, "cy": 500, "r": 100, "fixed": True})
+        r1 = ruler_to(500 + 10 / zz)
+        check("... and to a fixed circle's centre", r1["stuck"] is not None and r1["stuck"]["p"] == [400, 500], r1)
+        pg.evaluate("window.__T.clear('s0')"); put(arc_data(400, 500, 100, 30, 150, fixed=False))
+        r1 = ruler_to(500 + 10 / zz)
+        check("... never to a snapped (not fixed) arc's centre", r1["stuck"] is None, r1)
+        toggle(pg, "ruler"); toggle(pg, "compass"); close_panel(pg)
+        c1, mid_ = needle_to([400, 500 - 15 / zz])
+        check("the needle released 15 px from a snapped arc's centre stays where it was put (no stick, no ring)",
+              c1["stuck"] is None and near(c1["c1"], [400, 500 - 15 / zz], 1e-6) and mid_ == [], [c1, mid_])
+        pg.evaluate("window.__T.clear('s0')"); put(A)
+        c1, mid_ = needle_to([400, 500 - 15 / zz])
+        check("the needle released 15 px from a fixed arc's centre lands on it, a ring marks it", near(c1["c1"], [400, 500], 0.02) and c1["stuck"] is not None
+              and len(mid_) == 1 and near(mid_[0], [400, 500], 0.02), [c1["c1"], mid_])
+        c1, _ = needle_to([400, 500 - 17 / zz])
+        check("... the point reach is 16 px: released 17 px off it stays free", c1["stuck"] is None and near(c1["c1"], [400, 500 - 17 / zz], 1e-6), c1)
+        pg.evaluate("window.__T.clear('s0')"); put({"type": "circle", "cx": 400, "cy": 500, "r": 100, "fixed": True})
+        c1, _ = needle_to([400 + 12 / zz, 500 - 9 / zz])
+        check("the needle lands on a fixed circle's centre", c1["c1"] == [400, 500] and c1["stuck"] == [400, 500], c1)
+
+        # the needle and the tip settle ON a curve (9 px), the way the constructions app's snapPoint does
+        pg.evaluate("window.__T.clear('s0')"); pg.evaluate("window.__T.line('s0', 250, 400, 650, 400)")
+        c1, mid_ = needle_to([450, 400 + 8 / zz])
+        check("the needle released 8 px from the MIDDLE of a line lands on the line (450, 400), a ring marks it",
+              near(c1["c1"], [450, 400], 1e-6) and c1["stuck"] is not None and len(mid_) == 1 and near(mid_[0], [450, 400], 1e-3), [c1, mid_])
+        c1, _ = needle_to([450, 400 + 10 / zz])
+        check("... the curve reach is 9 px: 10 px off the line stays free", c1["stuck"] is None and near(c1["c1"], [450, 400 + 10 / zz], 1e-6), c1)
+        pg.evaluate("window.__T.clear('s0')"); put(arc_data(450, 600, 100, 180, 360))   # over the top: (350, 600) to (550, 600) through (450, 500)
+        u300 = [math.cos(math.radians(300)), math.sin(math.radians(300))]; P = [450 + 100 * u300[0], 600 + 100 * u300[1]]
+        c0 = C(pg); c1, mid_ = tip_to(addv(P, [8 / zz * u300[0], 8 / zz * u300[1]]))
+        check("the pencil tip released 8 px outside a fixed arc lands ON the arc (the width = needle to that point), a ring while it was set",
+              near(c1["geo"]["c3"], P, 0.05) and abs(c1["r"] - dist(c0["c1"], P)) < 0.05 and any(near(m_, P, 0.05) for m_ in mid_), [c1["geo"]["c3"], P, mid_])
+        c1, _ = tip_to(addv(P, [10 / zz * u300[0], 10 / zz * u300[1]]))
+        check("... 10 px outside it stays free", near(c1["geo"]["c3"], addv(P, [10 / zz * u300[0], 10 / zz * u300[1]]), 1e-6), [c1["geo"]["c3"], P])
+        Q = [450 + 100 * math.cos(math.radians(150)), 600 + 100 * math.sin(math.radians(150))]   # on the circle, off the arc's sweep
+        c1, _ = tip_to(addv(Q, [0, 5 / zz]))
+        check("... off the arc's sweep (its circle's other half) the tip stays free", near(c1["geo"]["c3"], addv(Q, [0, 5 / zz]), 1e-6), [c1["geo"]["c3"], Q])
+
+        # the dot and the stick point ride a Select move (derived, nothing stored)
+        pg.evaluate("window.__T.clear('s0')"); aid = put(A)
+        toggle(pg, "compass"); close_panel(pg)
+        pg.click("#tool-select"); pg.wait_for_timeout(40)
+        show(pg, [A["xm"], A["ym"]]); mp = cl(pg, [A["xm"], A["ym"]])
+        pg.mouse.click(mp[0], mp[1]); pg.wait_for_timeout(60)
+        pg.mouse.move(mp[0], mp[1]); pg.mouse.down(); pg.mouse.move(mp[0] + 20, mp[1] + 15, steps=3); pg.mouse.move(mp[0] + 40, mp[1] + 30, steps=3); pg.mouse.up(); pg.wait_for_timeout(60)
+        mv = recs(pg); e = el_of(aid); n = e and e["needle"]
+        check("Select drags the fixed arc by (40, 30): its dot moves with it to (440, 530), the record has no new fields",
+              len(mv) == 1 and sorted(mv[0]["data"].keys()) == sorted(A.keys()) and n and near([n["cx"], n["cy"]], [440, 530], 0.15), [mv, n])
+        pg.evaluate("window.__pw.ink.clearSelection()"); pg.click("#tool-pen"); pg.wait_for_timeout(40)
+        pg.evaluate("window.__P.scrollToPage(0)"); pg.wait_for_timeout(60)
+        toggle(pg, "compass"); close_panel(pg)
+        c1, _ = needle_to([440, 530 - 12 / zz])
+        check("... and its centre is a stick point where it is now", near(c1["c1"], [440, 530], 0.15) and c1["stuck"] is not None, c1)
+        toggle(pg, "compass"); close_panel(pg)
+
+        # the turn: the 45 degree click is 1.2 degrees wide (the constructions app's)
+        pg.evaluate("window.__T.clear('s0')")
+        toggle(pg, "ruler"); close_panel(pg)
+        r0 = R(pg); ctr = local(pg, r0["len"] / 2, r0["w"] / 2)
+        kn = lambda: local(pg, R(pg)["len"] + R(pg)["pad"] + R(pg)["knobOff"], R(pg)["w"] / 2)
+        pen(pg, turn_path(ctr, kn(), -44))
+        check("a free turn 1 degree short of 45 clicks onto 45", abs(R(pg)["ang"] + math.pi / 4) < 1e-9, math.degrees(R(pg)["ang"]))
+        pen(pg, turn_path(ctr, kn(), 45))
+        check("... back to level", abs(R(pg)["ang"]) < 1e-9, math.degrees(R(pg)["ang"]))
+        pen(pg, turn_path(ctr, kn(), -43))
+        check("a turn 2 degrees short of 45 stays where it is (43)", abs(math.degrees(R(pg)["ang"]) + 43) < 0.05, math.degrees(R(pg)["ang"]))
+        toggle(pg, "ruler"); close_panel(pg)
+        pg.evaluate("window.__T.clear('s0')")
 
         # ------------------------------------------------------------ K: closing the note
         group[0] = "K. close + reopen"
