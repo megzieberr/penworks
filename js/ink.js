@@ -930,6 +930,7 @@ export function classify(raw) {
 // ---------------------------------------------------------------- shape handles (grab with the select tool)
 export function handles(rec) {
   const d = rec.data || {};
+  if (d.fixed) return [];                                          // U5a: a ruler line (fixed) moves whole, its ends are never reshaped
   if (d.type === 'line' || d.type === 'arrow') return [[d.x1, d.y1], [d.x2, d.y2]];
   if (d.type === 'rect' || d.type === 'triangle') return d.points.map((q) => [q[0], q[1]]);
   if (d.type === 'circle' || d.type === 'ellipse') {
@@ -1439,8 +1440,24 @@ function snapNow() {
   G = { kind: 'snapped', page: g.page, rec, el, d, raw: g.rawPts.slice(), pt: g.pt, z: g.z };   // raw: the freehand (pen) points, kept for lastStroke
 }
 
+// U5a: a tool's shape (js/tools.js, the ruler's line), made and committed the way snapNow and up() do it: makeEl, in its
+// group (a highlighter shape in its .hlo group) while it is drawn, then d.els and ONE doOp step. drop() takes an unfinished
+// one off the page with nothing saved.
+export function liveShape(pageId, rec) {
+  const d = data(pageId);
+  if (!d.svg) return null;
+  const el = makeEl(rec);
+  groupFor(d, rec).appendChild(el);
+  return {
+    el,
+    set(r) { setGeom(el, r); },
+    drop() { unplace(d, el); },
+    commit(r) { setGeom(el, r); r.seq = Date.now(); d.els.set(r.id, el); doOp(changeOp([{ page: pageId, removed: [], added: [r] }])); },
+  };
+}
+
 function down(e) {
-  if (e.button === 2) return false;                                // the right button / pen button press: never a gesture (page.js flips the tool on its contextmenu)
+  if (e.button === 2) return false;                               // the right button / pen button press: never a gesture (page.js flips the tool on its contextmenu)
   if (T.tool === 'pen' && barrel(e)) return false;                 // the pen tip down with the button held: a harmless miss, as before
   const at = pageAt(e.clientX, e.clientY);
   if (!at) { if (T.tool === 'select') clearSelection(); return false; }

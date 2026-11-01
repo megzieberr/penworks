@@ -31,6 +31,7 @@ import { initPage, showStack, fit, scrollToPage, relayout, current, bookmarkTab,
 import * as ink from './ink.js';
 import * as store from './store.js';
 import { initCalc } from './calcpanel.js';
+import * as tools from './tools.js';
 import { initTray, closePanel, closePicker, trayState, chooseTool, localTray, adopt as adoptTray } from './tray.js';
 import * as pics from './snap.js';
 import * as live from './live.js';
@@ -1728,6 +1729,7 @@ function penButton() {
 function inkChanged(pageId, how) {
   if (S.listOpen) refreshThumb(pageId);
   pics.changed(pageId, how);
+  tools.changed(pageId);                                          // U5a: the ruler's stick points on that page are read again
   if (how && how.remote && !S.openNote) {
     const p = page(pageId);
     if (p && pagesOf(p.note_id)[0] === p) refreshCard(p.note_id);
@@ -1754,10 +1756,18 @@ function wire() {
   document.addEventListener('pointerdown', (e) => { rightOverOpen = e.button === 2 && overlayOpen(); }, true);   // any other press forgets it
   initTray({ onKeep: (tray, at) => trayKeep(tray, at) });
   initCalc({ trayBtn: $('toolsBtn') });                            // pw-v7d: the calculator card beside the tray
+  tools.initTools({ trayBtn: $('drawToolsBtn'), desk: $('desk') });   // U5a: the Tools panel and the ruler on the paper
+  // U5a: the tools get the first look at a pen press; a press they take is theirs until the lift, any other is ink's
+  let penOwner = null;
+  const deskInk = { ...ink.hook,
+    down: (e) => { penOwner = tools.hook.down(e) ? tools.hook : ink.hook; return penOwner === tools.hook || ink.hook.down(e); },
+    move: (evs) => (penOwner || ink.hook).move(evs),
+    up: (e, cancelled) => { const o = penOwner || ink.hook; penOwner = null; o.up(e, cancelled); },
+    hover: (e) => { tools.hook.hover(e); ink.hook.hover(e); } };
   initPage({ desk: $('desk'), stack: $('stack'), addBelow: $('addBelow'),
              onCurrent: (i) => { S.cur = Math.max(0, i); updateCount(); ink.clearSelection(); rememberPage(); },   // a new page: the selection clears
-             onSheets: (sheets) => { ink.attach(sheets); pdfview.attach(sheets); }, onView: pdfview.view,
-             ink: ink.hook, onPenButton: penButton });
+             onSheets: (sheets) => { ink.attach(sheets); pdfview.attach(sheets); tools.attach(sheets); }, onView: pdfview.view,
+             ink: deskInk, onPenButton: penButton });
   pdfview.initView({ page });
   if (new URLSearchParams(location.search).get('dbg') === '1') import('./dbg.js').then((m) => m.startDbg($('desk'), ink));   // the pen readout, ?dbg=1 only
   $('loginForm').addEventListener('submit', async (e) => {

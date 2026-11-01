@@ -256,8 +256,8 @@ try:
         open_note(pg, "Snap")
         order = pg.evaluate("""[...document.getElementById('tray').querySelectorAll(':scope > *, :scope > .tools > *')]
           .map(e => e.dataset.tool || e.dataset.slot || e.id || e.className)""")
-        check("order (pw-v7e): calculator at the top, colours, pen, highlighter, undo (pw-v6c), stroke eraser, area eraser, restyle, select, gap, redo",
-              order == ["tools", "colours", "tools", "pen", "highlighter", "undoBtn", "eraser", "area", "restyle", "select", "gap", "redoBtn"], order)
+        check("order (pw-v7e, U5a): calculator at the top, the Tools button, colours, pen, highlighter, undo (pw-v6c), stroke eraser, area eraser, restyle, select, gap, redo",
+              order == ["tools", "drawtools", "colours", "tools", "pen", "highlighter", "undoBtn", "eraser", "area", "restyle", "select", "gap", "redoBtn"], order)
         tb = pg.evaluate("""['restyle', 'select'].map(t => { const e = document.getElementById('tool-' + t), r = e.getBoundingClientRect();
           return [e.tagName, e.className, e.title, e.getAttribute('aria-label'), Math.round(r.width), Math.round(r.height), !!e.querySelector('svg'), e.textContent.trim()]; })""")
         pen_r = pg.evaluate("(() => { const r = document.getElementById('tool-pen').getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; })()")
@@ -2958,7 +2958,7 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v7p", "pw-v7p" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v8a", "pw-v8a" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)

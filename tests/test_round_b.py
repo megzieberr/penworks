@@ -97,8 +97,8 @@ try:
         group[0] = "tray"
         open_note(pg, "Twelve")
         order = pg.evaluate(ORDER_JS)
-        check("order (pw-v7e): calculator at the top, colours, pen, highlighter, UNDO, stroke eraser, area eraser, restyle, select, gap, redo",
-              order == ["tools", "colours", "tools", "pen", "highlighter", "undoBtn", "eraser", "area", "restyle", "select", "gap", "redoBtn"], order)
+        check("order (pw-v7e, U5a): calculator at the top, the Tools button, colours, pen, highlighter, UNDO, stroke eraser, area eraser, restyle, select, gap, redo",
+              order == ["tools", "drawtools", "colours", "tools", "pen", "highlighter", "undoBtn", "eraser", "area", "restyle", "select", "gap", "redoBtn"], order)
         check("undo is inside .tools, redo is a child of #tray (after the gap)",
               pg.evaluate("document.getElementById('undoBtn').parentNode.classList.contains('tools') && document.getElementById('redoBtn').parentNode.id === 'tray'"))
         geo = pg.evaluate("""() => { const r = (s) => document.querySelector(s).getBoundingClientRect();
@@ -251,9 +251,9 @@ try:
         group[0] = "cache"
         pg.evaluate("navigator.serviceWorker.ready"); pg.wait_for_timeout(300)
         keys = pg.evaluate("caches.keys()")
-        if "pw-v7p" not in keys:
+        if "pw-v8a" not in keys:
             pg.reload(); ready(pg); pg.wait_for_timeout(600); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v7p", "pw-v7p" in keys, keys)
+        check("cache is pw-v8a", "pw-v8a" in keys, keys)
         ctx.close()
         b.close()
 finally:
