@@ -1,4 +1,4 @@
-# PenWorks U5d checks (pw-v8d, tools round 3, first half): the PROTRACTOR on the paper (the constructions app's
+# PenWorks U5d checks (pw-v8e, tools round 3, first half): the PROTRACTOR on the paper (the constructions app's
 # protractor, ported to the page; briefs/U5-TOOLS-DESIGN.md and _build/U5D-PROTRACTOR-BRIEF.md).
 # Run: python tests/test_protractor.py        (local mode only: ?local=1, Supabase is never touched)
 # Seeds one note of 3 grid pages into the localStorage twin, 1280 x 800 (the tablet landscape size), the way
@@ -331,6 +331,39 @@ try:
         check("at 10.5 px it stays free (no pull)", abs(math.degrees(p["ang"]) - (-30 + off_out)) < 0.01, math.degrees(p["ang"]))
         check("the turns added no records (only the line)", len(recs(pg)) == 1)
         pg.evaluate("window.__T.clear('s0')")
+
+        # ------------------------------------------------------------ D2: the degrees while it is turned (pw-v8e)
+        group[0] = "D2. degrees"
+        toggle(pg, "protractor"); toggle(pg, "protractor"); close_panel(pg)
+        p = P(pg); c = p["o"]
+        ON = "() => [...document.querySelectorAll('#stack .toolDeg.on')].map((e) => { const b = e.getBoundingClientRect(); return { t: e.textContent, cx: (b.left + b.right) / 2, cy: (b.top + b.bottom) / 2 }; })"
+        check("idle: no degree pill is on", pg.evaluate(ON) == [], pg.evaluate(ON))
+        pen(pg, [body_pt(pg), addv(body_pt(pg), [40, 25])])
+        check("after a move: no degree pill is on", pg.evaluate(ON) == [], pg.evaluate(ON))
+        toggle(pg, "protractor"); toggle(pg, "protractor"); close_panel(pg)
+        p = P(pg); c = p["o"]; zz = z(pg)
+        path = turn_path(c, turn_pt(pg), -44)
+        pen(pg, path, up=False); on = pg.evaluate(ON); ang = P(pg)["ang"]
+        check("a turn 1 degree off 45 (held): one pill is on and reads 45 degrees", len(on) == 1 and on[0]["t"] == "45°", on)
+        cc = cl(pg, c); u = [math.cos(ang), math.sin(ang)]
+        proj = (on[0]["cx"] - cc[0]) * u[0] + (on[0]["cy"] - cc[1]) * u[1] if on else 0
+        check("... the pill sits past the right horn, on the baseline's line, clear of the disc (centre beyond R)",
+              on and proj > P(pg)["r"] * zz and abs((on[0]["cx"] - cc[0]) * -u[1] + (on[0]["cy"] - cc[1]) * u[0]) < 25, [proj, P(pg)["r"] * zz, on])
+        pen_up(pg, path[-1])
+        check("... the pill goes off on the lift", pg.evaluate(ON) == [], pg.evaluate(ON))
+        # a free angle, turned by the left horn
+        path = turn_path(c, pl(pg, -P(pg)["r"] * 0.85, P(pg)["r"] * 0.1), 14.6)
+        pen(pg, path, up=False); on = pg.evaluate(ON); ang = P(pg)["ang"]
+        exp = round((-math.degrees(ang)) % 360) % 180
+        check("a free turn by the left horn (held): the pill reads the rounded angle", len(on) == 1 and on[0]["t"] == f"{exp}°" and 25 < exp < 35, [on, exp, math.degrees(ang)])
+        u = [math.cos(ang), math.sin(ang)]
+        proj = (on[0]["cx"] - cc[0]) * u[0] + (on[0]["cy"] - cc[1]) * u[1] if on else 0
+        check("... the pill sits past the LEFT horn (negative along the baseline, beyond R)", on and proj < -P(pg)["r"] * zz, [proj, on])
+        pen_up(pg, path[-1])
+        check("... and goes off on the lift", pg.evaluate(ON) == [], pg.evaluate(ON))
+        check("the pill is gone with the protractor (put away): none on, none in the sheet",
+              (toggle(pg, "protractor"), close_panel(pg), pg.evaluate("document.querySelectorAll('#stack .toolDeg').length"))[2] == 0)
+        toggle(pg, "protractor"); close_panel(pg)
 
         # ------------------------------------------------------------ E: the strip and the zoomed-out reach
         group[0] = "E. reach"

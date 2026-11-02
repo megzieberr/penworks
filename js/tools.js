@@ -59,7 +59,7 @@
 //   point that close to a stuck ruler's edge line pulls the turn through it); a free turn clicks onto a 45 degree step
 //   only within TURN_SNAP (1.2 degrees).
 //
-// U5d (pw-v8d, tools round 3, first half): the PROTRACTOR, the constructions app's pGeo, hitPro, drawPro, resizePro and
+// U5d (pw-v8e, tools round 3, first half): the PROTRACTOR, the constructions app's pGeo, hitPro, drawPro, resizePro and
 // its two gestures, in SVG on the page, scaled by K like the ruler and the compass. It MEASURES: it draws nothing.
 // - The only tool with sizes: radius PRO_R (170 x K, about 5.3 cm), PRO_MIN .. PRO_MAX (100 .. 340 x K) in steps of
 //   PRO_STEP (20 x K). The size buttons are the constructions app's proBar moved into the panel: a small - and + at the
@@ -71,7 +71,7 @@
 // - drawPro part for part, colours fixed (never the ink's): the half disc with a 14 x K strip under the baseline, the
 //   inner arc at R - 52 x K, a tick every degree (14 / 10 / 6 x K at 10 / 5 / 1 degrees), the outer numbers 180 down to
 //   0 at R - 24 x K, the inner numbers 0 up to 180 at R - 40 x K only while R >= 140 x K, the baseline, the 12 x K centre
-//   mark and the 3 x K centre ring. No degree pill, no readout (constructions has none).
+//   mark and the 3 x K centre ring. The turn shows its degrees beside the horn, like the ruler's knob (her ask 2 Nov 11:05, pw-v8e).
 // - Zones, as hitPro: within 0.36 R of either end of the baseline it turns (turnL, turnR; the zone lights amber, clipped
 //   to the body, while hovered or held), the rest of the body moves it (the strip and the rim's 4 x K slack follow the
 //   compass's rule: never smaller on screen than at zoom 1 when zoomed out).
@@ -133,7 +133,7 @@ const SP = new Map();  // page id -> its stick points { pts: [[x, y]], curves: [
 const layers = new Map();   // page id -> its <svg class="toolLayer">
 let gR = null, hi = null, rings = [], degEl = null;      // the ruler's group, knob halos, rings and degree pill
 let gC = null, cRings = [], cmEl = null;                 // the compass's group, rings (needle, pencil tip) and width pill
-let gP = null, pRings = [], pLights = {}, pBuiltR = null;  // U5d: the protractor's group, rings (centre, turn target), zone lights, drawn size
+let gP = null, pRings = [], pLights = {}, pBuiltR = null, pDegEl = null;  // U5d: the protractor's group, rings (centre, turn target), zone lights, drawn size, degree pill
 const sizeBtn = {};                                      // U5d: the - and + on the Protractor row
 
 // ---------------------------------------------------------------- geometry
@@ -430,6 +430,8 @@ function buildCompass() {
 function buildProtractor() {
   gP = sv('g', { class: 'protractor' });
   pRings = [ringEl(), ringEl()];                                   // the centre on its stick point; the point a turn passes through
+  pDegEl = document.createElement('div');
+  pDegEl.className = 'selDeg toolDeg';                             // the protractor's turn pill (pw-v8e)
 }
 // drawPro in SVG, local to the centre (y down, the half disc above the baseline), drawn again only when the size changes
 function drawProShape(r) {
@@ -483,7 +485,7 @@ function layerFor(sheet) {                                         // the page's
   return l;
 }
 const partsOf = (t) => (t === 'ruler' ? [gR, ...rings] : t === 'compass' ? [gC, ...cRings] : [gP, ...pRings]);
-const pillOf = (t) => (t === 'ruler' ? degEl : t === 'compass' ? cmEl : null);   // the protractor has no pill (no readout)
+const pillOf = (t) => (t === 'ruler' ? degEl : t === 'compass' ? cmEl : pDegEl);   // the protractor's pill shows its turn (pw-v8e)
 function restack() {                                               // groups bottom to top in `order`, every ring over them
   for (const t of order) { const g = partsOf(t)[0]; if (g && g.parentNode) g.parentNode.appendChild(g); }
   for (const t of order) { const [g, ...rs] = partsOf(t); if (g && g.parentNode) for (const r of rs) g.parentNode.appendChild(r); }
@@ -607,6 +609,13 @@ function renderProtractor() {
   for (const k in pLights) pLights[k].setAttribute('display', k === zone ? 'inline' : 'none');
   putRing(pRings[0], P.stuck, z);
   putRing(pRings[1], gg && gg.k === 'pTurn' ? gg.target : null, z);
+  if (gg && gg.k === 'pTurn') {                                    // the turn's degrees just past the horn being turned
+    const u = dirOf(P.ang), sx = gg.zone === 'turnR' ? 1 : -1, at = add(P.o, mul(u, sx * (P.r + 30 / z)));
+    pDegEl.textContent = (Math.round(normAng(-P.ang) * 180 / PI) % 180) + '°';
+    pDegEl.style.left = f3(at[0] - 22 / z) + 'px'; pDegEl.style.top = f3(at[1]) + 'px';
+    pDegEl.style.transform = `scale(${f3(1 / z)}) translateY(-50%)`;
+    pDegEl.classList.add('on');
+  } else pDegEl.classList.remove('on');
 }
 function render() { renderRuler(); renderCompass(); renderProtractor(); }
 
