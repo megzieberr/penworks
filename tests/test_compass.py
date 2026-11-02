@@ -1,4 +1,4 @@
-# PenWorks U5b + U5c checks (pw-v8c, tools round 2 and the stick feel): the COMPASS on the paper, Mathspad-exact (the constructions app's compass,
+# PenWorks U5b + U5c checks (tools round 2 and the stick feel): the COMPASS on the paper, Mathspad-exact (the constructions app's compass,
 # ported to the page; briefs/U5-TOOLS-DESIGN.md and _build/U5B-COMPASS-BRIEF.md).
 # Run: python tests/test_compass.py        (local mode only: ?local=1, Supabase is never touched)
 # Seeds one note of 3 grid pages into the localStorage twin, 1280 x 800 (the tablet landscape size), the way
@@ -148,7 +148,7 @@ try:
         open_panel(pg)
         rows = pg.evaluate("[...document.querySelectorAll('#toolsPanel .trow')].map((b) => [b.textContent.trim(), b.disabled, b.title, b.getAttribute('aria-pressed')])")
         check("the Compass row is live (not disabled, no 'Next round' title), unpressed", rows[1][0] == "Compass" and rows[1][1] is False and rows[1][2] == "" and rows[1][3] == "false", rows)
-        check("Protractor and Axes stay disabled ('Next round')", all(r[1] is True and r[2] == "Next round" for r in rows[2:]), rows)
+        check("Axes stays disabled ('Next round'); the Protractor is live (U5d)", rows[3][1] is True and rows[3][2] == "Next round" and rows[2][1] is False, rows)
         pg.click("#trow-compass"); pg.wait_for_timeout(60)
         c = C(pg)
         check("a tap brings the compass out on the current page (page 1), the row and the Tools button pressed",

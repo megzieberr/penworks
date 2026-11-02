@@ -151,11 +151,11 @@ try:
         check("the panel is role=group (not a dialog: overlayOpen must not see it), aria-label 'Tools'",
               pg.get_attribute("#toolsPanel", "role") == "group" and pg.get_attribute("#toolsPanel", "aria-label") == "Tools")
         check("four rows in order: Ruler, Compass, Protractor, Axes", [r[0] for r in rows] == ["Ruler", "Compass", "Protractor", "Axes"], rows)
-        check("Ruler and Compass are live (U5b); Protractor and Axes are disabled, title 'Next round'; none pressed",
-              rows[0][1] is False and rows[1][1] is False and all(r[1] is True and r[2] == "Next round" for r in rows[2:]) and all(r[3] == "false" for r in rows), rows)
+        check("Ruler, Compass and Protractor are live (U5b, U5d); Axes is disabled, title 'Next round'; none pressed",
+              all(r[1] is False for r in rows[:3]) and rows[3][1] is True and rows[3][2] == "Next round" and all(r[3] == "false" for r in rows), rows)
         check("right tray: the panel sits on the desk side, 8 px left of the tray, level with its button",
               abs(p["r"] - (tray["l"] - 8)) < 1 and p["t"] <= tb["t"] + tb["h"] / 2 <= p["b"], [p, tray, tb])
-        pg.click("#trow-protractor", force=True); pg.wait_for_timeout(50)
+        pg.click("#trow-axes", force=True); pg.wait_for_timeout(50)
         pg.mouse.click(p["l"] + 6, p["t"] + 4); pg.wait_for_timeout(50)
         check("a tap inside it (a disabled row, its padding) keeps it open and brings nothing out",
               pg.locator("#toolsPanel").is_visible() and R(pg) is None)

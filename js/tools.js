@@ -4,8 +4,8 @@
 // at 32 px per cm onto a PenWorks page at CM px per cm (K below scales its sizes).
 //
 // - The Tools button (#drawToolsBtn, under the calculator in js/tray.js) opens a small panel beside the tray, on the
-//   desk side like the pen panel: Ruler, Compass, Protractor, Axes. Ruler and Compass are live, Protractor and Axes
-//   are disabled ("Next round"). A row is a toggle: the tool comes out on the CURRENT page, a second tap puts it away
+//   desk side like the pen panel: Ruler, Compass, Protractor, Axes. Ruler, Compass and Protractor (U5d) are live, Axes
+//   is disabled ("Next round"). A row is a toggle: the tool comes out on the CURRENT page, a second tap puts it away
 //   (wherever it is). The panel closes on a press anywhere but itself and its button (the pen panel's rule), on Escape
 //   and on a resize. The button is pressed (aria-pressed, .on) while any tool is out. Not role="dialog": app.js
 //   overlayOpen() treats any visible dialog as an overlay (calcpanel.js has the same reasons).
@@ -47,7 +47,7 @@
 // - Ruler and compass may be out together (a real desk): the tool touched LAST (or brought out last) is on top and
 //   gets the press where they overlap.
 //
-// U5c (pw-v8c): the constructions app's FEEL for sticking (her tablet pass on the U5b build: the needle left no mark and the
+// U5c: the constructions app's FEEL for sticking (her tablet pass on the U5b build: the needle left no mark and the
 // ruler would not stick to a circle's centre).
 // - A FIXED arc or circle (the compass's) has its centre as a stick point (derived from the record, nothing stored, so a
 //   Select move, turn or resize carries it) and ink.js draws its needle mark there (ink.needleOf). Snapped (not fixed)
@@ -58,6 +58,29 @@
 // - Reaches are the constructions app's, screen px / zoom: PT_REACH 16, CURVE_REACH 9, EDGE_STICK 14, TURN_PULL 10 (a
 //   point that close to a stuck ruler's edge line pulls the turn through it); a free turn clicks onto a 45 degree step
 //   only within TURN_SNAP (1.2 degrees).
+//
+// U5d (pw-v8d, tools round 3, first half): the PROTRACTOR, the constructions app's pGeo, hitPro, drawPro, resizePro and
+// its two gestures, in SVG on the page, scaled by K like the ruler and the compass. It MEASURES: it draws nothing.
+// - The only tool with sizes: radius PRO_R (170 x K, about 5.3 cm), PRO_MIN .. PRO_MAX (100 .. 340 x K) in steps of
+//   PRO_STEP (20 x K). The size buttons are the constructions app's proBar moved into the panel: a small - and + at the
+//   right end of the Protractor row (the tray never grows), greyed while it is away and at a bound; a tap on them
+//   keeps the panel open and never toggles the tool. The size is remembered (here and in localStorage pw.proR, page px),
+//   so it comes back the same tomorrow; the ruler and the compass have one size and remember nothing.
+// - Out it comes centred at (0.62, 0.62) of the CURRENT page, level, at the last size; put away and brought out again
+//   it comes out fresh there. A size change keeps its centre and angle.
+// - drawPro part for part, colours fixed (never the ink's): the half disc with a 14 x K strip under the baseline, the
+//   inner arc at R - 52 x K, a tick every degree (14 / 10 / 6 x K at 10 / 5 / 1 degrees), the outer numbers 180 down to
+//   0 at R - 24 x K, the inner numbers 0 up to 180 at R - 40 x K only while R >= 140 x K, the baseline, the 12 x K centre
+//   mark and the 3 x K centre ring. No degree pill, no readout (constructions has none).
+// - Zones, as hitPro: within 0.36 R of either end of the baseline it turns (turnL, turnR; the zone lights amber, clipped
+//   to the body, while hovered or held), the rest of the body moves it (the strip and the rim's 4 x K slack follow the
+//   compass's rule: never smaller on screen than at zoom 1 when zoomed out).
+// - Move: carried by the offset from its centre; the CENTRE snaps (snapPt: a stick point within PT_REACH, else a point
+//   on a stick curve within CURVE_REACH) and a ring marks it while it sits there. Turn: the sweep about the centre, then
+//   snapTurn with the baseline as the edge, 4 R each way: a stick point within TURN_PULL of the baseline's line pulls the
+//   turn through it (a ring marks it), else a 45 degree step clicks within TURN_SNAP.
+// - Never a record: no live shape, nothing in undo, a thumb, a PDF or strokesOf(). It shares `order` with the ruler and
+//   the compass (the last touched is on top); all three may be out together.
 import { CM, view, pagePoint, current } from './page.js';
 import * as ink from './ink.js';
 import { trayState } from './tray.js';
@@ -83,6 +106,11 @@ const HALO = 'rgba(242,179,61,.55)';
 const ARM = 240 * K, R_MIN = 6 * K, R_MAX = 1.85 * ARM, HANDLE = 56 * K, PENCIL = 192 * K, C_START = 160 * K;
 const MIN_SWEEP = 0.004;                             // radians: a swing this small or smaller lands nothing
 const C_ARM = '#8FA3D6', C_EDGE = '#1E2A44', C_OFF = '#A9B1C2', C_DARK = '#2A2F3A';
+// U5d: the protractor (the constructions app's PRO_R, PRO_MIN, PRO_MAX, PRO_STEP, x K; sizes kept in its px units)
+const PRO_U = 170, PRO_UMIN = 100, PRO_UMAX = 340, PRO_USTEP = 20, PRO_INNER = 140;
+const PRO_R = PRO_U * K, PRO_MIN = PRO_UMIN * K, PRO_MAX = PRO_UMAX * K, PRO_STEP = PRO_USTEP * K;
+const PRO_STRIP = 14 * K, PRO_SLACK = 4 * K, PRO_TURN = 0.36;   // the strip under the baseline, the rim's slack, the turn zones
+const PRO_LIGHT = 'rgba(242,179,61,.45)', PRO_KEY = 'pw.proR';
 
 const ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
 const ROWS = [
@@ -96,13 +124,17 @@ let btn = null, panel = null, deskEl = null;
 const rowBtn = {};
 let R = null;          // the ruler when out: { page (id), o: [x, y] (edge A's 0 mark, page px), ang (radians), stuck: { p, edge } | null }
 let C = null;          // the compass when out: { page, c1: [x, y] (the needle), r (width), th (needle to pencil tip, radians), locked, stuck: [x, y] | null }
-let G = null;          // the gesture in progress (G.tool: 'ruler' or 'compass')
+let P = null;          // U5d: the protractor when out: { page, o: [x, y] (the centre), ang (radians), r (radius, page px), stuck: [x, y] | null }
+let proR = PRO_R;      // U5d: the protractor's last size (page px), from localStorage pw.proR
+let G = null;          // the gesture in progress (G.tool: 'ruler', 'compass' or 'protractor')
 let hov = null;        // the tool and zone under the hovering pen: { tool, zone }
 let order = [];        // the tools out, bottom to top (the last touched is on top)
 const SP = new Map();  // page id -> its stick points { pts: [[x, y]], curves: [seg | arc] }, until its records change
 const layers = new Map();   // page id -> its <svg class="toolLayer">
 let gR = null, hi = null, rings = [], degEl = null;      // the ruler's group, knob halos, rings and degree pill
 let gC = null, cRings = [], cmEl = null;                 // the compass's group, rings (needle, pencil tip) and width pill
+let gP = null, pRings = [], pLights = {}, pBuiltR = null;  // U5d: the protractor's group, rings (centre, turn target), zone lights, drawn size
+const sizeBtn = {};                                      // U5d: the - and + on the Protractor row
 
 // ---------------------------------------------------------------- geometry
 const add = (a, b) => [a[0] + b[0], a[1] + b[1]];
@@ -270,15 +302,16 @@ function stickRuler(z) {
   }
   if (best) { R.o = add(R.o, mul(g.n, best.d)); R.stuck = { p: best.q.slice(), edge: best.edge }; } else R.stuck = null;
 }
-function snapTurn(raw, pivot, lx, usePoints, z) {
+// shared by the ruler and (U5d) the protractor, as in the constructions app: the edge's line from minX to maxX along it
+function snapTurn(raw, pivot, lx, usePoints, z, pageId, minX, maxX) {
   if (usePoints) {
     const u = dirOf(raw), n = [-u[1], u[0]];
     let best = null, bd = TURN_PULL / z;
-    for (const q of stickData(R.page).pts) {
+    for (const q of stickData(pageId).pts) {
       const v = sub(q, pivot);
       if (Math.hypot(v[0], v[1]) < MIN_PIVOT / z) continue;
       const along = lx + dot(v, u);
-      if (along < -RULER_PAD || along > RULER_LEN + RULER_PAD) continue;
+      if (along < minX || along > maxX) continue;
       const perp = Math.abs(dot(v, n));
       if (perp < bd) { bd = perp; best = q; }
     }
@@ -332,6 +365,20 @@ function hitCompass(p, z) {
   return null;
 }
 
+// ---------------------------------------------------------------- U5d: the protractor (ported: pGeo, hitPro)
+function pGeo(t) {                                                 // local x along the baseline, local y up into the half disc
+  const u = dirOf(t.ang), up = [u[1], -u[0]];
+  return { u, up, toL: (p) => { const v = sub(p, t.o); return [dot(v, u), dot(v, up)]; } };
+}
+function hitPro(p, z) {
+  const r = P.r, s = Math.max(1, 1 / z), [x, y] = pGeo(P).toL(p);
+  const inside = (y <= 0 && y >= -PRO_STRIP * s && Math.abs(x) <= r) || (y > 0 && Math.hypot(x, y) <= r + PRO_SLACK * s);
+  if (!inside) return null;
+  if (Math.hypot(x - r, y) <= PRO_TURN * r) return 'turnR';
+  if (Math.hypot(x + r, y) <= PRO_TURN * r) return 'turnL';
+  return 'move';
+}
+
 // ---------------------------------------------------------------- drawing them (one svg per page, page px)
 function sv(tag, at = {}) {
   const e = document.createElementNS(SVGNS, tag);
@@ -380,6 +427,50 @@ function buildCompass() {
   cmEl = document.createElement('div');
   cmEl.className = 'selDeg toolCm';                                // the width in cm while it is set (a measure of the tool)
 }
+function buildProtractor() {
+  gP = sv('g', { class: 'protractor' });
+  pRings = [ringEl(), ringEl()];                                   // the centre on its stick point; the point a turn passes through
+}
+// drawPro in SVG, local to the centre (y down, the half disc above the baseline), drawn again only when the size changes
+function drawProShape(r) {
+  const S = PRO_STRIP, ri = r - 52 * K, kids = [];
+  const bodyD = `M${f3(-r)} ${f3(S)}L${f3(-r)} 0A${f3(r)} ${f3(r)} 0 0 1 ${f3(r)} 0L${f3(r)} ${f3(S)}Z`;
+  const defs = sv('defs'), clip = sv('clipPath', { id: 'pwProClip' });
+  clip.append(sv('path', { d: bodyD }));
+  defs.append(clip);
+  kids.push(defs);
+  pLights = {};
+  for (const side of ['turnL', 'turnR']) {                         // the turn zone's amber light, clipped to the body, under its fill
+    pLights[side] = sv('circle', { class: 'halo', 'data-zone': side, cx: side === 'turnR' ? r : -r, cy: 0, r: PRO_TURN * r,
+      fill: PRO_LIGHT, 'clip-path': 'url(#pwProClip)', display: 'none' });
+    kids.push(pLights[side]);
+  }
+  kids.push(sv('path', { class: 'body', d: bodyD, fill: 'rgba(158,196,240,.32)', stroke: 'rgba(59,111,182,.95)', 'stroke-width': 1.2 * K }));
+  kids.push(sv('path', { class: 'innerArc', d: `M${f3(-ri)} 0A${f3(ri)} ${f3(ri)} 0 0 1 ${f3(ri)} 0`, fill: 'none',
+    stroke: 'rgba(59,111,182,.5)', 'stroke-width': K }));
+  const big = [], small = [];
+  for (let d = 0; d <= 180; d++) {
+    const t = d * PI / 180, c = Math.cos(t), s = -Math.sin(t), len = (d % 10 === 0 ? 14 : d % 5 === 0 ? 10 : 6) * K;
+    (d % 10 === 0 ? big : small).push(`M${f3(r * c)} ${f3(r * s)}L${f3((r - len) * c)} ${f3((r - len) * s)}`);
+  }
+  kids.push(sv('path', { class: 'ticks', d: small.join(''), fill: 'none', stroke: '#1E2A44', 'stroke-width': 0.7 * K }),
+    sv('path', { class: 'ticks ten', d: big.join(''), fill: 'none', stroke: '#1E2A44', 'stroke-width': 1.1 * K }));
+  const font = { fill: '#1E2A44', 'font-family': 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif', 'text-anchor': 'middle', 'dominant-baseline': 'central' };
+  const inner = r >= PRO_INNER * K - 1e-6;
+  for (let d = 0; d <= 180; d += 10) {
+    const t = d * PI / 180, c = Math.cos(t), s = -Math.sin(t);
+    const o = sv('text', { ...font, class: 'outer', x: (r - 24 * K) * c, y: (r - 24 * K) * s, 'font-size': 10 * K, 'font-weight': '600' });
+    o.textContent = String(180 - d); kids.push(o);
+    if (inner) {
+      const i = sv('text', { ...font, class: 'inner', x: (r - 40 * K) * c, y: (r - 40 * K) * s, 'font-size': 9 * K });
+      i.textContent = String(d); kids.push(i);
+    }
+  }
+  kids.push(sv('path', { class: 'baseline', d: `M${f3(-r)} 0L${f3(r)} 0M0 0L0 ${f3(-12 * K)}`, fill: 'none', stroke: '#1E2A44', 'stroke-width': K }),
+    sv('circle', { class: 'centre', cx: 0, cy: 0, r: 3 * K, fill: 'none', stroke: '#1E2A44', 'stroke-width': K }));
+  gP.replaceChildren(...kids);
+  pBuiltR = r;
+}
 const sheetOf = (pageId) => [...document.querySelectorAll('#stack .sheet')].find((s) => s.dataset.id === pageId) || null;
 function pageIndex(pageId) { const s = sheetOf(pageId); return s ? +s.dataset.index - 1 : -1; }
 function curSheet() { const i = current(); return i >= 0 ? document.querySelector(`#stack .sheet[data-index="${i + 1}"]`) : null; }
@@ -391,20 +482,20 @@ function layerFor(sheet) {                                         // the page's
   if (l.parentNode !== sheet) sheet.appendChild(l);
   return l;
 }
-const partsOf = (t) => (t === 'ruler' ? [gR, ...rings] : [gC, ...cRings]);
-const pillOf = (t) => (t === 'ruler' ? degEl : cmEl);
+const partsOf = (t) => (t === 'ruler' ? [gR, ...rings] : t === 'compass' ? [gC, ...cRings] : [gP, ...pRings]);
+const pillOf = (t) => (t === 'ruler' ? degEl : t === 'compass' ? cmEl : null);   // the protractor has no pill (no readout)
 function restack() {                                               // groups bottom to top in `order`, every ring over them
   for (const t of order) { const g = partsOf(t)[0]; if (g && g.parentNode) g.parentNode.appendChild(g); }
   for (const t of order) { const [g, ...rs] = partsOf(t); if (g && g.parentNode) for (const r of rs) g.parentNode.appendChild(r); }
 }
 function prune() {                                                 // a layer with no tool left goes
-  for (const [id, l] of layers) if (!l.querySelector('g.ruler, g.compass')) { l.remove(); layers.delete(id); }
+  for (const [id, l] of layers) if (!l.querySelector('g.ruler, g.compass, g.protractor')) { l.remove(); layers.delete(id); }
 }
 function mountTool(t, sheet) {
   const l = layerFor(sheet);
   for (const e of partsOf(t)) l.appendChild(e);
   const pill = pillOf(t);
-  if (pill.parentNode !== sheet) sheet.appendChild(pill);
+  if (pill && pill.parentNode !== sheet) sheet.appendChild(pill);
   restack(); prune();
 }
 function unmountTool(t) {
@@ -507,14 +598,27 @@ function renderCompass() {
     cmEl.classList.add('on');
   } else cmEl.classList.remove('on');
 }
-function render() { renderRuler(); renderCompass(); }
+// U5d: the protractor: its drawing follows its size; per render only its place, the zone light and the rings change
+function renderProtractor() {
+  if (!P || !gP || !gP.isConnected) return;
+  const z = view().z, gg = G && G.tool === 'protractor' ? G : null, zone = zoneOf('protractor');
+  if (pBuiltR !== P.r) drawProShape(P.r);
+  gP.setAttribute('transform', `translate(${f3(P.o[0])} ${f3(P.o[1])}) rotate(${f3(P.ang * 180 / PI)})`);
+  for (const k in pLights) pLights[k].setAttribute('display', k === zone ? 'inline' : 'none');
+  putRing(pRings[0], P.stuck, z);
+  putRing(pRings[1], gg && gg.k === 'pTurn' ? gg.target : null, z);
+}
+function render() { renderRuler(); renderCompass(); renderProtractor(); }
 
 // ---------------------------------------------------------------- out and away
 function paint() {
-  const any = !!(R || C);
+  const any = !!(R || C || P);
   if (btn) { btn.classList.toggle('on', any); btn.setAttribute('aria-pressed', any ? 'true' : 'false'); }
   if (rowBtn.ruler) rowBtn.ruler.setAttribute('aria-pressed', R ? 'true' : 'false');
   if (rowBtn.compass) rowBtn.compass.setAttribute('aria-pressed', C ? 'true' : 'false');
+  if (rowBtn.protractor) rowBtn.protractor.setAttribute('aria-pressed', P ? 'true' : 'false');
+  if (sizeBtn.minus) sizeBtn.minus.disabled = !P || P.r <= PRO_MIN + 1e-6;     // greyed while it is away and at a bound
+  if (sizeBtn.plus) sizeBtn.plus.disabled = !P || P.r >= PRO_MAX - 1e-6;
 }
 function rulerOut() {
   const sheet = curSheet();
@@ -550,9 +654,41 @@ function compassAway() {
   if (gC) unmountTool('compass');
   paint();
 }
-export function putAway() { rulerAway(); compassAway(); }
+// U5d: out centred at (0.62, 0.62) of the CURRENT page, level, at the last size used
+function protractorOut() {
+  const sheet = curSheet();
+  if (!sheet) return;
+  if (!gP) buildProtractor();
+  const w = parseFloat(sheet.style.width), h = parseFloat(sheet.style.height);
+  P = { page: sheet.dataset.id, o: [w * 0.62, h * 0.62], ang: 0, r: proR, stuck: null };
+  mountTool('protractor', sheet); toFront('protractor');
+  render(); paint();
+}
+function protractorAway() {
+  if (G && G.tool === 'protractor') G = null;
+  P = null;
+  if (hov && hov.tool === 'protractor') hov = null;
+  order = order.filter((t) => t !== 'protractor');
+  if (gP) unmountTool('protractor');
+  paint();
+}
+// the constructions app's resizePro: one step of PRO_STEP, clamped, the centre and the angle kept; remembered
+function resizePro(d) {
+  if (!P) return;
+  const u = clamp(Math.round(P.r / K) + d * PRO_USTEP, PRO_UMIN, PRO_UMAX);
+  P.r = proR = u * K;
+  try { localStorage.setItem(PRO_KEY, String(proR)); } catch (e) { /* private window: this session only */ }
+  render(); paint();
+}
+function loadProR() {
+  let v = NaN;
+  try { v = parseFloat(localStorage.getItem(PRO_KEY)); } catch (e) { /* no storage: the default */ }
+  proR = Number.isFinite(v) ? clamp(Math.round(v / K), PRO_UMIN, PRO_UMAX) * K : PRO_R;
+}
+export function putAway() { rulerAway(); compassAway(); protractorAway(); }
 function toggleRuler() { if (R) rulerAway(); else rulerOut(); }
 function toggleCompass() { if (C) compassAway(); else compassOut(); }
+function toggleProtractor() { if (P) protractorAway(); else protractorOut(); }
 
 // ---------------------------------------------------------------- the panel
 function place() {                                                 // beside the tray on its desk side, level with the button (tray.js place)
@@ -572,9 +708,24 @@ function buildPanel() {
     b.innerHTML = icon + '<span>' + label + '</span>';
     if (id === 'ruler') b.addEventListener('click', toggleRuler);
     else if (id === 'compass') b.addEventListener('click', toggleCompass);
+    else if (id === 'protractor') b.addEventListener('click', toggleProtractor);
     else { b.disabled = true; b.title = 'Next round'; }
     rowBtn[id] = b;
-    panel.append(b);
+    if (id !== 'protractor') { panel.append(b); continue; }
+    // U5d: the constructions app's proBar, moved to the row's right end (the tray never grows): - and +, beside the
+    // toggle, never inside it; a tap on them changes the size only (the panel stays open, the tool stays out)
+    const line = document.createElement('div');
+    line.className = 'tline';
+    line.append(b);
+    for (const [k, sign, aria, d] of [['minus', '−', 'Smaller protractor', -1], ['plus', '+', 'Bigger protractor', 1]]) {
+      const s = document.createElement('button');
+      s.type = 'button'; s.className = 'tsz'; s.id = 'pro-' + k; s.textContent = sign; s.disabled = true;
+      s.setAttribute('aria-label', aria);
+      s.addEventListener('click', (e) => { e.stopPropagation(); resizePro(d); });
+      sizeBtn[k] = s;
+      line.append(s);
+    }
+    panel.append(line);
   }
   panel.addEventListener('contextmenu', (e) => e.preventDefault());   // the S Pen's button never opens a menu here
   document.body.append(panel);
@@ -590,15 +741,16 @@ function inkStyle() {                                              // the curren
   const p = s.pen;
   return { colour: p.colour, width: p.width, dash: p.dash || 'solid', opacity: 1 };
 }
+const stateOf = (t) => (t === 'ruler' ? R : t === 'compass' ? C : P);
 // the topmost tool under a client point: { tool, zone, idx, p, z } or null (the last touched first)
 function hitAt(cx, cy) {
   const z = view().z;
   for (let i = order.length - 1; i >= 0; i--) {
-    const t = order[i], T = t === 'ruler' ? R : C;
+    const t = order[i], T = stateOf(t);
     if (!T) continue;
     const idx = pageIndex(T.page);
     if (idx < 0) continue;
-    const p = pagePoint(idx, cx, cy), zone = t === 'ruler' ? hitRuler(p, z) : hitCompass(p, z);
+    const p = pagePoint(idx, cx, cy), zone = t === 'ruler' ? hitRuler(p, z) : t === 'compass' ? hitCompass(p, z) : hitPro(p, z);
     if (zone) return { tool: t, zone, idx, p, z };
   }
   return null;
@@ -610,6 +762,12 @@ export function penDown(e) {
   hov = null;
   toFront(h.tool);
   const { zone, idx, p, z } = h;
+  if (h.tool === 'protractor') {                                   // U5d: move by the body, turn by either end
+    if (zone === 'move') G = { k: 'pMove', tool: 'protractor', zone, idx, off: sub(P.o, p) };
+    else G = { k: 'pTurn', tool: 'protractor', zone, idx, raw: P.ang, prev: p, target: null };
+    render();
+    return true;
+  }
   if (h.tool === 'compass') {
     if (zone === 'lock') { C.locked = !C.locked; G = { k: 'noop', tool: 'compass', zone, idx }; }
     else if (zone === 'move') G = { k: 'cMove', tool: 'compass', zone, idx, off: sub(C.c1, p), snap: null };
@@ -673,13 +831,25 @@ function moveCompass(g, p, z) {
     if (g.k === 'cDraw') { g.lo = Math.min(g.lo, C.th); g.hi = Math.max(g.hi, C.th); }
   }
 }
+// U5d: the protractor's two gestures (the constructions app's pMove and pTurn)
+function moveProtractor(g, p, z) {
+  if (g.k === 'pMove') {                                           // the CENTRE snaps: a stick point, else a point on a stick curve
+    const sn = snapPt(P.page, add(p, g.off), z);
+    P.o = sn.p; P.stuck = sn.hit ? sn.p.slice() : null;
+    return;
+  }
+  g.raw += sweep(g.prev, p, P.o); g.prev = p;                      // pTurn: the sweep about the centre, the baseline as the edge
+  const s = snapTurn(g.raw, P.o, 0, true, z, P.page, -4 * P.r, 4 * P.r);
+  P.ang = s.ang; g.target = s.target;
+}
 function moveTo(g, ev) {
   const z = view().z, p = pagePoint(g.idx, ev.clientX, ev.clientY);
+  if (g.tool === 'protractor') { moveProtractor(g, p, z); return; }
   if (g.tool === 'compass') { moveCompass(g, p, z); return; }
   if (g.k === 'move') { R.o = add(p, g.off); stickRuler(z); return; }
   if (g.k === 'turn') {
     g.raw += sweep(g.prev, p, g.pivot); g.prev = p;
-    const s = snapTurn(g.raw, g.pivot, g.lx, g.stuck, z);
+    const s = snapTurn(g.raw, g.pivot, g.lx, g.stuck, z, R.page, -RULER_PAD, RULER_LEN + RULER_PAD);
     R.ang = s.ang; g.target = s.target;
     const u = dirOf(R.ang), n = [-u[1], u[0]];
     R.o = sub(sub(g.pivot, mul(u, g.lx)), mul(n, g.ly));
@@ -689,7 +859,7 @@ function moveTo(g, ev) {
   g.xe = sx.x;
   g.snap = sx.hit ? add(g.base, mul(g.u, g.xe)) : null;
 }
-const toolOf = (g) => (g.tool === 'ruler' ? R : C);
+const toolOf = (g) => stateOf(g.tool);
 function penMove(events) {
   const g = G;
   if (!g || !toolOf(g)) return;
@@ -725,7 +895,7 @@ function penUp(e, cancelled) {
   render();
 }
 function penHover(e) {
-  if (G || (!R && !C)) return;
+  if (G || (!R && !C && !P)) return;
   const h = hitAt(e.clientX, e.clientY), next = h ? { tool: h.tool, zone: h.zone } : null;
   if ((next && next.tool) !== (hov && hov.tool) || (next && next.zone) !== (hov && hov.zone)) { hov = next; render(); }
 }
@@ -740,14 +910,15 @@ export function changed(pageId) {
   const offCurves = (q) => !sd.curves.some((s) => { const c = nearestOnCurve(q, s); return c && dist(c, q) < 0.75; });
   if (R && R.page === pageId && R.stuck && !G) { if (gone(R.stuck.p)) R.stuck = null; }
   if (C && C.page === pageId && C.stuck && !G) { if (gone(C.stuck) && offCurves(C.stuck)) C.stuck = null; }   // U5c: the needle may sit on a curve
-  if ((R && R.page === pageId) || (C && C.page === pageId)) render();
+  if (P && P.page === pageId && P.stuck && !G) { if (gone(P.stuck) && offCurves(P.stuck)) P.stuck = null; }   // U5d: the centre, the same
+  if ((R && R.page === pageId) || (C && C.page === pageId) || (P && P.page === pageId)) render();
 }
 // page.js rebuilt the stack (app.js onSheets): each tool goes back on its page's new sheet, or away when its page is gone
 export function attach(sheets) {
-  if (!R && !C) return;
+  if (!R && !C && !P) return;
   if (G && G.live) { G.live.drop(); G = null; }
   SP.clear();
-  for (const [t, T, away] of [['ruler', R, rulerAway], ['compass', C, compassAway]]) {
+  for (const [t, T, away] of [['ruler', R, rulerAway], ['compass', C, compassAway], ['protractor', P, protractorAway]]) {
     if (!T) continue;
     const sheet = sheets.find((s) => s.dataset.id === T.page);
     if (!sheet) away(); else mountTool(t, sheet);
@@ -767,9 +938,17 @@ export function compassState() {                                   // for the ch
            gesture: G && G.tool === 'compass' ? G.k : null, lo: G && G.k === 'cDraw' ? G.lo : null, hi: G && G.k === 'cDraw' ? G.hi : null,
            order: order.slice() };
 }
+export function protractorState() {                                // U5d, for the checks: a copy, or null when the protractor is away
+  if (!P) return null;
+  return { page: P.page, o: P.o.slice(), ang: P.ang, r: P.r, stuck: P.stuck ? P.stuck.slice() : null, saved: proR,
+           def: PRO_R, min: PRO_MIN, max: PRO_MAX, step: PRO_STEP, k: K,
+           gesture: G && G.tool === 'protractor' ? G.k : null, target: G && G.k === 'pTurn' && G.target ? G.target.slice() : null,
+           order: order.slice() };
+}
 
 export function initTools({ trayBtn, desk }) {
   btn = trayBtn; deskEl = desk || document.getElementById('desk');
+  loadProR();                                                      // U5d: the protractor's last size
   buildPanel();
   if (btn) btn.addEventListener('click', togglePanel);
   // the pen panel's rule: a press anywhere but the panel and its own button closes it (capture: before anything else)
@@ -786,10 +965,10 @@ export function initTools({ trayBtn, desk }) {
   if (tray) tray.addEventListener('click', () => { if (C) setTimeout(renderCompass, 0); });
   // leaving the note puts every tool away (a note opens with none out)
   new MutationObserver(() => {
-    if (!document.body.classList.contains('noteMode')) { closePanel(); if (R || C) putAway(); }
+    if (!document.body.classList.contains('noteMode')) { closePanel(); if (R || C || P) putAway(); }
   }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
   // the rings and the pills keep their size on screen: drawn again when the zoom changes
   const stack = document.getElementById('stack');
-  if (stack) new MutationObserver(() => { if (R || C) render(); }).observe(stack, { attributes: true, attributeFilter: ['data-zoom'] });
+  if (stack) new MutationObserver(() => { if (R || C || P) render(); }).observe(stack, { attributes: true, attributeFilter: ['data-zoom'] });
   paint();
 }

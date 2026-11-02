@@ -324,7 +324,7 @@ function styleEl(el, rec) {
 // line and an open head, a curved arrow a <g> of its arc's path and the same head (the head never dashed, so every arrow
 // ends the same way)
 const SHAPE_TAG = { line: 'line', arrow: 'g', carrow: 'g', rect: 'polygon', triangle: 'polygon', circle: 'circle', ellipse: 'ellipse', arc: 'path', parabola: 'path' };
-// U5c (pw-v8c): a compass's shape (a FIXED arc or circle) has its needle mark, a filled dot at the centre of radius
+// U5c: a compass's shape (a FIXED arc or circle) has its needle mark, a filled dot at the centre of radius
 // max(1.6, w * 0.55) page px in the shape's colour (the constructions app's drawStroke): it is a <g> of the arc's path
 // (or the <circle>) and the dot (circle.needle). Derived from the record every time, never stored, so a move, a turn or a
 // resize carries it. { cx, cy, r } or null (not fixed, not an arc or circle, or an arc whose three points lie in a line)
