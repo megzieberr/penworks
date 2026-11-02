@@ -1,4 +1,4 @@
-# PenWorks U5d checks (pw-v8e, tools round 3, first half): the PROTRACTOR on the paper (the constructions app's
+# PenWorks U5d checks (pw-v8f, tools round 3, first half): the PROTRACTOR on the paper (the constructions app's
 # protractor, ported to the page; briefs/U5-TOOLS-DESIGN.md and _build/U5D-PROTRACTOR-BRIEF.md).
 # Run: python tests/test_protractor.py        (local mode only: ?local=1, Supabase is never touched)
 # Seeds one note of 3 grid pages into the localStorage twin, 1280 x 800 (the tablet landscape size), the way
@@ -159,9 +159,9 @@ try:
         group[0] = "A. panel"
         open_panel(pg)
         rows = pg.evaluate("[...document.querySelectorAll('#toolsPanel .trow')].map((b) => [b.textContent.trim(), b.disabled, b.title, b.getAttribute('aria-pressed')])")
-        check("still four rows in order (Ruler, Compass, Protractor, Axes); the Protractor row is live, unpressed; Axes stays 'Next round'",
-              [r[0] for r in rows] == ["Ruler", "Compass", "Protractor", "Axes"] and rows[2][1] is False and rows[2][2] == "" and rows[2][3] == "false"
-              and rows[3][1] is True and rows[3][2] == "Next round", rows)
+        check("still four rows in order (Ruler, Compass, Protractor, Axes…); the Protractor row is live, unpressed; Axes… is live (U5e)",
+              [r[0] for r in rows] == ["Ruler", "Compass", "Protractor", "Axes…"] and rows[2][1] is False and rows[2][2] == "" and rows[2][3] == "false"
+              and rows[3][1] is False, rows)
         sb = pg.evaluate("""() => { const row = document.getElementById('trow-protractor'), line = row.parentElement;
           return { line: line.className, kids: [...line.children].map((e) => e.id), aria: [...line.querySelectorAll('.tsz')].map((e) => [e.textContent, e.getAttribute('aria-label')]),
                    inRow: !!row.querySelector('.tsz'), right: [...line.querySelectorAll('.tsz')].every((e) => e.getBoundingClientRect().left > row.getBoundingClientRect().right - 1) }; }""")
@@ -332,7 +332,7 @@ try:
         check("the turns added no records (only the line)", len(recs(pg)) == 1)
         pg.evaluate("window.__T.clear('s0')")
 
-        # ------------------------------------------------------------ D2: the degrees while it is turned (pw-v8e)
+        # ------------------------------------------------------------ D2: the degrees while it is turned (pw-v8f)
         group[0] = "D2. degrees"
         toggle(pg, "protractor"); toggle(pg, "protractor"); close_panel(pg)
         p = P(pg); c = p["o"]

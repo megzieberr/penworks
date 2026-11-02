@@ -82,9 +82,19 @@
 // where the handle sits: a handle on or inside the box's edge is grabbed only by a pen landing outside the box (a shape
 // selected alone has its handles 4 px plus half its width inside the box, so they are reached from outside). The hover
 // ring follows the same rule. A resize keeps the pen's offset from the corner, so it does not jump at the first move.
+// Axes stamp (U5e, pw-v8f; js/tools.js places it): kind 'axes', ONE record, style { colour (the pen's), width 1.5,
+// dash solid, opacity 1 }, data { x0, y0, px, py, xs, xe, xd, ys, ye, yd, deg, line } (axesGeom below: the origin in page
+// px; px and py the page px per x step and per y step, equal unless Degrees; the ranges and steps, the two ticks). Drawn
+// as a <g> (makeEl, setAxes): the axis lines, a tick at every step, an arrow head on each positive end (both ends on a
+// number line), the letters x and y, the numbers in the stroke's colour (filled text, 0.3 min(px, py)). Select picks it
+// up by a tap on an axis line or a box over one; a move carries the origin, a resize scales the origin about the corner
+// and px and py by s (the labels follow);
+// a turn leaves it exactly as it was (no new seq); no reshape handles. Recolour and restyle change its colour only (it
+// stays thin and opaque, never a highlighter). Both erasers remove it whole. The PDF (js/pdfout.js) strokes its lines and
+// writes its labels as Helvetica text. Its ends, crossing and ticks are stick points in js/tools.js (derived, not stored).
 
 import * as store from './store.js';
-import { pageAt, pagePoint, view, pageSize } from './page.js';
+import { pageAt, pagePoint, view, pageSize, CM } from './page.js';
 
 // snap: the pen held still this long (ms) at the end of a stroke; ?hold=400 in the address overrides it.
 // 350 is her number (29 Oct 15:30; it was 500)
@@ -179,6 +189,10 @@ export function copyStrokes(pageId) { return JSON.parse(JSON.stringify(data(page
 // circle, ellipse, arc or parabola gets (48 for the hit tests, more when it turns into ink)
 export function outline(rec, n = 48) {
   const d = rec.data || {};
+  if (rec.kind === 'axes') {                                       // U5e: its box's four corners, then the axes' ends
+    const a = axesGeom(rec), b = a && a.box;
+    return a ? [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]], ...a.ends] : [];
+  }
   if (d.type === 'line' || d.type === 'arrow') return [[d.x1, d.y1], [d.x2, d.y2]];
   if ((d.type === 'rect' || d.type === 'triangle') && d.points && d.points.length) return [...d.points, d.points[0]];
   if (d.type === 'circle' || d.type === 'ellipse') {
@@ -270,7 +284,7 @@ function turn(q, c, deg) {
   return [c[0] + x * cs - y * sn, c[1] + x * sn + y * cs];
 }
 const nrmDeg = (a) => { const v = ((a % 360) + 540) % 360 - 180; return v === -180 ? 180 : v; };   // degrees in (-180, 180]
-const pointsOf = (rec) => (rec.kind === 'shape' ? outline(rec) : ((rec.data && rec.data.points) || []));
+const pointsOf = (rec) => (rec.kind === 'shape' || rec.kind === 'axes' ? outline(rec) : ((rec.data && rec.data.points) || []));
 function boxOf(rec) {
   let b = boxes.get(rec);
   if (!b) {
@@ -354,6 +368,96 @@ function headPts(tip, ux, uy, L, w) {
   const b2 = [tip[0] - len * (ux * c + uy * s), tip[1] - len * (uy * c - ux * s)];
   return [b1, [tip[0], tip[1]], b2];
 }
+// U5e: an axes stamp's drawing, worked out from its record every time (nothing but data is stored). data =
+// { x0, y0 (the page px where x = 0 and y = 0 would be), px, py (page px per x step and per y step: equal, square
+// squares, unless deg), xs, xe, xd, ys, ye, yd (the ranges and steps), deg, line }. A value v sits at x0 + v / xd * px
+// across and y0 - v / yd * py up. Ticks, fonts and the drop of the x labels under their axis go by m = min(px, py)
+// (0.5 px would put the shared 0 on the -1 of a trig graph); the y labels sit 0.35 py left. Returns null
+// for a record it cannot draw, else { lines (the axes, [a, b]), ticks ([a, b]), heads ([barb, tip, barb]), labels
+// ({ t, x, y (the baseline), size, anchor, cls }), box [x0, y0, x1, y1], ends (the axes' ends), cross (where the axes
+// meet), feet (each tick's point on its axis), outer (each tick's outer end) }
+const AX_MAX = 60;
+const fmtAx = (v) => { const r = Math.round(v * 100) / 100; return String(Object.is(r, -0) ? 0 : r); };
+const onV = (a, b, step) => Math.abs(a - b) <= step * 1e-6;
+export function axesGeom(rec) {
+  const d = (rec && rec.data) || {}, px = +d.px, py = +d.py, m = Math.min(px, py), w = (rec.style && rec.style.width) || 1.5, line = !!d.line, deg = !!d.deg;
+  const okR = (s, e, st) => [s, e, st].every(Number.isFinite) && st > 0 && e > s && (e - s) / st <= AX_MAX + 1e-6;
+  if (![d.x0, d.y0, px, py].every(Number.isFinite) || px <= 0 || py <= 0 || !okR(d.xs, d.xe, d.xd) || (!line && !okR(d.ys, d.ye, d.yd))) return null;
+  const X = (v) => d.x0 + (v / d.xd) * px, Y = (v) => d.y0 - (line ? 0 : (v / d.yd) * py);
+  const nx = Math.floor((d.xe - d.xs) / d.xd + 1e-6), ny = line ? 0 : Math.floor((d.ye - d.ys) / d.yd + 1e-6);
+  const ax = d.xs <= 0 && d.xe >= 0 ? 0 : d.xs;                   // the y-axis stands at x = 0, else at the left end
+  const ay = line ? 0 : d.ys <= 0 && d.ye >= 0 ? 0 : d.ys;        // the x-axis lies at y = 0, else at the bottom
+  const xA = X(ax), yA = Y(ay), t = Math.max(3, 0.14 * m);
+  const xL = X(d.xs) - (line ? 0.6 * px : 0), xR = X(d.xs + nx * d.xd) + 0.6 * px;
+  const lines = [[[xL, yA], [xR, yA]]], heads = [headPts([xR, yA], 1, 0, xR - xL, w)];
+  if (line) heads.push(headPts([xL, yA], -1, 0, xR - xL, w));
+  let yB = 0, yT = 0;
+  if (!line) {
+    yB = Y(d.ys); yT = Y(d.ys + ny * d.yd) - 0.6 * py;
+    lines.push([[xA, yB], [xA, yT]]);
+    heads.push(headPts([xA, yT], 0, -1, yB - yT, w));
+  }
+  const ticks = [], feet = [], outer = [], labels = [];
+  const fs = 0.3 * m, fl = 0.32 * m, mid = 0.35 * fs;               // mid: the digits' half height
+  const evOf = (q) => (q / CM < 0.35 ? 4 : q / CM < 0.7 ? 2 : 1), evX = evOf(px), evY = evOf(py);
+  const pick = (k, kA, every) => (((k - kA) % every) + every) % every === 0;
+  const both0 = !line && ax === 0 && ay === 0;
+  const kx = Math.round((ax - d.xs) / d.xd);
+  for (let k = 0; k <= nx; k++) {
+    const v = d.xs + k * d.xd, x = X(v), atY = !line && onV(v, ax, d.xd);
+    if (!atY) { ticks.push([[x, yA - t], [x, yA + t]]); feet.push([x, yA]); outer.push([x, yA + t]); }
+    if (!pick(k, kx, evX)) continue;
+    if (atY && (both0 || d.ys < ay)) continue;                     // the shared 0, or it would sit on the y-axis's line
+    labels.push({ t: fmtAx(v) + (deg ? '°' : ''), x, y: yA + 0.5 * m + mid, size: fs, anchor: 'middle', cls: 'num' });
+  }
+  if (!line) {
+    const ky = Math.round((ay - d.ys) / d.yd);
+    for (let k = 0; k <= ny; k++) {
+      const v = d.ys + k * d.yd, y = Y(v), atX = onV(v, ay, d.yd);
+      if (!atX) { ticks.push([[xA - t, y], [xA + t, y]]); feet.push([xA, y]); outer.push([xA - t, y]); }
+      if (!pick(k, ky, evY)) continue;
+      if (atX && (both0 || d.xs < ax)) continue;                   // the shared 0, or it would sit on the x-axis's line
+      labels.push({ t: fmtAx(v), x: xA - 0.35 * py, y: y + mid, size: fs, anchor: 'end', cls: 'num' });
+    }
+    if (both0) labels.push({ t: '0', x: xA - 0.35 * py, y: yA + 0.5 * m + mid, size: fs, anchor: 'end', cls: 'num zero' });
+    labels.push({ t: 'x', x: xR + 0.08 * px, y: yA + 0.5 * m, size: fl, anchor: 'start', cls: 'letter' });
+    labels.push({ t: 'y', x: xA - 0.15 * py, y: yT - 0.08 * py, size: fl, anchor: 'end', cls: 'letter' });
+  }
+  const b = [Infinity, Infinity, -Infinity, -Infinity], grow = (x, y) => { b[0] = Math.min(b[0], x); b[1] = Math.min(b[1], y); b[2] = Math.max(b[2], x); b[3] = Math.max(b[3], y); };
+  for (const s of [...lines, ...ticks]) for (const q of s) grow(q[0], q[1]);
+  for (const h of heads) for (const q of h) grow(q[0], q[1]);
+  for (const l of labels) {                                        // a label's box: about 0.56 em a character, 0.72 em up, 0.2 down
+    const wd = l.t.length * 0.56 * l.size, x0 = l.anchor === 'middle' ? l.x - wd / 2 : l.anchor === 'end' ? l.x - wd : l.x;
+    grow(x0, l.y - 0.72 * l.size); grow(x0 + wd, l.y + 0.2 * l.size);
+  }
+  const ends = lines.flat().map((q) => q.slice());
+  return { lines, ticks, heads, labels, box: b, ends, cross: line ? (d.xs <= 0 && d.xe >= 0 ? [X(0), yA] : null) : [xA, yA], feet, outer, px, py };
+}
+const f2 = (v) => String(Math.round(v * 100) / 100);
+function setAxes(g, rec) {                                         // the stamp's lines, ticks, heads and labels, drawn again
+  const a = axesGeom(rec), colour = (rec.style && rec.style.colour) || '#000000', kids = [];
+  if (a) {
+    const ln = (q, cls) => { const e = document.createElementNS(SVGNS, 'line'); e.setAttribute('class', cls);
+      e.setAttribute('x1', f2(q[0][0])); e.setAttribute('y1', f2(q[0][1])); e.setAttribute('x2', f2(q[1][0])); e.setAttribute('y2', f2(q[1][1])); kids.push(e); };
+    a.lines.forEach((q) => ln(q, 'axis'));
+    a.ticks.forEach((q) => ln(q, 'tick'));
+    for (const h of a.heads) {
+      const e = document.createElementNS(SVGNS, 'path');
+      e.setAttribute('class', 'head'); e.setAttribute('d', 'M' + h.map((q) => f2(q[0]) + ' ' + f2(q[1])).join('L'));
+      kids.push(e);
+    }
+    for (const l of a.labels) {
+      const e = document.createElementNS(SVGNS, 'text');
+      e.setAttribute('class', l.cls); e.setAttribute('x', f2(l.x)); e.setAttribute('y', f2(l.y));
+      e.setAttribute('font-size', f2(l.size)); e.setAttribute('text-anchor', l.anchor);
+      e.setAttribute('font-family', 'Helvetica, Arial, sans-serif'); e.setAttribute('fill', colour); e.setAttribute('stroke', 'none');
+      if (l.cls === 'letter') e.setAttribute('font-style', 'italic');
+      e.textContent = l.t;
+      kids.push(e);
+    }
+  }
+  g.replaceChildren(...kids);
+}
 function arrowHeadPts(d, w) {                                    // an arrow along its chord, a curved arrow along its end tangent
   if (d.type === 'carrow') { const { u, L } = carrowDir(d); return headPts([d.x2, d.y2], u[0], u[1], L, w); }
   const dx = d.x2 - d.x1, dy = d.y2 - d.y1, L = Math.hypot(dx, dy) || 1;
@@ -367,6 +471,7 @@ export function arcD(d) {                                             // M start
     : 'M' + p(d.x1, d.y1) + 'L' + p(d.xm, d.ym) + 'L' + p(d.x2, d.y2);
 }
 function setGeom(el, rec) {
+  if (rec.kind === 'axes') { setAxes(el, rec); return; }           // U5e: the stamp is drawn again whole
   const d = rec.data;
   if ((d.type === 'arc' || d.type === 'circle') && el.tagName === 'g') {   // U5c: a compass shape: the shape, then its needle mark
     const [sh, dot] = el.children;
@@ -398,6 +503,13 @@ function setGeom(el, rec) {
   }
 }
 function makeEl(rec) {
+  if (rec.kind === 'axes') {                                       // U5e: a <g> of lines, ticks, heads and labels (never dashed)
+    const g = document.createElementNS(SVGNS, 'g');
+    g.dataset.id = rec.id; g.dataset.type = 'axes';
+    styleEl(g, rec); g.removeAttribute('stroke-dasharray');
+    setAxes(g, rec);
+    return g;
+  }
   const shape = rec.kind === 'shape' && rec.data && (hasNeedle(rec) ? 'g' : SHAPE_TAG[rec.data.type]);
   const el = document.createElementNS(SVGNS, shape || 'path');
   el.dataset.id = rec.id;
@@ -608,7 +720,9 @@ function segDist2(px, py, a, b) {
 function near(rec, x, y, reach) {
   const b = boxOf(rec);
   if (x < b[0] - reach || x > b[2] + reach || y < b[1] - reach || y > b[3] + reach) return false;
-  const pts = pointsOf(rec), r2 = reach * reach;
+  const r2 = reach * reach;
+  if (rec.kind === 'axes') { const a = axesGeom(rec); return !!a && a.lines.some((s) => segDist2(x, y, s[0], s[1]) <= r2); }   // U5e: on an axis line
+  const pts = pointsOf(rec);
   if (pts.length === 1) return (pts[0][0] - x) ** 2 + (pts[0][1] - y) ** 2 <= r2;
   for (let i = 1; i < pts.length; i++) if (segDist2(x, y, pts[i - 1], pts[i]) <= r2) return true;
   return false;
@@ -964,6 +1078,7 @@ export function classify(raw) {
 // ---------------------------------------------------------------- shape handles (grab with the select tool)
 export function handles(rec) {
   const d = rec.data || {};
+  if (rec.kind === 'axes') return [];                              // U5e: an axes stamp has no reshape handles
   if (d.fixed) return [];                                          // U5a: a ruler line (fixed) moves whole, its ends are never reshaped
   if (d.type === 'line' || d.type === 'arrow') return [[d.x1, d.y1], [d.x2, d.y2]];
   if (d.type === 'rect' || d.type === 'triangle') return d.points.map((q) => [q[0], q[1]]);
@@ -1052,7 +1167,11 @@ function hover(e) {
 function xform(rec, f, s, rot) {
   const d = rec.data, P = (q) => rp(f(q));
   let nd;
-  if (rec.kind !== 'shape') nd = { ...d, points: d.points.map(P) };
+  if (rec.kind === 'axes') {                                       // U5e: the origin through f, px and py x s; it never turns (rot: left as it was)
+    if (rot) return { ...rec, style: { ...rec.style }, data: { ...d } };
+    const o = f([d.x0, d.y0]), q2 = (v) => Math.round(v * 100) / 100;
+    nd = { ...d, x0: q2(o[0]), y0: q2(o[1]), px: q2(d.px * s), py: q2(d.py * s) };
+  } else if (rec.kind !== 'shape') nd = { ...d, points: d.points.map(P) };
   else if (d.type === 'line' || d.type === 'arrow') { const a = P([d.x1, d.y1]), b = P([d.x2, d.y2]); nd = { ...d, x1: a[0], y1: a[1], x2: b[0], y2: b[1] }; }
   else if (d.type === 'rect' || d.type === 'triangle') nd = { ...d, points: d.points.map(P) };
   else if (d.type === 'arc' || d.type === 'carrow') {              // a curved arrow's head follows its new end tangent
@@ -1272,6 +1391,11 @@ function inBox(id, b) {
   for (const r of data(id).strokes) {
     const q = boxOf(r), w = Math.max(1, (r.style.width || 0) / 2), B = [b[0] - w, b[1] - w, b[2] + w, b[3] + w];
     if (q[2] < B[0] || q[0] > B[2] || q[3] < B[1] || q[1] > B[3]) continue;   // nowhere near
+    if (r.kind === 'axes') {                                       // U5e: an axis's end inside, or an axis line crossing the box
+      const a = axesGeom(r);
+      if (a && a.lines.some((s) => segInBox(s[0], s[1], B))) out.push(r.id);
+      continue;
+    }
     const pts = pointsOf(r);
     let hit = pts.some(([x, y]) => x >= B[0] && x <= B[2] && y >= B[1] && y <= B[3]);
     for (let i = 1; !hit && i < pts.length; i++) hit = segInBox(pts[i - 1], pts[i], B);
@@ -1314,6 +1438,10 @@ export function restyleSelection() { return changeSel(restyled); }   // the full
 
 // ---------------------------------------------------------------- restyle: its own colour, the matching tool's width and opacity; restyle never changes the dash
 function restyled(r) {
+  if (r.kind === 'axes') {                                         // U5e: colour only; an axes stays thin, solid and opaque
+    const c2 = (ST.restyle && ST.restyle.colour) || ST.pen.colour;
+    return same((r.style || {}).colour, c2) ? null : { ...r, style: { ...r.style, colour: c2 } };
+  }
   const p = ST.pen, h = ST.highlighter, hl = inHl(r), c = ST.restyle && ST.restyle.colour;
   const style = hl                                                 // a highlight (stroke or shape) stays a highlight
     ? { colour: c || h.colour, width: h.width, dash: 'solid', opacity: h.opacity }
@@ -1557,7 +1685,7 @@ function down(e) {
 // the live preview while the selection is dragged: each selected path is redrawn from its record put through the
 // gesture (no transform on the ink, so its width never changes); the records change on lift. The box and its
 // handles ride a transform; the chips ride a move or a resize and hide during a turn
-function redraw(el, rec) { if (rec.kind === 'shape') setGeom(el, rec); else el.setAttribute('d', dOf(rec)); }
+function redraw(el, rec) { if (rec.kind === 'shape' || rec.kind === 'axes') setGeom(el, rec); else el.setAttribute('d', dOf(rec)); }
 function liveSel(g) {
   const d = data(g.page), [f, s, rot] = selXf(g);
   for (const r of g.recs) { const el = d.els.get(r.id); if (el) redraw(el, xform(r, f, s, rot)); }
@@ -1694,10 +1822,13 @@ function up(e, cancelled) {
     const same = g.kind === 'smove' ? Math.hypot(g.dx, g.dy) < 0.5 : g.kind === 'sresize' ? Math.abs(g.s - 1) < 1e-3 : !g.a;
     if (cancelled || same) return;                                 // a tap or a 0 px drag: nothing changes, no reorder
     // the changed selection comes to the front: fresh seq values after every stroke on the page, in its own order
+    // U5e: a turn leaves an axes stamp exactly as it was (no new seq either)
+    const recs = g.kind === 'srotate' ? g.recs.filter((r) => r.kind !== 'axes') : g.recs;
+    if (!recs.length) return;
     const [f, s, rot] = selXf(g), all = data(g.page).strokes, top = all.length ? all[all.length - 1].seq : 0;
     const base = Math.max(Date.now(), top + 1);
-    const news = g.recs.slice().sort(bySeq).map((r, k) => ({ ...xform(r, f, s, rot), seq: base + k }));
-    doOp(changeOp([{ page: g.page, removed: g.recs, added: news }]));
+    const news = recs.slice().sort(bySeq).map((r, k) => ({ ...xform(r, f, s, rot), seq: base + k }));
+    doOp(changeOp([{ page: g.page, removed: recs, added: news }]));
     return;
   }
   hideRing();

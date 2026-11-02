@@ -155,6 +155,11 @@ function paperD(w, h, kind) {
 // a record's paths as [d, dashed] pairs, the way ink.js makeEl and setGeom draw it (an arrow's head is never dashed)
 function pathsOf(rec) {
   const st = rec.style || {}, dashed = st.dash === 'dashed', w = st.width || 2.5;
+  if (rec.kind === 'axes') {                                       // U5e: the axis lines and ticks, then the heads (the labels are text, axesText)
+    const a = ink.axesGeom(rec), L2 = (q) => 'M' + f1(q[0][0]) + ' ' + f1(q[0][1]) + 'L' + f1(q[1][0]) + ' ' + f1(q[1][1]);
+    if (!a) return [];
+    return [[[...a.lines, ...a.ticks].map(L2).join(''), false], [a.heads.map((h) => 'M' + h.map((q) => f1(q[0]) + ' ' + f1(q[1])).join('L')).join(''), false]];
+  }
   if (rec.kind !== 'shape') return [[ink.pathD((rec.data && rec.data.points) || []), dashed]];
   const d = rec.data || {}, p = (x, y) => f1(x) + ' ' + f1(y);
   switch (d.type) {
@@ -184,6 +189,25 @@ function needleD(rec) {
   if (!n) return '';
   const p = (x, y) => f1(n.cx + x) + ' ' + f1(n.cy + y), a = 'A' + f1(n.r) + ' ' + f1(n.r) + ' 0 0 1 ';
   return 'M' + p(n.r, 0) + a + p(0, n.r) + a + p(-n.r, 0) + a + p(0, -n.r) + a + p(n.r, 0) + 'Z';
+}
+
+// U5e: an axes stamp's labels as real text (pdf-lib drawText, Helvetica; the letters x and y Helvetica-Oblique), in the
+// stroke's colour, at the screen's size times k, by the same anchors (a centred or right-aligned label moves by its own
+// width). y flips as in pageOps (page px down, PDF points up). The degree sign is in WinAnsi, so Helvetica carries it.
+async function axesText(L, doc, page, recs, k, H, fonts) {
+  const stamps = recs.filter((r) => r.kind === 'axes');
+  if (!stamps.length) return;
+  if (!fonts.n) { fonts.n = await doc.embedFont(L.StandardFonts.Helvetica); fonts.i = await doc.embedFont(L.StandardFonts.HelveticaOblique); }
+  for (const rec of stamps) {
+    const a = ink.axesGeom(rec);
+    if (!a) continue;
+    const [r, g, b] = rgOf((rec.style && rec.style.colour) || '#000000').split(' ').slice(0, 3).map(Number), color = L.rgb(r, g, b);
+    for (const l of a.labels) {
+      const font = l.cls === 'letter' ? fonts.i : fonts.n, size = l.size * k, wd = font.widthOfTextAtSize(l.t, size);
+      const x = l.x * k - (l.anchor === 'middle' ? wd / 2 : l.anchor === 'end' ? wd : 0);
+      page.drawText(l.t, { x, y: H - l.y * k, size, font, color });
+    }
+  }
 }
 
 // one page's paper and ink as content stream text. gsOf(opacity) = the page's ExtGState name for that opacity
@@ -318,6 +342,7 @@ export async function buildPdf(pages, name, progress = () => {}, recsOf = (p) =>
   const doc = await L.PDFDocument.create();
   const sources = new Map();                                     // pdf_path -> Map(pdf_page -> { emb, rot })
   const gsRefs = new Map();                                      // opacity -> one ExtGState for the whole file
+  const fonts = {};                                              // U5e: Helvetica and its oblique, embedded once when a stamp needs them
   const n = pages.length;
   for (let i = 0; i < n; i++) {
     progress(i + 1, n);
@@ -338,8 +363,10 @@ export async function buildPdf(pages, name, progress = () => {}, recsOf = (p) =>
       }
       return names.get(op);
     };
-    const text = pageOps(sz, p.pdf_path ? '' : p.background, (recsOf(p) || []).slice().sort((a, b) => a.seq - b.seq), k, H, gsOf);
+    const recs = (recsOf(p) || []).slice().sort((a, b) => a.seq - b.seq);
+    const text = pageOps(sz, p.pdf_path ? '' : p.background, recs, k, H, gsOf);
     page.node.addContentStream(doc.context.register(await flate(doc, text)));
+    await axesText(L, doc, page, recs, k, H, fonts);              // U5e: after the ink's stream, the stamps' numbers as text
   }
   doc.setTitle(name);
   const bytes = await doc.save({ useObjectStreams: true });

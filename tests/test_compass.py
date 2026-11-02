@@ -148,7 +148,7 @@ try:
         open_panel(pg)
         rows = pg.evaluate("[...document.querySelectorAll('#toolsPanel .trow')].map((b) => [b.textContent.trim(), b.disabled, b.title, b.getAttribute('aria-pressed')])")
         check("the Compass row is live (not disabled, no 'Next round' title), unpressed", rows[1][0] == "Compass" and rows[1][1] is False and rows[1][2] == "" and rows[1][3] == "false", rows)
-        check("Axes stays disabled ('Next round'); the Protractor is live (U5d)", rows[3][1] is True and rows[3][2] == "Next round" and rows[2][1] is False, rows)
+        check("the Protractor (U5d) and Axes… (U5e) rows are live too", rows[3][1] is False and rows[2][1] is False, rows)
         pg.click("#trow-compass"); pg.wait_for_timeout(60)
         c = C(pg)
         check("a tap brings the compass out on the current page (page 1), the row and the Tools button pressed",
@@ -695,7 +695,7 @@ try:
         open_note(pg)
         pg.click("#drawToolsBtn"); pg.wait_for_timeout(60)
         rows = pg.evaluate("[...document.querySelectorAll('#toolsPanel .trow')].map((b) => b.getAttribute('aria-pressed'))")
-        check("reopened: no tool out, every row unpressed", R(pg) is None and C(pg) is None and pg.locator("svg.toolLayer").count() == 0 and rows == ["false"] * 4, rows)
+        check("reopened: no tool out, every tool row unpressed (Axes… is no toggle)", R(pg) is None and C(pg) is None and pg.locator("svg.toolLayer").count() == 0 and rows == ["false"] * 3 + [None], rows)
         close_panel(pg)
         check("no page errors", not errs, errs)
         ctx.close()

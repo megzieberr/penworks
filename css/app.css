@@ -536,6 +536,41 @@ body.trayLeft #counter { right: auto; left: 14px; }
 }
 .toolsPanel .tsz:not(:disabled):hover { background: var(--hover); }
 .toolsPanel .tsz:disabled { opacity: .35; cursor: default; }
+/* U5e: the axes stamp's settings card, beside the Tools panel (the panel's own look); fields 64 x 40 px for a pen tap,
+   ticks 24 px; a bad field goes red and the line under the fields says why. Not a dialog (app.js overlayOpen) */
+.axesCard {
+  position: fixed; z-index: 41; background: var(--card); color: var(--graphite); border-radius: 10px;
+  padding: 12px 14px 14px; box-shadow: 0 6px 30px rgba(20,22,26,.25); width: max-content; max-width: calc(100vw - 16px);
+}
+.axesCard .axClose {
+  position: absolute; top: 6px; right: 6px; width: 36px; height: 36px; padding: 6px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--graphite); cursor: pointer;
+}
+.axesCard .axClose:hover { background: var(--hover); }
+.axesCard .axClose svg { width: 100%; height: 100%; display: block; }
+.axesCard .axTitle { display: block; font-size: 14.5px; font-weight: 700; line-height: 24px; margin-bottom: 6px; padding-right: 36px; }
+.axesCard .axCols { display: grid; grid-template-columns: 22px repeat(3, 64px); gap: 6px; font-size: 12.5px; font-weight: 700; color: var(--muted); }
+.axesCard .axCols::before { content: ""; }
+.axesCard .axCols span { text-align: center; }
+.axesCard .axRow { display: grid; grid-template-columns: 22px repeat(3, 64px); gap: 6px; align-items: center; margin-top: 6px; }
+.axesCard .axName { font-size: 15px; font-weight: 700; font-style: italic; }
+.axesCard .axNum {
+  width: 64px; height: 40px; box-sizing: border-box; padding: 0 6px; border: 1px solid var(--field-line); border-radius: 8px;
+  background: var(--field); color: var(--graphite); font: inherit; font-size: 15px; text-align: center; -moz-appearance: textfield;
+}
+.axesCard .axNum::-webkit-outer-spin-button, .axesCard .axNum::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.axesCard .axNum:focus { outline: 2px solid var(--ink); outline-offset: -1px; }
+.axesCard .axNum.bad { border-color: #D93B3B; box-shadow: inset 0 0 0 1px #D93B3B; }
+.axesCard .axRow.off { opacity: .4; }
+.axesCard .axTick { display: flex; align-items: center; gap: 10px; min-height: 36px; margin-top: 4px; font-size: 14.5px; font-weight: 700; cursor: pointer; }
+.axesCard .axTick input { width: 24px; height: 24px; margin: 0; accent-color: var(--ink); flex: none; }
+.axesCard .axMsg { min-height: 18px; margin-top: 4px; font-size: 12.5px; font-weight: 700; color: #D93B3B; }
+.axesCard .axPlace {
+  display: block; width: 100%; height: 40px; margin-top: 6px; border: 0; border-radius: 8px; background: var(--ink); color: var(--card);
+  font: inherit; font-size: 14.5px; font-weight: 700; cursor: pointer;
+}
+/* the stamp's numbers and letters never catch a press or a text selection (the pen draws over them) */
+svg.ink text, svg.thumbInk text { pointer-events: none; user-select: none; -webkit-user-select: none; }
 
 /* the honeycomb picker for the spare slot: 127 hexagon cells, a row of greys, the preview and Done.
    The cells are the colours themselves in both themes; only the card follows the theme (as the other panels). */

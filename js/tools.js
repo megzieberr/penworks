@@ -4,8 +4,8 @@
 // at 32 px per cm onto a PenWorks page at CM px per cm (K below scales its sizes).
 //
 // - The Tools button (#drawToolsBtn, under the calculator in js/tray.js) opens a small panel beside the tray, on the
-//   desk side like the pen panel: Ruler, Compass, Protractor, Axes. Ruler, Compass and Protractor (U5d) are live, Axes
-//   is disabled ("Next round"). A row is a toggle: the tool comes out on the CURRENT page, a second tap puts it away
+//   desk side like the pen panel: Ruler, Compass, Protractor, Axes. Ruler, Compass and Protractor (U5d) are toggles, Axes
+//   (U5e) opens its settings card. A tool row is a toggle: the tool comes out on the CURRENT page, a second tap puts it away
 //   (wherever it is). The panel closes on a press anywhere but itself and its button (the pen panel's rule), on Escape
 //   and on a resize. The button is pressed (aria-pressed, .on) while any tool is out. Not role="dialog": app.js
 //   overlayOpen() treats any visible dialog as an overlay (calcpanel.js has the same reasons).
@@ -59,7 +59,7 @@
 //   point that close to a stuck ruler's edge line pulls the turn through it); a free turn clicks onto a 45 degree step
 //   only within TURN_SNAP (1.2 degrees).
 //
-// U5d (pw-v8e, tools round 3, first half): the PROTRACTOR, the constructions app's pGeo, hitPro, drawPro, resizePro and
+// U5d (pw-v8f, tools round 3, first half): the PROTRACTOR, the constructions app's pGeo, hitPro, drawPro, resizePro and
 // its two gestures, in SVG on the page, scaled by K like the ruler and the compass. It MEASURES: it draws nothing.
 // - The only tool with sizes: radius PRO_R (170 x K, about 5.3 cm), PRO_MIN .. PRO_MAX (100 .. 340 x K) in steps of
 //   PRO_STEP (20 x K). The size buttons are the constructions app's proBar moved into the panel: a small - and + at the
@@ -71,7 +71,7 @@
 // - drawPro part for part, colours fixed (never the ink's): the half disc with a 14 x K strip under the baseline, the
 //   inner arc at R - 52 x K, a tick every degree (14 / 10 / 6 x K at 10 / 5 / 1 degrees), the outer numbers 180 down to
 //   0 at R - 24 x K, the inner numbers 0 up to 180 at R - 40 x K only while R >= 140 x K, the baseline, the 12 x K centre
-//   mark and the 3 x K centre ring. The turn shows its degrees beside the horn, like the ruler's knob (her ask 2 Nov 11:05, pw-v8e).
+//   mark and the 3 x K centre ring. The turn shows its degrees beside the horn, like the ruler's knob (her ask 2 Nov 11:05, pw-v8f).
 // - Zones, as hitPro: within 0.36 R of either end of the baseline it turns (turnL, turnR; the zone lights amber, clipped
 //   to the body, while hovered or held), the rest of the body moves it (the strip and the rim's 4 x K slack follow the
 //   compass's rule: never smaller on screen than at zoom 1 when zoomed out).
@@ -81,6 +81,31 @@
 //   turn through it (a ring marks it), else a 45 degree step clicks within TURN_SNAP.
 // - Never a record: no live shape, nothing in undo, a thumb, a PDF or strokesOf(). It shares `order` with the ruler and
 //   the compass (the last touched is on top); all three may be out together.
+//
+// U5e (pw-v8f, tools round 3, second half): the AXES stamp. It is INK, not a tool on the desk: one record, saved, in undo.
+// - The Axes row reads "Axes…" and is not a toggle (aria-expanded, never pressed): a tap opens a small settings card
+//   (#axesCard) beside the panel on the desk side, level with the row, kept on screen; the panel stays open behind it.
+//   Two lines of three number fields ("x: start, end, step", "y: start, end, step"; type number, step any, NO
+//   inputmode: Gboard's decimal pad has no minus key, a plain number pad has - and .), a Degrees tick (ticked: x becomes
+//   0, 360, 90 and every x label gets °; unticked: x goes back to -5, 5, 1),
+//   a Number line tick (no y-axis: the y line greys), Place and an X. Defaults -5, 5, 1 for both; the last settings are
+//   remembered on this device (localStorage pw.axes, saved on every change) and come back next time.
+// - A bad axis reddens its fields and the line under them says why ("Start must be smaller than End", "Step must be more
+//   than 0", "Too many steps (60 at most)", "Fill in every number"); Place then lands nothing.
+// - The card closes on Place, on its X, on Escape and whenever the panel closes (a tray button, the Tools button, leaving
+//   the note, a resize that is not the soft keyboard of one of its fields). A press on the page does NOT close it, nor the
+//   panel while it is open (she may look at the page first, like the calculator). A press inside it is stopped on window
+//   in the capture phase (calcpanel.js's rule), the S Pen's button is swallowed there; not role="dialog" (overlayOpen).
+// - Place lands ONE record { kind: 'axes', style: { colour: the PEN's colour, width 1.5, dash solid, opacity 1 }, data:
+//   { x0, y0, px, py, xs, xe, xd, ys, ye, yd, deg, line } } on the CURRENT page through ink.liveShape and its commit (one undo
+//   step, the thumb, the store), as a ruler line lands. The middle of its ranges sits at the middle of the part of the
+//   page she sees (the desk clamped to the page: Wv x Hv page px). Size (Fable's review, replacing p = one pitch): px
+//   (page px per x step) = min(0.7 Wv / nx, 2 cm), py (per y step) = min(0.7 Hv / ny, 2 cm), never under 0.3 cm; Degrees
+//   OFF: px = py = the smaller (square squares); Degrees ON: they stay apart (a trig graph's units differ); a number line
+//   uses px (py = px). ink.js draws it (axesGeom, setAxes) and owns Select, the erasers, the PDF.
+// - It never turns, never reshapes, never becomes a highlighter. Its axis ends, the axes' crossing, every tick's point on
+//   its axis and every tick's outer end are stick points and its axes are stick curves (stickData, derived from the
+//   record like a compass needle's centre, nothing stored).
 import { CM, view, pagePoint, current } from './page.js';
 import * as ink from './ink.js';
 import { trayState } from './tray.js';
@@ -117,7 +142,7 @@ const ROWS = [
   ['ruler', 'Ruler', ICON + '<rect x="3" y="8.5" width="18" height="7" rx="1"/><path d="M7 8.5V11M10.5 8.5v1.6M14 8.5V11M17.5 8.5v1.6"/></svg>'],
   ['compass', 'Compass', ICON + '<circle cx="12" cy="4.6" r="1.6"/><path d="M11.2 6.1L7.5 19.5M12.8 6.1l3.7 13.4M8.9 14.5h6.2"/></svg>'],
   ['protractor', 'Protractor', ICON + '<path d="M3 17.5a9 9 0 0 1 18 0z"/><path d="M12 17.5v-3"/></svg>'],
-  ['axes', 'Axes', ICON + '<path d="M12 21V3M3 12h18M9.5 5.5L12 3l2.5 2.5M18.5 9.5L21 12l-2.5 2.5"/></svg>'],
+  ['axes', 'Axes…', ICON + '<path d="M12 21V3M3 12h18M9.5 5.5L12 3l2.5 2.5M18.5 9.5L21 12l-2.5 2.5"/></svg>'],
 ];
 
 let btn = null, panel = null, deskEl = null;
@@ -217,6 +242,13 @@ function stickData(pageId) {
   const pts = [], curves = [];
   const push = (p) => { for (const q of pts) if (dist(p, q) < 0.75) return; pts.push(p); };
   for (const r of ink.strokesOf(pageId)) {
+    if (r.kind === 'axes') {                                       // U5e: an axes stamp's ends, crossing and ticks; its axes are curves
+      const a = ink.axesGeom(r);
+      if (!a) continue;
+      for (const q of [...(a.cross ? [a.cross] : []), ...a.ends, ...a.feet, ...a.outer]) push(q.slice());   // the crossing first: it wins a tie
+      for (const [p, q] of a.lines) curves.push({ t: 'seg', a: p.slice(), b: q.slice() });
+      continue;
+    }
     if (r.kind !== 'shape' || !r.data) continue;
     const d = r.data;
     if (d.type === 'circle') {
@@ -431,7 +463,7 @@ function buildProtractor() {
   gP = sv('g', { class: 'protractor' });
   pRings = [ringEl(), ringEl()];                                   // the centre on its stick point; the point a turn passes through
   pDegEl = document.createElement('div');
-  pDegEl.className = 'selDeg toolDeg';                             // the protractor's turn pill (pw-v8e)
+  pDegEl.className = 'selDeg toolDeg';                             // the protractor's turn pill (pw-v8f)
 }
 // drawPro in SVG, local to the centre (y down, the half disc above the baseline), drawn again only when the size changes
 function drawProShape(r) {
@@ -485,7 +517,7 @@ function layerFor(sheet) {                                         // the page's
   return l;
 }
 const partsOf = (t) => (t === 'ruler' ? [gR, ...rings] : t === 'compass' ? [gC, ...cRings] : [gP, ...pRings]);
-const pillOf = (t) => (t === 'ruler' ? degEl : t === 'compass' ? cmEl : pDegEl);   // the protractor's pill shows its turn (pw-v8e)
+const pillOf = (t) => (t === 'ruler' ? degEl : t === 'compass' ? cmEl : pDegEl);   // the protractor's pill shows its turn (pw-v8f)
 function restack() {                                               // groups bottom to top in `order`, every ring over them
   for (const t of order) { const g = partsOf(t)[0]; if (g && g.parentNode) g.parentNode.appendChild(g); }
   for (const t of order) { const [g, ...rs] = partsOf(t); if (g && g.parentNode) for (const r of rs) g.parentNode.appendChild(r); }
@@ -718,7 +750,10 @@ function buildPanel() {
     if (id === 'ruler') b.addEventListener('click', toggleRuler);
     else if (id === 'compass') b.addEventListener('click', toggleCompass);
     else if (id === 'protractor') b.addEventListener('click', toggleProtractor);
-    else { b.disabled = true; b.title = 'Next round'; }
+    else if (id === 'axes') {                                      // U5e: not a toggle: it opens the settings card (the stamp is ink)
+      b.removeAttribute('aria-pressed'); b.setAttribute('aria-expanded', 'false'); b.setAttribute('aria-controls', 'axesCard');
+      b.addEventListener('click', toggleCard);
+    }
     rowBtn[id] = b;
     if (id !== 'protractor') { panel.append(b); continue; }
     // U5d: the constructions app's proBar, moved to the row's right end (the tray never grows): - and +, beside the
@@ -740,8 +775,150 @@ function buildPanel() {
   document.body.append(panel);
 }
 export function openPanel() { if (!panel) return; panel.hidden = false; place(); paint(); }
-export function closePanel() { if (panel && !panel.hidden) panel.hidden = true; }
+export function closePanel() { closeCard(); if (panel && !panel.hidden) panel.hidden = true; }
 function togglePanel() { if (panel.hidden) openPanel(); else closePanel(); }
+
+// ---------------------------------------------------------------- U5e: the axes stamp's settings card
+const AX_KEY = 'pw.axes', AX_W = 1.5, AX_MAX = 60;
+const AX_DEF = { xs: -5, xe: 5, xd: 1, ys: -5, ye: 5, yd: 1, deg: false, line: false }, AX_DEG = { xs: 0, xe: 360, xd: 90 };
+const AX_F = ['xs', 'xe', 'xd', 'ys', 'ye', 'yd'];
+let card = null, cardMsg = null, cardDeg = null, cardLine = null;
+const fld = {};
+function loadAxes() {                                              // the last settings on this device, else the defaults
+  let v = null;
+  try { v = JSON.parse(localStorage.getItem(AX_KEY) || 'null'); } catch (e) { v = null; }
+  const o = { ...AX_DEF };
+  if (v && typeof v === 'object') { for (const k of AX_F) if (Number.isFinite(v[k])) o[k] = v[k]; o.deg = !!v.deg; o.line = !!v.line; }
+  return o;
+}
+const fieldNum = (k) => { const t = String(fld[k].value).trim(); return t === '' ? NaN : Number(t); };
+function saveAxes() {
+  const v = { deg: cardDeg.checked, line: cardLine.checked };
+  for (const k of AX_F) { const n = fieldNum(k); if (Number.isFinite(n)) v[k] = n; }
+  try { localStorage.setItem(AX_KEY, JSON.stringify(v)); } catch (e) { /* private window: this session only */ }
+}
+function setX(o) { fld.xs.value = String(o.xs); fld.xe.value = String(o.xe); fld.xd.value = String(o.xd); }
+function greyY() {                                                 // a number line has no y-axis: the y fields go grey
+  const off = cardLine.checked;
+  for (const k of ['ys', 'ye', 'yd']) fld[k].disabled = off;
+  card.querySelector('.axRow[data-axis="y"]').classList.toggle('off', off);
+}
+// the fields as numbers, or null; a bad range reddens its fields and the line under them says why
+function checkAxes() {
+  for (const k of AX_F) fld[k].classList.remove('bad');
+  const msgs = [], bad = (k) => fld[k].classList.add('bad');
+  const axis = (a) => {
+    const s = fieldNum(a + 's'), e = fieldNum(a + 'e'), st = fieldNum(a + 'd');
+    let ok = true;
+    for (const [k, v] of [[a + 's', s], [a + 'e', e], [a + 'd', st]]) if (!Number.isFinite(v)) { bad(k); ok = false; }
+    if (!ok) { msgs.push('Fill in every number'); return false; }
+    if (s >= e) { bad(a + 's'); bad(a + 'e'); msgs.push('Start must be smaller than End'); ok = false; }
+    if (!(st > 0)) { bad(a + 'd'); msgs.push('Step must be more than 0'); ok = false; }
+    else if (s < e && (e - s) / st > AX_MAX + 1e-6) { bad(a + 'd'); msgs.push('Too many steps (60 at most)'); ok = false; }
+    return ok;
+  };
+  const line = cardLine.checked, okX = axis('x'), okY = line ? true : axis('y');
+  cardMsg.textContent = msgs[0] || '';
+  if (!okX || !okY) return null;
+  const v = { deg: cardDeg.checked, line };
+  for (const k of AX_F) v[k] = fieldNum(k);
+  return v;
+}
+function buildCard() {
+  card = document.createElement('div');
+  card.id = 'axesCard'; card.className = 'axesCard'; card.hidden = true;
+  card.setAttribute('role', 'group'); card.setAttribute('aria-label', 'Axes settings');
+  const head = document.createElement('div');
+  head.className = 'axHead';
+  head.innerHTML = '<span class="axTitle">Axes</span><span class="axCols" aria-hidden="true"><span>start</span><span>end</span><span>step</span></span>';
+  const x = document.createElement('button');
+  x.type = 'button'; x.className = 'axClose'; x.id = 'axesClose'; x.setAttribute('aria-label', 'Close the axes settings');
+  x.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  x.addEventListener('click', closeCard);
+  card.append(x, head);
+  for (const a of ['x', 'y']) {
+    const row = document.createElement('div');
+    row.className = 'axRow'; row.dataset.axis = a;
+    const lab = document.createElement('span');
+    lab.className = 'axName'; lab.textContent = a + ':';
+    row.append(lab);
+    for (const [k, word] of [['s', 'start'], ['e', 'end'], ['d', 'step']]) {
+      const f = document.createElement('input');
+      f.type = 'number'; f.step = 'any'; f.id = 'ax-' + a + k; f.className = 'axNum';
+      f.setAttribute('aria-label', a + ' ' + word);
+      f.addEventListener('input', () => { checkAxes(); saveAxes(); });
+      fld[a + k] = f;
+      row.append(f);
+    }
+    card.append(row);
+  }
+  const tick = (id, word) => {
+    const l = document.createElement('label'), c = document.createElement('input');
+    l.className = 'axTick'; c.type = 'checkbox'; c.id = id;
+    l.append(c, document.createTextNode(word));
+    card.append(l);
+    return c;
+  };
+  cardDeg = tick('ax-deg', 'Degrees');
+  cardLine = tick('ax-line', 'Number line');
+  cardDeg.addEventListener('change', () => { setX(cardDeg.checked ? AX_DEG : AX_DEF); checkAxes(); saveAxes(); });
+  cardLine.addEventListener('change', () => { greyY(); checkAxes(); saveAxes(); });
+  cardMsg = document.createElement('div');
+  cardMsg.className = 'axMsg'; cardMsg.id = 'axesMsg'; cardMsg.setAttribute('aria-live', 'polite');
+  const go = document.createElement('button');
+  go.type = 'button'; go.className = 'axPlace'; go.id = 'axesPlace'; go.textContent = 'Place';
+  go.addEventListener('click', placeAxes);
+  card.append(cardMsg, go);
+  card.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('input.axNum')) { e.preventDefault(); placeAxes(); } });
+  card.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); });   // the S Pen's button
+  document.body.append(card);
+}
+function placeCard() {                                             // beside the panel on the desk side, level with the Axes row, on screen
+  if (!card || card.hidden || !panel || panel.hidden) return;
+  const pb = panel.getBoundingClientRect(), rb = rowBtn.axes.getBoundingClientRect(), w = card.offsetWidth, h = card.offsetHeight;
+  const left = document.body.classList.contains('trayLeft') ? pb.right + 8 : pb.left - 8 - w;
+  card.style.left = Math.max(8, Math.min(innerWidth - w - 8, left)) + 'px';
+  card.style.top = Math.max(8, Math.min(innerHeight - h - 8, rb.top + rb.height / 2 - h / 2)) + 'px';
+}
+function openCard() {
+  if (!panel || panel.hidden) return;
+  if (!card) buildCard();
+  const o = loadAxes();
+  for (const k of AX_F) fld[k].value = String(o[k]);
+  cardDeg.checked = o.deg; cardLine.checked = o.line;
+  greyY(); checkAxes();
+  card.hidden = false;
+  if (rowBtn.axes) rowBtn.axes.setAttribute('aria-expanded', 'true');
+  placeCard();
+}
+function closeCard() {
+  if (card && !card.hidden) card.hidden = true;
+  if (rowBtn.axes) rowBtn.axes.setAttribute('aria-expanded', 'false');
+}
+function toggleCard() { if (card && !card.hidden) closeCard(); else openCard(); }
+// Place: ONE axes record on the CURRENT page, centred on the middle of what she sees (clamped to the page), in the pen's
+// colour, 1.5 page px, solid, opaque; the way a ruler line lands (ink.liveShape, then its commit: one undo step)
+function placeAxes() {
+  const v = checkAxes(), sheet = curSheet();
+  if (!v || !sheet) return;
+  const W = parseFloat(sheet.style.width), H = parseFloat(sheet.style.height), idx = +sheet.dataset.index - 1;
+  const db = (deskEl || document.getElementById('desk')).getBoundingClientRect();
+  const a = pagePoint(idx, db.left, db.top), b = pagePoint(idx, db.right, db.bottom);   // the part of the page she sees
+  const vx0 = clamp(a[0], 0, W), vy0 = clamp(a[1], 0, H), vx1 = clamp(b[0], 0, W), vy1 = clamp(b[1], 0, H);
+  const Wv = Math.max(vx1 - vx0, 1), Hv = Math.max(vy1 - vy0, 1), cx = (vx0 + vx1) / 2, cy = (vy0 + vy1) / 2;
+  const nx = (v.xe - v.xs) / v.xd, ny = (v.ye - v.ys) / v.yd, lo = 0.3 * CM, hi = 2 * CM;
+  let px = Math.max(lo, Math.min(0.7 * Wv / nx, hi)), py = v.line ? px : Math.max(lo, Math.min(0.7 * Hv / ny, hi));
+  if (!v.deg) px = py = Math.min(px, py);                          // square squares, unless it is a trig graph
+  const x0 = cx - px * (v.xs + v.xe) / 2 / v.xd, y0 = v.line ? cy : cy + py * (v.ys + v.ye) / 2 / v.yd;
+  const rec = { id: crypto.randomUUID(), page_id: sheet.dataset.id, seq: 0, kind: 'axes',
+                style: { colour: trayState().pen.colour, width: AX_W, dash: 'solid', opacity: 1 },
+                data: { x0: r2(x0), y0: r2(y0), px: r2(px), py: r2(py), xs: v.xs, xe: v.xe, xd: v.xd, ys: v.ys, ye: v.ye, yd: v.yd, deg: v.deg, line: v.line } };
+  const live = ink.liveShape(sheet.dataset.id, rec);
+  if (!live) return;
+  live.commit(rec);
+  saveAxes();
+  closeCard();
+}
 
 // ---------------------------------------------------------------- the pen (app.js asks penDown first; move and up follow)
 function inkStyle() {                                              // the current ink tool's style; the pen's for select, erasers, restyle
@@ -964,10 +1141,17 @@ export function initTools({ trayBtn, desk }) {
   document.addEventListener('pointerdown', (e) => {
     if (!panel || panel.hidden) return;
     if (e.target.closest && e.target.closest('#toolsPanel, #drawToolsBtn')) return;
+    if (card && !card.hidden && e.target.closest && e.target.closest('#desk')) return;   // U5e: the card is open: she may look at or write on the page
     closePanel();
   }, true);
+  // U5e: a press inside the axes card never reaches the page, the tray's closers or the menu's (calcpanel.js's rule:
+  // those listen on document in the capture phase, so this stop is a capture listener on window, earlier still)
+  window.addEventListener('pointerdown', (e) => { if (card && !card.hidden && card.contains(e.target)) e.stopPropagation(); }, true);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePanel(); });
-  window.addEventListener('resize', closePanel);
+  window.addEventListener('resize', () => {                        // U5e: a soft keyboard for the card's fields never closes it
+    if (card && !card.hidden && card.contains(document.activeElement)) { place(); placeCard(); return; }
+    closePanel();
+  });
   if (deskEl) deskEl.addEventListener('pointerleave', () => { if (hov && !G) { hov = null; render(); } });
   // a colour or ink tool picked on the tray: the compass's pencil point takes her new ink colour
   const tray = document.getElementById('tray');
