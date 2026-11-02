@@ -141,7 +141,7 @@ try:
         order = pg.evaluate("""[...document.getElementById('tray').querySelectorAll(':scope > *, :scope > .tools > *')]
           .map(e => e.dataset.tool || e.dataset.slot || e.id || e.className)""")
         check("order (pw-v7e): calculator at the top, colours, pen, highlighter, undo (pw-v6c), stroke eraser, area eraser, restyle, select, gap, redo",
-              order == ["tools", "colours", "tools", "pen", "highlighter", "undoBtn", "eraser", "area", "restyle", "select", "gap", "redoBtn"], order)
+              order == ["tools", "drawtools", "colours", "tools", "pen", "highlighter", "undoBtn", "eraser", "area", "restyle", "select", "gap", "redoBtn"], order)   # drawtools since pw-v8a (pin fixed pw-v8g)
         check("the slots are empty (no visible button)", pg.evaluate("[...document.querySelectorAll('#tray .slot')].every(s => !s.children.length)"))
         check("pen selected by default, soft tint", "on" in pg.get_attribute("#tool-pen", "class") and pg.locator("#tray .tool.on").count() == 1)
         check("Black swatch marked current", pg.get_attribute("#tray .sw[data-colour='#000000']", "class").split().count("on") == 1)
@@ -266,8 +266,8 @@ try:
         group[0] = "highlighter"
         pg.click("#tool-highlighter"); pg.click("#tool-highlighter"); pg.wait_for_timeout(30)
         rows = pg.evaluate("[...document.querySelectorAll('#toolPanel .pgroup')].map(g => [g.querySelector('.phd').textContent, g.querySelector('.num').textContent, ...['min','max','step'].map(k => g.querySelector('input').getAttribute(k))])")
-        check("panel: width 18 (6 to 40, steps of 2), opacity 40% (20 to 80, steps of 10)",
-              rows == [["Width", "18", "6", "40", "2"], ["Opacity", "40%", "20", "80", "10"]], rows)
+        check("panel: width 18 (2 to 40, steps of 2, pw-v8g: it was 6), opacity 40% (20 to 80, steps of 10)",
+              rows == [["Width", "18", "2", "40", "2"], ["Opacity", "40%", "20", "80", "10"]], rows)
         pg.click("#toolPanel [aria-label='Opacity bigger']"); pg.click("#toolPanel [aria-label='Opacity bigger']")
         pg.click("#toolPanel [aria-label='Width smaller']")
         draw(pg, 1, line(400))
@@ -495,7 +495,7 @@ try:
         check("the eye toggles password to text and back", a == "password" and c == ["text", "Hide password"] and d == "password", [a, c, d])
         check("the eye sits inside the field", eb["x"] >= lb["x"] and eb["x"] + eb["width"] <= lb["x"] + lb["width"] and eb["y"] >= lb["y"] - 1 and eb["y"] + eb["height"] <= lb["y"] + lb["height"] + 1, [eb, lb])
         group[0] = "pwa and house rules"
-        check("cache is pw-v8f", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v8f"] or "pw-v8f" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v8g", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v8g"] or "pw-v8g" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the new files are in the offline shell", all(f in swt for f in ("./js/ink.js", "./js/store.js", "./js/tray.js")))
         pg.evaluate(SEED_JS, False); pg.reload(); ready(pg)

@@ -38,7 +38,7 @@ const normHex = (v) => { const m = HEX.exec(String(v || '').trim()); return m ? 
 const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 const RANGE = {
   pen: { min: 1, max: 12, step: 0.5 },
-  highlighter: { min: 6, max: 40, step: 2 },
+  highlighter: { min: 2, max: 40, step: 2 },   // pw-v8g: down to 2 (it was 6), her ask 2 Nov 16:54 "even thinner"
   opacity: { min: 20, max: 80, step: 10 },
 };
 const KEY = 'pw.tools';

@@ -92,6 +92,19 @@
 // a turn leaves it exactly as it was (no new seq); no reshape handles. Recolour and restyle change its colour only (it
 // stays thin and opaque, never a highlighter). Both erasers remove it whole. The PDF (js/pdfout.js) strokes its lines and
 // writes its labels as Helvetica text. Its ends, crossing and ticks are stick points in js/tools.js (derived, not stored).
+// Regular shapes (pw-v8g, her ask 2 Nov 16:54: "squares and triangles to come out as proper shapes ... PERFECT equalateral
+// triangles"). A held ring's corners are fitted, still a 'triangle' with 3 points or a 'rect' with 4 (fitTriangle, fitQuad):
+// a triangle with exactly one angle within 12 degrees of 90 becomes a true right triangle (the right-angle corner stays, the
+// legs keep their lengths and turn evenly to exactly 90, axis-true when within 15 degrees of the axes; a right triangle never
+// becomes equilateral); one with every side within 25% of the mean and every angle within 15 degrees of 60 becomes a perfect
+// equilateral (centre = the corners' mean, side = the mean side, turned to the corners' mean direction modulo 120, made
+// upright when within 15 degrees of it); any other stays as drawn. Four corners all within 15 degrees of 90 become a true
+// rectangle at its own turn (the sides' mean direction, opposite sides averaged), a perfect square when width and height
+// are within 20%, today's upright box when within 15 degrees of the axes; any other four stay as drawn (still straightened
+// when every side is within 15 degrees of the axes, as before). Her 2 Nov triangles (10 to 16 px a side) were all within 7%
+// of the mean side, 53 to 65 degrees, 0.5 to 9 degrees off upright. The hook (unhook): a tick where the pen lands, or a
+// flick just before the ring closes, within 12% of the size (4 page px at least) of the start is trimmed before the corners
+// are found; on her small triangles a 3 px landing tick made a 4th corner.
 
 import * as store from './store.js';
 import { pageAt, pagePoint, view, pageSize, CM } from './page.js';
@@ -1012,6 +1025,116 @@ function headOk(tail, tip, u, L) {
   const need = Math.max(3, 0.04 * L);
   return left >= need && right >= need && backMax >= need && backMax <= 0.6 * L;
 }
+// pw-v8g: regular shapes (the tolerances, measured on her 2 Nov triangles and squares, see the header)
+const EQ_SIDE = 0.25;            // equilateral: every side within 25% of the mean side ...
+const EQ_ANG = 15;               // ... and every angle within 15 degrees of 60 (so a 3-4-5 never passes)
+const EQ_UP = 15;                // an equilateral within 15 degrees of upright (a side level) is made upright
+const RT_ANG = 12;               // right triangle: exactly one angle within 12 degrees of 90
+const AX_ANG = 15;               // legs or sides within 15 degrees of the axes are made axis-true
+const RECT_ANG = 15;             // four corners: every angle within 15 degrees of 90 is a true rectangle ...
+const SQ_RATIO = 0.2;            // ... and width and height within 20% of each other is a perfect square
+const HOOK = 0.12;               // the hook: a turn-back within 12% of the size (and never less than HOOK_PX) of the closing point is trimmed
+const HOOK_PX = 4;               // page px: her triangles are small (10 to 16 px a side), where a 3 px landing tick is over 12%
+const RAD = Math.PI / 180;
+// the inside angle at b of the corner a, b, c (degrees, 0 to 180)
+function angAt(a, b, c) {
+  const ux = a[0] - b[0], uy = a[1] - b[1], vx = c[0] - b[0], vy = c[1] - b[1];
+  return Math.abs(Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy)) / RAD;
+}
+// how far a direction (radians) lies from the nearest axis, degrees 0 to 45
+function offAxis(t) { const a = ((t / RAD) % 90 + 90) % 90; return Math.min(a, 90 - a); }
+const toAxis = (t) => Math.round(t / (Math.PI / 2)) * (Math.PI / 2);
+// a triangle's 3 corners as drawn -> the shape to keep: a perfect equilateral, a true right triangle, or the corners as drawn
+function fitTriangle(v) {
+  const s = [0, 1, 2].map((i) => dist(v[i], v[(i + 1) % 3])), m = (s[0] + s[1] + s[2]) / 3;
+  const an = [0, 1, 2].map((i) => angAt(v[(i + 2) % 3], v[i], v[(i + 1) % 3]));
+  const rt = [0, 1, 2].filter((i) => Math.abs(an[i] - 90) <= RT_ANG);
+  if (rt.length === 1) {
+    // right angle at P: P stays, both legs keep their lengths, the legs turn evenly about their bisector to exactly 90
+    const k = rt[0], P = v[k], Q = v[(k + 1) % 3], R = v[(k + 2) % 3];
+    const a = dist(P, Q), b = dist(P, R), tq = Math.atan2(Q[1] - P[1], Q[0] - P[0]), tr = Math.atan2(R[1] - P[1], R[0] - P[0]);
+    const bis = Math.atan2(Math.sin(tq) + Math.sin(tr), Math.cos(tq) + Math.cos(tr));
+    const sg = (Q[0] - P[0]) * (R[1] - P[1]) - (Q[1] - P[1]) * (R[0] - P[0]) > 0 ? 1 : -1;
+    let nq = bis - sg * Math.PI / 4, nr = bis + sg * Math.PI / 4;
+    if (offAxis(nq) <= AX_ANG) { const d = toAxis(nq) - nq; nq += d; nr += d; }     // both legs near the axes: axis-true
+    const out = [];
+    out[k] = P; out[(k + 1) % 3] = [P[0] + a * Math.cos(nq), P[1] + a * Math.sin(nq)]; out[(k + 2) % 3] = [P[0] + b * Math.cos(nr), P[1] + b * Math.sin(nr)];
+    return out;
+  }
+  if (s.every((x) => Math.abs(x / m - 1) <= EQ_SIDE) && an.every((x) => Math.abs(x - 60) <= EQ_ANG)) {
+    // equilateral: centre = the corners' mean, side = the mean side, turned to the mean corner direction (modulo 120)
+    const cx = (v[0][0] + v[1][0] + v[2][0]) / 3, cy = (v[0][1] + v[1][1] + v[2][1]) / 3, th = v.map((q) => Math.atan2(q[1] - cy, q[0] - cx));
+    let phi = Math.atan2(th.reduce((t, x) => t + Math.sin(3 * x), 0), th.reduce((t, x) => t + Math.cos(3 * x), 0)) / 3;
+    const up = Math.round((phi / RAD - 30) / 60) * 60 + 30;                          // upright: a corner straight up or down
+    if (Math.abs(phi / RAD - up) <= EQ_UP) phi = up * RAD;
+    const R = m / Math.sqrt(3), step = 2 * Math.PI / 3;
+    const sg = (v[1][0] - v[0][0]) * (v[2][1] - v[0][1]) - (v[1][1] - v[0][1]) * (v[2][0] - v[0][0]) > 0 ? 1 : -1;
+    const k0 = Math.round((th[0] - phi) / step);                                     // the drawn order and winding kept
+    return [0, 1, 2].map((i) => { const t = phi + (k0 + sg * i) * step; return [cx + R * Math.cos(t), cy + R * Math.sin(t)]; });
+  }
+  return v;                                                        // a tall isosceles, a scalene: as drawn
+}
+// 4 corners as drawn -> the rect's 4 points: a true rectangle or square (at its own turn, axis-true near the axes),
+// today's straightened box (sides near the axes), or the corners as drawn (a parallelogram, a trapezium)
+function fitQuad(v) {
+  const box = () => {                                              // the upright box through the corners (today's rule)
+    const xs = v.map((q) => q[0]).sort((m, n) => m - n), ys = v.map((q) => q[1]).sort((m, n) => m - n);
+    return [(xs[0] + xs[1]) / 2, (ys[0] + ys[1]) / 2, (xs[2] + xs[3]) / 2, (ys[2] + ys[3]) / 2];
+  };
+  const an = [0, 1, 2, 3].map((i) => angAt(v[(i + 3) % 4], v[i], v[(i + 1) % 4]));
+  if (an.every((x) => Math.abs(x - 90) <= RECT_ANG)) {
+    const e = [0, 1, 2, 3].map((i) => [v[(i + 1) % 4][0] - v[i][0], v[(i + 1) % 4][1] - v[i][1]]), L = e.map((q) => Math.hypot(q[0], q[1]));
+    // the turn: every side's direction modulo 180 (doubled angles), sides 1 and 3 turned back by 90, the long sides weigh more
+    let sx = 0, sy = 0;
+    e.forEach((q, i) => { const t = 2 * Math.atan2(q[1], q[0]) + (i % 2 ? Math.PI : 0); sx += L[i] * Math.cos(t); sy += L[i] * Math.sin(t); });
+    const th = Math.atan2(sy, sx) / 2;
+    if (offAxis(th) <= AX_ANG) {                                   // near the axes: today's upright box, squared when near square
+      let [l, t, r, b] = box();
+      const w = r - l, h = b - t;
+      if (Math.abs(w - h) <= SQ_RATIO * Math.max(w, h)) { const cx = (l + r) / 2, cy = (t + b) / 2, s2 = (w + h) / 4; l = cx - s2; r = cx + s2; t = cy - s2; b = cy + s2; }
+      return [[l, t], [r, t], [r, b], [l, b]];
+    }
+    let w = (L[0] + L[2]) / 2, h = (L[1] + L[3]) / 2;
+    if (Math.abs(w - h) <= SQ_RATIO * Math.max(w, h)) w = h = (w + h) / 2;
+    const cx = (v[0][0] + v[1][0] + v[2][0] + v[3][0]) / 4, cy = (v[0][1] + v[1][1] + v[2][1] + v[3][1]) / 4;
+    const u = [Math.cos(th), Math.sin(th)], n = [-u[1], u[0]];
+    return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([p, q]) => [cx + p * w / 2 * u[0] + q * h / 2 * n[0], cy + p * w / 2 * u[1] + q * h / 2 * n[1]]);
+  }
+  const axis = v.every((q, i) => {                                 // today's rule: every side within 15 degrees of the axes
+    const n = v[(i + 1) % 4];
+    return offAxis(Math.atan2(n[1] - q[1], n[0] - q[0])) <= 15;
+  });
+  if (axis) { const [l, t, r, b] = box(); return [[l, t], [r, t], [r, b], [l, b]]; }
+  return v;                                                        // a parallelogram or trapezium drawn on purpose: as drawn
+}
+// the hook: the pen landing with a tick (out and back) at the start of the ring, or a flick just before it closes.
+// A tick is a vertex T of the simplified ring within HOOK x size (HOOK_PX at least) of the closing point A where the path
+// turns back by more than 135 degrees and then passes A again closer than 0.4 x |AT| (a real corner near the start never
+// comes back that close: a 30 degree apex comes back to 0.5). The start loses everything up to where the path comes back
+// nearest A, the end everything after the point nearest A before the flick. Anything else: the ring as it is.
+function unhook(ring, size) {
+  const A = ring[0], r = Math.max(HOOK * size, HOOK_PX), keep = rdpMask(ring, Math.max(0.75, 0.02 * size)), ix = [];
+  for (let k = 0; k < ring.length; k++) if (keep[k]) ix.push(k);
+  if (ix.length < 5) return ring;
+  let from = 0, to = ring.length - 1;
+  // the point nearest A walking from T (step +1 or -1) while within r of A: [index, distance]
+  const back = (t, step, stop) => {
+    let best = t, bd = Infinity;
+    for (let k = t + step; k !== stop && dist(ring[k], A) < r; k += step) { const d = dist(ring[k], A); if (d < bd) { bd = d; best = k; } }
+    return [best, bd];
+  };
+  const t1 = ix[1], d1 = dist(ring[t1], A);
+  if (d1 < r && turnAt(ring[0], ring[t1], ring[ix[2]]) > 135) {
+    const [k, d] = back(t1, 1, ring.length);
+    if (d < 0.4 * d1) from = k;
+  }
+  const t2 = ix[ix.length - 2], d2 = dist(ring[t2], A);
+  if (t2 > from + 1 && d2 < r && turnAt(ring[ix[ix.length - 3]], ring[t2], ring[to]) > 135) {
+    const [k, d] = back(t2, -1, from);
+    if (d < 0.4 * d2) to = k;
+  }
+  return from === 0 && to === ring.length - 1 ? ring : ring.slice(from, to + 1);
+}
 // in this order: arrow, curved arrow, line, parabola, arc, then closed: triangle, rect, circle or ellipse; null = stays freehand.
 // A parabola leaves its two fit numbers in FIT (lastStroke().fit); every other answer leaves FIT null
 export function classify(raw) {
@@ -1049,21 +1172,10 @@ export function classify(raw) {
   let ci = raw.length - 1, cd = Infinity;
   for (let i = Math.floor(raw.length * 0.7); i < raw.length; i++) { const dd = dist(A, raw[i]); if (dd < cd) { cd = dd; ci = i; } }
   if (cd > 0.1 * size) return null;
-  const ring = raw.slice(0, ci + 1);
-  const v = corners(rdp(ring, Math.max(0.75, 0.02 * size)).concat([A]), size);
-  if (v.length === 3 && strays(ring, v) <= 0.07 * size) return { type: 'triangle', points: v.map(rp) };
-  if (v.length === 4 && strays(ring, v) <= 0.07 * size) {
-    const axis = v.every((q, i) => {
-      const n = v[(i + 1) % 4], a = Math.abs(Math.atan2(n[1] - q[1], n[0] - q[0]) * 180 / Math.PI) % 90;
-      return a <= 15 || a >= 75;
-    });
-    if (axis) {                                                    // within 15 degrees of square: straighten it
-      const xs = v.map((q) => q[0]).sort((m, n) => m - n), ys = v.map((q) => q[1]).sort((m, n) => m - n);
-      const l = (xs[0] + xs[1]) / 2, r = (xs[2] + xs[3]) / 2, t = (ys[0] + ys[1]) / 2, bt = (ys[2] + ys[3]) / 2;
-      return { type: 'rect', points: [[l, t], [r, t], [r, bt], [l, bt]].map(rp) };
-    }
-    return { type: 'rect', points: v.map(rp) };                    // turned: the 4 corners as drawn
-  }
+  const ring = raw.slice(0, ci + 1), poly = unhook(ring, size);     // pw-v8g: a landing tick or a closing flick trimmed first
+  const v = corners(rdp(poly, Math.max(0.75, 0.02 * size)).concat([poly[0]]), size);
+  if (v.length === 3 && strays(poly, v) <= 0.07 * size) return { type: 'triangle', points: fitTriangle(v).map(rp) };
+  if (v.length === 4 && strays(poly, v) <= 0.07 * size) return { type: 'rect', points: fitQuad(v).map(rp) };
   // circle or ellipse: an upright ellipse through the box; every point's distance from the centre (measured
   // on that ellipse, so a round one is a circle) within 15% of the mean
   const rb = bbox(ring), cx = (rb[0] + rb[2]) / 2, cy = (rb[1] + rb[3]) / 2, rx = (rb[2] - rb[0]) / 2, ry = (rb[3] - rb[1]) / 2;
