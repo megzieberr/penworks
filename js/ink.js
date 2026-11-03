@@ -105,6 +105,12 @@
 // of the mean side, 53 to 65 degrees, 0.5 to 9 degrees off upright. The hook (unhook): a tick where the pen lands, or a
 // flick just before the ring closes, within 12% of the size (4 page px at least) of the start is trimmed before the corners
 // are found; on her small triangles a 3 px landing tick made a 4th corner.
+// pw-v8h (her 3 Nov triangles): a BLUNT corner (destub): a polygon side under 40% of the mean of its long sides, whose two
+// outer sides meet close by (within 2 x the stub of its middle), is the pen rounding a corner, not a side she drew; its two
+// ends become that one corner, so a triangle with a rounded corner is a triangle, a square with one a square (her 3 Nov
+// triangle: 12.8 / 3.7 / 10.4 / 13.3 px sides, saved as a 4-corner rect). A thin bar (10 x 40) keeps its 4 corners: its
+// long sides are parallel and meet nowhere near. And the ring CLOSES within 10% of the size or 4 page px
+// (CLOSE_PX), whichever is more, like the hook: her other 3 Nov triangle ended 3.1 px short on a 19 px shape and stayed ink.
 
 import * as store from './store.js';
 import { pageAt, pagePoint, view, pageSize, CM } from './page.js';
@@ -890,7 +896,7 @@ function kasa(raw) {
 export function arcFit(raw, k) {
   if (!raw || raw.length < 3) return null;
   const bb = bbox(raw), size = Math.hypot(bb[2] - bb[0], bb[3] - bb[1]), A = raw[0], Z = raw[raw.length - 1];
-  if (!(size > 0) || dist(A, Z) <= 0.1 * size) return null;        // closed: the closed test's
+  if (!(size > 0) || dist(A, Z) <= Math.max(0.1 * size, CLOSE_PX)) return null;   // closed: the closed test's (pw-v8h: its CLOSE_PX floor too)
   if (k === undefined) k = kasa(raw);
   if (!k) return null;
   const n = raw.length, { ox, oy, r } = k;
@@ -918,7 +924,7 @@ export function arcFit(raw, k) {
 // under 5 degrees not counted); and it must beat the arc: its residual under 0.6 x the circle fit's (k.res), so an
 // even curve stays an arc. { shape, p, a } (p, a: the two residuals, px) or null
 function parabolaOf(stroke, A, Z, size, k) {
-  if (dist(A, Z) <= 0.1 * size) return null;                       // closed: the closed test's
+  if (dist(A, Z) <= Math.max(0.1 * size, CLOSE_PX)) return null;   // closed: the closed test's (pw-v8h: its CLOSE_PX floor too)
   const raw = densify(stroke, INK_STEP), n = raw.length, cum = [0];
   for (let i = 1; i < n; i++) cum.push(cum[i - 1] + dist(raw[i - 1], raw[i]));
   const L = cum[n - 1];
@@ -1035,6 +1041,8 @@ const RECT_ANG = 15;             // four corners: every angle within 15 degrees 
 const SQ_RATIO = 0.2;            // ... and width and height within 20% of each other is a perfect square
 const HOOK = 0.12;               // the hook: a turn-back within 12% of the size (and never less than HOOK_PX) of the closing point is trimmed
 const HOOK_PX = 4;               // page px: her triangles are small (10 to 16 px a side), where a 3 px landing tick is over 12%
+const STUB = 0.4;                // pw-v8h: a side under 40% of every other side is a blunt corner, not a side (destub)
+const CLOSE_PX = 4;              // pw-v8h: a ring closes within 10% of the size, and never less than this (page px)
 const RAD = Math.PI / 180;
 // the inside angle at b of the corner a, b, c (degrees, 0 to 180)
 function angAt(a, b, c) {
@@ -1135,6 +1143,38 @@ function unhook(ring, size) {
   }
   return from === 0 && to === ring.length - 1 ? ring : ring.slice(from, to + 1);
 }
+// where the lines through a-b and c-d meet, or null when they are within 10 degrees of parallel
+function meet(a, b, c, d) {
+  const ux = b[0] - a[0], uy = b[1] - a[1], vx = d[0] - c[0], vy = d[1] - c[1], den = ux * vy - uy * vx;
+  if (Math.abs(den) <= Math.sin(10 * RAD) * Math.hypot(ux, uy) * Math.hypot(vx, vy)) return null;
+  const t = ((c[0] - a[0]) * vy - (c[1] - a[1]) * vx) / den;
+  return [a[0] + t * ux, a[1] + t * uy];
+}
+// pw-v8h: a blunt corner. A stub is a side under STUB x the mean of the polygon's long sides (the sides at least STUB x
+// the longest, so two stubs on one ring, a rounded corner and the closing gap, never shield each other) whose two outer
+// sides meet within 2 x the stub of its middle: the pen rounded a corner (on her 3 Nov triangle a 3.7 px side next to 10 to
+// 13 px ones). Its two ends become that ONE corner. Again while the polygon has more than 3 corners and a stub. A thin
+// bar (10 x 40) keeps its 4 corners: its long sides are parallel, they meet nowhere near. A trapezium keeps its top down
+// to about 40% of its other sides.
+function destub(v) {
+  for (;;) {
+    const n = v.length;
+    if (n <= 3) return v;
+    const L = v.map((q, i) => dist(q, v[(i + 1) % n])), top = Math.max(...L), long = L.filter((x) => x >= STUB * top);
+    const m = long.reduce((t, x) => t + x, 0) / long.length;
+    let k = -1;
+    for (let i = 0; i < n; i++) {
+      if (L[i] >= STUB * m || (k >= 0 && L[i] >= L[k])) continue;
+      const P = v[(i - 1 + n) % n], Q = v[i], R = v[(i + 1) % n], S = v[(i + 2) % n];
+      const X = meet(P, Q, S, R);
+      if (X && dist(X, [(Q[0] + R[0]) / 2, (Q[1] + R[1]) / 2]) <= 2 * L[i]) k = i;
+    }
+    if (k < 0) return v;
+    const P = v[(k - 1 + n) % n], Q = v[k], R = v[(k + 1) % n], S = v[(k + 2) % n], C = meet(P, Q, S, R), out = [];
+    for (let i = 0; i < n; i++) { if (i === k) out.push(C); else if (i !== (k + 1) % n) out.push(v[i]); }
+    v = out;
+  }
+}
 // in this order: arrow, curved arrow, line, parabola, arc, then closed: triangle, rect, circle or ellipse; null = stays freehand.
 // A parabola leaves its two fit numbers in FIT (lastStroke().fit); every other answer leaves FIT null
 export function classify(raw) {
@@ -1171,11 +1211,14 @@ export function classify(raw) {
   // closed: the end (or, for an overshoot, the point nearest the start in the last 30%) within 10% of the size
   let ci = raw.length - 1, cd = Infinity;
   for (let i = Math.floor(raw.length * 0.7); i < raw.length; i++) { const dd = dist(A, raw[i]); if (dd < cd) { cd = dd; ci = i; } }
-  if (cd > 0.1 * size) return null;
+  if (cd > Math.max(0.1 * size, CLOSE_PX)) return null;             // pw-v8h: never less than CLOSE_PX (her 19 px triangle ended 3 px short)
   const ring = raw.slice(0, ci + 1), poly = unhook(ring, size);     // pw-v8g: a landing tick or a closing flick trimmed first
-  const v = corners(rdp(poly, Math.max(0.75, 0.02 * size)).concat([poly[0]]), size);
-  if (v.length === 3 && strays(poly, v) <= 0.07 * size) return { type: 'triangle', points: fitTriangle(v).map(rp) };
-  if (v.length === 4 && strays(poly, v) <= 0.07 * size) return { type: 'rect', points: fitQuad(v).map(rp) };
+  const v0 = corners(rdp(poly, Math.max(0.75, 0.02 * size)).concat([poly[0]]), size);
+  if (v0.length >= 3 && v0.length <= 6 && strays(poly, v0) <= 0.07 * size) {   // the ink follows a polygon (its corners as found) ...
+    const v = destub(v0);                                                          // ... pw-v8h: a blunt corner's stub side collapsed
+    if (v.length === 3) return { type: 'triangle', points: fitTriangle(v).map(rp) };
+    if (v.length === 4) return { type: 'rect', points: fitQuad(v).map(rp) };
+  }
   // circle or ellipse: an upright ellipse through the box; every point's distance from the centre (measured
   // on that ellipse, so a round one is a circle) within 15% of the mean
   const rb = bbox(ring), cx = (rb[0] + rb[2]) / 2, cy = (rb[1] + rb[3]) / 2, rx = (rb[2] - rb[0]) / 2, ry = (rb[3] - rb[1]) / 2;

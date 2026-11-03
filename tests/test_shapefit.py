@@ -1,4 +1,4 @@
-# PenWorks regular shapes checks (pw-v8g, her ask 2 Nov 16:54: "I want my specific shapes likes squares and triangles to
+# PenWorks regular shapes checks (pw-v8h, her ask 2 Nov 16:54: "I want my specific shapes likes squares and triangles to
 # come out as proper shapes, not just as straightened lines"). Headless Playwright (Python), the tests/test_u2b.py harness
 # (fresh, draw, strokes, hold): every shape is drawn with the mouse on a local-mode page (?local=1, Supabase never touched),
 # held still so it snaps, and its record is measured. js/ink.js classify -> fitTriangle, fitQuad, unhook.
@@ -11,6 +11,10 @@
 #     at 30), a 2:1 rectangle at 30 (a true rectangle), a parallelogram with 60 degree corners (as drawn)
 #   the hook: a landing tick out and back at the start (12 px on a 160 px triangle, 3 px on a 14 px one) stays a triangle
 #   one snapped equilateral: undo and redo, a select tap on its side, the page list thumb (thumbSvg) draws it
+#   blunt corners (pw-v8h, her 3 Nov triangle: 12.8 / 3.7 / 10.4 / 13.3 px sides saved as a 4-corner rect): that very ring
+#     and the same at 5 x are triangles, perfect equilaterals (destub); a 60 px square with a 17 px cut corner is a square;
+#     a thin 12 x 48 bar keeps its 4 corners; a trapezium with a 40 px top on a 100 px base stays as drawn; a 16 px triangle
+#     that ends 3.5 px short of its start closes and snaps (CLOSE_PX), a 60 px one that ends 10 px short stays ink
 # Every check prints its measured numbers. Run: python tests/test_shapefit.py   Screenshot: _build/shots-shapes/shapefit.png
 import sys, subprocess, time, pathlib, re, math
 from playwright.sync_api import sync_playwright
@@ -279,6 +283,56 @@ try:
         check("no page errors", not errs, errs)
         ctx.close()
 
+        # ------------------------------------------------------------ blunt corners and the closing floor (pw-v8h, page 1)
+        group[0] = "blunt corner"
+        ctx, pg, errs = fresh(b)
+        open_note(pg, "Snap"); tool(pg, "pen")
+        HER = [(617.2, 376.6), (630, 377.4), (630.6, 373.7), (624.3, 365.4)]        # her 3 Nov 08:48 triangle's saved corners (a 3.7 px 4th side)
+        def her_ring(k, dx, dy, n, amp, close):
+            cx, cy = centre(HER); V = [(cx + (x - cx) * k + dx, cy + (y - cy) * k + dy) for x, y in HER]
+            return V, ring(V, n=n, amp=amp, close=close)
+        V, pts = her_ring(1, -400, -150, 4, 0.3, (0.4, 0.3))
+        r, P = snap(pg, pts)
+        check("her 3 Nov triangle (12.8 / 3.7 / 10.4 / 13.3 px sides, one blunt corner): a triangle with 3 points, not a 4-corner rect",
+              r and r["data"]["type"] == "triangle" and P and len(P) == 3, [r and r["kind"], r and r["data"]])
+        if P and len(P) == 3:
+            sd, a = sides(P), angles(P)
+            check("... a PERFECT equilateral (sides to 1 px, angles 60 to 1 degree)", max(sd) - min(sd) <= 1 and all(abs(x - 60) <= 1 for x in a), ["sides", r1(sd), "angles", r1(a)])
+            check("... about 15 px a side, where she drew it (centre to 4 px)", 13 <= sd[0] <= 17 and math.dist(centre(P), centre(V)) <= 4, ["side", round(sd[0], 1), "centre", r1(centre(P)), "drawn", r1(centre(V))])
+        V, pts = her_ring(5, -150, 0, 8, 1.2, (2, 1))
+        r, P = snap(pg, pts)
+        check("the same ring at 5 x (64 / 18 / 52 / 66 px sides, an 18 px blunt corner): a triangle with 3 points", r and r["data"]["type"] == "triangle" and P and len(P) == 3,
+              [r and r["kind"], r and r["data"]])
+        if P and len(P) == 3:
+            sd, a = sides(P), angles(P)
+            check("... a PERFECT equilateral, about 75 px a side", max(sd) - min(sd) <= 1 and all(abs(x - 60) <= 1 for x in a) and 68 <= sd[0] <= 82, ["sides", r1(sd), "angles", r1(a)])
+        r, P = snap(pg, ring([(300, 450), (348, 450), (360, 462), (360, 510), (300, 510)], n=6, amp=1.0, close=(1.5, 1)))
+        check("a 60 px square with one corner cut 12 px (a 17 px 5th side): a rect with 4 points", r and r["data"]["type"] == "rect" and P and len(P) == 4, [r and r["kind"], r and r["data"]])
+        if P and len(P) == 4:
+            sd = sides(P); check("... a perfect square, 60 to 2 px, axis-true", max(sd) - min(sd) <= 1 and 58 <= sd[0] <= 62 and all(off(dirdeg(P[i], P[(i + 1) % 4]), 90) <= 0.5 for i in range(4)), ["sides", r1(sd)])
+        r, P = snap(pg, ring([(450, 450), (498, 450), (498, 462), (450, 462)], n=6, amp=0.6, close=(1, 0.5)))
+        check("a thin 12 x 48 bar: a rect with 4 points (its short sides are not stubs)", r and r["data"]["type"] == "rect" and P and len(P) == 4, [r and r["kind"], r and r["data"]])
+        if P and len(P) == 4:
+            sd = sorted(sides(P)); check("... 12 x 48 to 2 px", abs(sd[0] - 12) <= 2 and abs(sd[-1] - 48) <= 2, ["sides", r1(sd)])
+        r, P = snap(pg, ring([(300, 700), (400, 700), (370, 650), (330, 650)], n=8, amp=1.2, close=(1, 1)))
+        check("a trapezium, 40 px top on a 100 px base: 4 points as drawn (the top is not a stub)", r and r["data"]["type"] == "rect" and P and len(P) == 4, [r and r["kind"], r and r["data"]])
+        if P and len(P) == 4:
+            sd = sorted(sides(P)); check("... its 40 px top kept (to 3 px), its 100 px base kept", abs(sd[0] - 40) <= 3 and abs(sd[-1] - 100) <= 3, ["sides", r1(sd)])
+        # the closing floor: her other 3 Nov triangle ended 3.1 px short on a 19 px shape (10% is 1.9 px) and stayed ink
+        V = eq_corners(560, 470, 16, 0); pts = ring(V, n=5, amp=0.3, close=(0, 0))[:-2]                       # the last drawn point 6.4 px short, then the end
+        d = (V[0][0] - pts[-1][0], V[0][1] - pts[-1][1]); L = math.hypot(*d)
+        pts.append((V[0][0] - d[0] / L * 3.5, V[0][1] - d[1] / L * 3.5))                 # the end 3.5 px short of the start
+        r, P = snap(pg, pts)
+        check("a 16 px triangle whose ring ends 3.5 px short of its start: closed (CLOSE_PX 4), a triangle with 3 points", r and r["kind"] == "shape" and r["data"]["type"] == "triangle" and P and len(P) == 3,
+              [r and r["kind"], r and r["data"]])
+        V = eq_corners(650, 650, 60, 0); pts = ring(V, n=8, amp=1.0, close=(0, 0))[:-2]                       # the last drawn point 15 px short, then the end
+        d = (V[0][0] - pts[-1][0], V[0][1] - pts[-1][1]); L = math.hypot(*d)
+        pts.append((V[0][0] - d[0] / L * 10, V[0][1] - d[1] / L * 10))                   # the end 10 px short on a 70 px size: open
+        r, P = snap(pg, pts)
+        check("a 60 px triangle whose ring ends 10 px short (over 10% of the size): not closed, stays pen ink", r and r["kind"] == "pen", [r and r["kind"], r and r["data"].get("type")])
+        check("no page errors", not errs, errs)
+        ctx.close()
+
         # ------------------------------------------------------------ the screenshot: equilateral, right triangle, square at 30
         group[0] = "screenshot"
         ctx, pg, errs = fresh(b)
@@ -294,7 +348,7 @@ try:
         pg.mouse.move(5, 5)
         pg.screenshot(path=str(SHOTS / "shapefit.png"), clip={"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0})
         check("screenshot saved", (SHOTS / "shapefit.png").exists(), str(SHOTS / "shapefit.png"))
-        check("cache is pw-v8g", "pw-v8g" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v8h", "pw-v8h" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./sw.js"])
         check("no em-dashes in ink.js or sw.js", chr(0x2014) not in srcs)
         check("no page errors", not errs, errs)
