@@ -125,6 +125,14 @@ function findCurrent() {
 // way both redraws land while she is still. A gesture inside that second just puts the hint on at once. (A one-frame
 // off, two rAFs, was never proven on the tablet: a short off may not finish its redraw before the layer is made again.)
 // stats.redraws counts the hint coming off (viewStats).
+// pw-v8j: opening a note (fit) draws a FRESH sheet tree, which Chrome rasters at the zoom it has, so no off/on redraw is
+// needed there: the hint simply stays on and her first pan starts composited. Measured (tests/test_pdfscroll.py --after,
+// slowed CPU): with the off/on cycle after an open, the first pan of a PDF note paid 1 to 3 frames of 33 to 67 ms; the
+// previous release (pw-v8h, the hint always on) paid none.
+function hintKeep() {
+  clearTimeout(hintT); hintT = 0; clearTimeout(backT); backT = 0;
+  stack.style.willChange = 'transform';
+}
 function hint() {
   if (backT) { clearTimeout(backT); backT = 0; }
   if (!hintT) stack.style.willChange = 'transform';
@@ -251,6 +259,7 @@ export function fit(index = Math.max(0, cur), cause = '?') {
   pinned = L.tops.length ? Math.min(index, L.tops.length - 1) : null;
   V.y = MARGIN - (L.tops[index] || 0) * V.z;
   stopGlide(); settle(); clampView(); apply();
+  hintKeep();                                             // pw-v8j: a fresh stack at this zoom, no redraw cycle needed
 }
 
 export function scrollToPage(index) {

@@ -584,11 +584,11 @@ try:
           inline: document.getElementById('stack').style.willChange, hint: m.viewStats().hint, redraws: m.viewStats().redraws, z: m.view().z, y: m.view().y }))"""
         wc = lambda: pg6.evaluate(WC)
         w0 = wc()
-        check("(a) 600 ms after opening (the open's fit settled at 250 ms): the hint is off (computed 'auto'), no gesture hint, one redraw",
-              w0["wc"] == "auto" and w0["inline"] == "" and not w0["hint"] and w0["redraws"] == 1, w0)
+        check("(a) 600 ms after opening: the hint is on (pw-v8j: a fresh stack at the fitted zoom needs no redraw cycle), no gesture hint, no redraw yet",
+              w0["wc"] == "transform" and w0["inline"] == "transform" and not w0["hint"] and w0["redraws"] == 0, w0)
         pg6.wait_for_timeout(900)
         w0b = wc()
-        check("(a) 1.5 s after opening: the hint is back on (inline will-change: transform), still one redraw", w0b["wc"] == "transform" and w0b["inline"] == "transform" and w0b["redraws"] == 1, w0b)
+        check("(a) 1.5 s after opening: still on, still no redraw (the open never schedules one)", w0b["wc"] == "transform" and w0b["inline"] == "transform" and w0b["redraws"] == 0, w0b)
         check("(a) the stylesheet no longer sets it: #stack's will-change comes from page.js alone",
               pg6.evaluate("[...document.styleSheets].flatMap((s) => { try { return [...s.cssRules]; } catch (_) { return []; } }).filter((r) => r.selectorText === '#stack').every((r) => !r.style.willChange)"))
         touch(cdp6, "touchStart", 640, 500); pg6.wait_for_timeout(60)
@@ -603,11 +603,11 @@ try:
         check("(c) 120 ms after the lift: still on (within HINT_MS)", w3["wc"] == "transform" and w3["hint"], w3)
         pg6.wait_for_timeout(450)
         w4 = wc()
-        check("(c) about 570 ms after the lift: the settle happened (redraws 2), the hint is off (Chrome redraws at this view)",
-              w4["wc"] == "auto" and w4["inline"] == "" and not w4["hint"] and w4["redraws"] == 2, w4)
+        check("(c) about 570 ms after the lift: the settle happened (the first redraw), the hint is off (Chrome redraws at this view)",
+              w4["wc"] == "auto" and w4["inline"] == "" and not w4["hint"] and w4["redraws"] == 1, w4)
         pg6.wait_for_timeout(1000)
         w4b = wc()
-        check("(c) 1.6 s after the lift: the hint is back on, no new redraw", w4b["wc"] == "transform" and w4b["redraws"] == 2 and not w4b["hint"], w4b)
+        check("(c) 1.6 s after the lift: the hint is back on, no new redraw", w4b["wc"] == "transform" and w4b["redraws"] == 1 and not w4b["hint"], w4b)
         OFF = """() => new Promise((ok) => { const s = document.getElementById('stack'), seen = []; const t0 = performance.now();
           const look = () => { seen.push(s.style.willChange || 'off'); if (performance.now() - t0 < 700) requestAnimationFrame(look); else ok(seen); }; look(); })"""
         touch(cdp6, "touchStart", 640, 400); pg6.wait_for_timeout(40); touch(cdp6, "touchMove", 640, 390); pg6.wait_for_timeout(40); touch(cdp6, "touchEnd")

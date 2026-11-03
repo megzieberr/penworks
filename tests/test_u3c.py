@@ -292,9 +292,9 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v8i" not in keys:
+        if "pw-v8j" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v8i", "pw-v8i" in keys, keys)
+        check("cache is pw-v8j", "pw-v8j" in keys, keys)
         files = ["./js/store.js", "./js/api.js", "./js/local-backend.js", "./js/tray.js", "./js/app.js", "./sw.js"]
         srcs = {u: pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in files}
         check("no em-dashes in the changed files", all(chr(0x2014) not in v for v in srcs.values()))
