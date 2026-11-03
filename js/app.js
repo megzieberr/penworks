@@ -19,6 +19,8 @@
 // in an open note the bar's + opens a small menu, Page (a page below, as before) or PDF (its pages at the end). Each PDF
 // page is a page of its own shape with the PDF under her ink (js/pdfin.js reads and keeps the file, js/pdfview.js draws it).
 // Opening a PDF is not an undo step: undo never removes the PDF (her ruling 26 Oct).
+// U4c (pw-v8n): the + menu's Image puts a picture on the page she is on (js/pdfin.js importImage, js/ink.js placeImage):
+// moved, resized, turned and locked with the select tool, see-through kept, under all ink (the rules: js/ink.js's head).
 // U4b (pw-v7a): a PDF shared to PenWorks (WhatsApp's share button) lands on ./?share=1 (sw.js keeps the file); once she
 // is logged in a small sheet asks "Open <name> as": New note in Loose, or Add to a note (the grid of every note's card),
 // or Cancel. The installed app runs full screen itself (manifest display "fullscreen"), so the full-screen button there
@@ -237,9 +239,27 @@ async function pdfPicked() {
   inp.value = '';
   if (file) await pdfin.importPdf(file, target);
 }
-// the open note's + (the note bar): Page, as before, or PDF. Room for Image later (U4c).
+// U4c: the picker for a picture (PNG, JPEG or WebP; Android offers Camera and Gallery): it lands on the page she is on
+let imgPage = null;
+function pickImage() {
+  const p = pagesOf(S.openNote)[S.cur];
+  if (!p) return;
+  imgPage = p.id;
+  const inp = $('imgInput');
+  inp.value = '';
+  inp.click();
+}
+async function imgPicked() {
+  const inp = $('imgInput'), file = inp.files && inp.files[0], p = pagesOf(S.openNote)[S.cur];
+  const pid = imgPage || (p && p.id);
+  imgPage = null;
+  inp.value = '';
+  if (file && pid) await pdfin.importImage(file, pid);
+}
+// the open note's + (the note bar): Page, as before, PDF, or Image (U4c, a picture on the page she is on)
 function addMenu(anchor) {
-  openMenu(anchor, [{ label: 'Page', fn: () => addPageBelow(S.cur) }, { label: 'PDF', fn: () => pickPdf({ noteId: S.openNote }) }]);
+  openMenu(anchor, [{ label: 'Page', fn: () => addPageBelow(S.cur) }, { label: 'PDF', fn: () => pickPdf({ noteId: S.openNote }) },
+                    { label: 'Image', fn: pickImage }]);
 }
 function renameNote(id, value) {
   const n = note(id), v = value.trim().slice(0, 120);
@@ -1027,7 +1047,8 @@ function shareName(ids) {
 // one page as an SVG document at 2x (the share; U3b's page picture asks for 1x): the viewBox is the page in page px, so
 // the paper and the ink keep their own numbers. `recs` given = those records instead of the page's own (U3b).
 // U4a: a PDF page's svg is the ink alone (see-through): renderPage draws the PDF under it first.
-function pageSvgText(p, scale = SHARE_SCALE, recs = null) {
+// U4c: hrefs = the pictures' data URLs (ink.imageHrefs): a Blob URL inside an SVG drawn through an <img> never loads.
+function pageSvgText(p, scale = SHARE_SCALE, recs = null, hrefs = null) {
   const { w, h } = pageSize(p);
   const svg = document.createElementNS(SVGNS, 'svg');
   svg.setAttribute('width', w * scale); svg.setAttribute('height', h * scale);
@@ -1039,13 +1060,14 @@ function pageSvgText(p, scale = SHARE_SCALE, recs = null) {
     const bg = bgSvg(w, h, p.background);
     while (bg.firstChild) svg.append(bg.firstChild);
   }
-  const layer = ink.thumbSvg(p.id, p, recs);           // the page's ink, built from its records (hl below pen)
+  const layer = ink.thumbSvg(p.id, p, recs, hrefs);    // the page's ink, built from its records (pictures below hl below pen)
   while (layer.firstChild) svg.append(layer.firstChild);
   return new XMLSerializer().serializeToString(svg);
 }
 async function renderPage(p, type, quality, scale = SHARE_SCALE, recs = null) {
   const { w, h } = pageSize(p), W = w * scale, H = h * scale;
-  const url = URL.createObjectURL(new Blob([pageSvgText(p, scale, recs)], { type: 'image/svg+xml' }));
+  const hrefs = await ink.imageHrefs(recs || ink.strokesOf(p.id));   // U4c: throws when a picture is not on this device yet
+  const url = URL.createObjectURL(new Blob([pageSvgText(p, scale, recs, hrefs)], { type: 'image/svg+xml' }));
   try {
     const img = new Image();
     img.src = url;
@@ -1515,7 +1537,8 @@ async function enter(user) {
   // U3e: the tree queue first; the stroke queue waits for it (a new page's row reaches the database before its strokes)
   treeq.init({ mode: api.mode, userId: user.id, api, onState: dotFrom('tree'), onDrop: treeDropped });
   store.init({ mode: api.mode, userId: user.id, api, idle: () => treeq.gate(), onRemote: ink.replace, onState: dotFrom('ink'), onPushed: pics.pushed });
-  pdfin.initPdf({ mode: api.mode, userId: user.id, api, toast, makeNote: makePdfNote, addPages: addPdfPages, onBytes: () => pdfview.bytesArrived() });
+  pdfin.initPdf({ mode: api.mode, userId: user.id, api, toast, makeNote: makePdfNote, addPages: addPdfPages,
+                 onBytes: (path) => { pdfview.bytesArrived(); ink.bytesArrived(path); }, placeImage: ink.placeImage });   // U4c: pictures too
   pics.initSnap({ api, store, ink, owner: () => user.id, pages: () => S.pages, page, note, pagesOf, liveNote, onCover: refreshCard,
                   render: (p, recs) => renderPage(p, 'image/webp', 0.8, 1, recs), idle: settledBoth });
   await load();
@@ -1789,6 +1812,7 @@ function wire() {
   window.addEventListener('popstate', () => { if (S.openNote) closeNote(true); });
   $('addPageBtn').addEventListener('click', (e) => addMenu(e.currentTarget));      // U4a: Page or PDF
   $('pdfInput').addEventListener('change', pdfPicked);
+  $('imgInput').addEventListener('change', imgPicked);                             // U4c
   $('addBelow').addEventListener('click', () => addPageBelow(pagesOf(S.openNote).length - 1));
   $('listBtn').addEventListener('click', () => { S.listOpen = !S.listOpen; renderPageList(); if (S.listOpen) listToCur(); });
   $('plClose').addEventListener('click', () => { S.listOpen = false; renderPageList(); });

@@ -22,6 +22,14 @@
 // A source PDF that pdf-lib cannot embed (encrypted, or it will not parse) falls back to a picture of that page at 2x
 // (pdf.js, as before this round) with the ink still vector on top. Bytes not on this device: the export stops with
 // "The PDF is not on this device yet", the same toast as before.
+// U4c (pw-v8n): a picture on a page is embedded once per file per document (embedPng keeps a PNG's alpha as an SMask, so
+// see-through stays see-through; embedJpg for a JPEG) and drawn in the page's own stream AFTER the paper and BEFORE the ink,
+// as the screen layers it: "q a b c d e f cm /Image Do Q", with [a b c d e f] = ink.imageMatrix in quarter page px. That
+// matrix is pdf-lib's drawImage with rotate degrees(-rot) worked out by hand: the image's unit square has its origin at the
+// box's bottom-left corner turned about the box's centre (pdf-lib turns about that corner, so the corner is found from the
+// centre), its u axis along the turned top edge and its v axis up the turned left edge. drawImage itself writes into
+// pdf-lib's own content stream, which cannot sit between the paper and the ink of this one. Bytes not on this device:
+// "The picture is not on this device yet".
 import * as ink from './ink.js';
 import { pageSize, pdfShape, A4, CM, GRID, GRID_TOP, LINE_GAP, LINE_TOP } from './page.js';
 import * as pdfin from './pdfin.js';
@@ -155,6 +163,7 @@ function paperD(w, h, kind) {
 // a record's paths as [d, dashed] pairs, the way ink.js makeEl and setGeom draw it (an arrow's head is never dashed)
 function pathsOf(rec) {
   const st = rec.style || {}, dashed = st.dash === 'dashed', w = st.width || 2.5;
+  if (rec.kind === 'image') return [];                             // U4c: a picture is drawn by pageOps' own step, never as a path
   if (rec.kind === 'axes') {                                       // U5e: the axis lines and ticks, then the heads (the labels are text, axesText)
     const a = ink.axesGeom(rec), L2 = (q) => 'M' + f1(q[0][0]) + ' ' + f1(q[0][1]) + 'L' + f1(q[1][0]) + ' ' + f1(q[1][1]);
     if (!a) return [];
@@ -210,12 +219,18 @@ async function axesText(L, doc, page, recs, k, H, fonts) {
   }
 }
 
-// one page's paper and ink as content stream text. gsOf(opacity) = the page's ExtGState name for that opacity
-function pageOps(sz, background, recs, k, H, gsOf) {
+// one page's paper and ink as content stream text. gsOf(opacity) = the page's ExtGState name for that opacity;
+// imgOf(path) = the page's XObject name for that picture's file (U4c)
+function pageOps(sz, background, recs, k, H, gsOf, imgOf = () => null) {
   const kk = String(Math.round(k / U * 1e8) / 1e8);               // k / U: the numbers below are quarter page px
   const ops = ['q', kk + ' 0 0 -' + kk + ' 0 ' + String(Math.round(H * 100) / 100) + ' cm', '1 j'];
   const paper = background ? paperD(sz.w, sz.h, background) : '';
   if (paper) ops.push(rgOf(PAPER) + ' ' + n2(1) + ' w 0 J [] 0 d', pdfPath(paper), 'S');
+  const m3 = (v) => String(Math.round(v * U * 1000) / 1000);
+  for (const rec of recs) {                                        // U4c: the pictures, over the paper, under every ink, in seq order
+    const name = ink.isImg(rec) && rec.data && imgOf(rec.data.path);
+    if (name) ops.push('q', ink.imageMatrix(rec).map(m3).join(' ') + ' cm', name + ' Do', 'Q');
+  }
   const stroke = (d, colour, w, dashed, opacity) => {
     const a = dashed ? n2(+ink.dashOf(w).split(' ')[0]) : '';
     const head = rgOf(colour) + ' ' + n2(w) + ' w 1 J ' + (dashed ? '[' + a + ' ' + a + '] 0 d' : '[] 0 d');
@@ -229,6 +244,7 @@ function pageOps(sz, background, recs, k, H, gsOf) {
   };
   const hl = new Map(), pen = [];
   for (const rec of recs) {
+    if (ink.isImg(rec)) continue;                                  // U4c: drawn above
     if (ink.inHl(rec)) {
       const st = rec.style || {}, op = +ink.opKey(rec), w = st.width || 2.5;
       for (const [d, dashed] of pathsOf(rec)) {
@@ -334,6 +350,14 @@ async function sourcePicture(doc, p) {
   return doc.embedJpg(new Uint8Array(await b.arrayBuffer()));
 }
 
+// U4c: a picture's file embedded (once per path per document: the caller keeps it): a PNG by its signature, else a JPEG
+async function embedPicture(doc, path) {
+  const blob = await pdfin.bytesOf(path);
+  if (!blob) throw new Error('The picture is not on this device yet');
+  const b = new Uint8Array(await blob.arrayBuffer());
+  return b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47 ? doc.embedPng(b) : doc.embedJpg(b);
+}
+
 // ---------------------------------------------------------------- the export
 // the pages (page rows, note order) as one PDF Blob; progress(k, n) before page k of n. recsOf(p) = that page's
 // records (default: the page's own, from ink.js)
@@ -343,6 +367,7 @@ export async function buildPdf(pages, name, progress = () => {}, recsOf = (p) =>
   const sources = new Map();                                     // pdf_path -> Map(pdf_page -> { emb, rot })
   const gsRefs = new Map();                                      // opacity -> one ExtGState for the whole file
   const fonts = {};                                              // U5e: Helvetica and its oblique, embedded once when a stamp needs them
+  const pics = new Map();                                        // U4c: picture path -> its embedded image, once for the whole file
   const n = pages.length;
   for (let i = 0; i < n; i++) {
     progress(i + 1, n);
@@ -364,7 +389,14 @@ export async function buildPdf(pages, name, progress = () => {}, recsOf = (p) =>
       return names.get(op);
     };
     const recs = (recsOf(p) || []).slice().sort((a, b) => a.seq - b.seq);
-    const text = pageOps(sz, p.pdf_path ? '' : p.background, recs, k, H, gsOf);
+    const xo = new Map();                                        // U4c: this page's XObject name per picture path
+    for (const r of recs) {
+      const path = ink.isImg(r) && r.data && r.data.path;
+      if (!path || xo.has(path)) continue;
+      if (!pics.has(path)) pics.set(path, await embedPicture(doc, path));
+      xo.set(path, page.node.newXObject('Image', pics.get(path).ref).toString());
+    }
+    const text = pageOps(sz, p.pdf_path ? '' : p.background, recs, k, H, gsOf, (path) => xo.get(path) || null);
     page.node.addContentStream(doc.context.register(await flate(doc, text)));
     await axesText(L, doc, page, recs, k, H, fonts);              // U5e: after the ink's stream, the stamps' numbers as text
   }

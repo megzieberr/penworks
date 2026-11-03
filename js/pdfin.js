@@ -14,6 +14,7 @@
 // ladder), and on `online` or when the app is visible again; they stay on the device after the upload. A device without
 // them (the phone) downloads them the first time it draws such a page, and keeps them.
 // pdf.js (vendor/pdf.min.mjs and its worker) loads the first time a PDF is opened or drawn, never on app start.
+// U4c (pw-v8n): pictures share all of it (keepImport, bytesOf, the upload ladder); importImage reads, downscales and keeps one.
 
 const LIB = new URL('../vendor/pdf.min.mjs', import.meta.url).href;           // beside the app, whatever page loads this file
 const WORKER = new URL('../vendor/pdf.worker.min.mjs', import.meta.url).href;
@@ -29,7 +30,8 @@ const cfg = {
   toast: () => {},
   makeNote: null,       // (folderId, name) -> note id: the note row, through save()
   addPages: null,       // (noteId, specs, isNew) -> the page rows through save(), then the note on screen
-  onBytes: () => {},    // (path) the bytes of that PDF are on this device now (the pages can draw)
+  onBytes: () => {},    // (path) the bytes of that PDF (or U4c picture) are on this device now (the pages can draw)
+  placeImage: null,     // U4c: (pageId, { path, nw, nh, blob }) -> the picture's record on that page (js/ink.js placeImage)
 };
 let dbp = Promise.reject(new Error('initPdf has not run'));
 dbp.catch(() => {});
@@ -38,7 +40,7 @@ const gets = new Map();                           // path -> a download on its w
 const docs = new Map();                           // path -> { p: Promise<PDFDocumentProxy>, used }
 let lib = null, useN = 0, importing = Promise.resolve();
 let upBusy = false, upT = 0, upTries = 0, upTold = false;
-const stats = { imports: 0, uploads: 0, downloads: 0, failures: 0, opened: 0 };
+const stats = { imports: 0, uploads: 0, downloads: 0, failures: 0, opened: 0, pictures: 0 };
 
 // ---------------------------------------------------------------- IndexedDB, the device's copy of each opened PDF
 function openDb(name) {
@@ -288,6 +290,80 @@ async function pumpUploads() {
       await putRec({ ...rec, up: true });
     }
   } finally { upBusy = false; }
+}
+
+// ---------------------------------------------------------------- U4c: pictures (the + menu's Image)
+// A picture's file lives exactly where a PDF's does: this device's copy (the `files` store) at once, then the bucket in the
+// background (kickUploads), so a picture placed without wifi works and goes up later. keepImport is that one step;
+// bytesOf serves a picture's path like a PDF's (the phone downloads it the first time it draws the page).
+export async function keepImport(path, blob, name = '') {
+  await putRec({ path, blob, up: false, at: new Date().toISOString(), name });
+  kickUploads();
+}
+export const IMG_BROKEN = 'This picture could not be opened.';
+export const IMG_TOO_BIG = 'This picture is too big (over 10 MB).';
+const IMG_LONG = 2048;                            // the long side kept: a 4000 px phone photo is 3 x the page's 794 px; 2048 stays crisp to about zoom 2.5
+const IMG_MAX = 10485760;                         // 10 MB, after the downscale
+// what the bytes are (the first few, not the name or the picker's type): 'png', 'jpeg', 'webp' or ''
+async function sniff(file) {
+  const b = new Uint8Array(await file.slice(0, 12).arrayBuffer()), at = (k, s) => [...s].every((c, i) => b[k + i] === c.charCodeAt(0));
+  if (b[0] === 0x89 && at(1, 'PNG')) return 'png';
+  if (b[0] === 0xFF && b[1] === 0xD8 && b[2] === 0xFF) return 'jpeg';
+  if (at(0, 'RIFF') && at(8, 'WEBP')) return 'webp';
+  return '';
+}
+// a JPEG's EXIF orientation (1 = upright, as stored; 0 = none found). A turned one is drawn upright and stored again,
+// since the PDF export puts a JPEG's pixels in as they are stored
+async function jpegTurn(file) {
+  const v = new DataView(await file.slice(0, 131072).arrayBuffer());
+  let i = 2;
+  while (i + 4 <= v.byteLength && v.getUint8(i) === 0xFF) {
+    const m = v.getUint8(i + 1), len = v.getUint16(i + 2);
+    if (m === 0xE1 && i + 10 <= v.byteLength && v.getUint32(i + 4) === 0x45786966) {   // APP1 "Exif"
+      const t = i + 10, le = v.getUint16(t) === 0x4949, u16 = (k) => v.getUint16(k, le), u32 = (k) => v.getUint32(k, le);
+      if (t + 8 > v.byteLength) return 0;
+      const ifd = t + u32(t + 4), n = ifd + 2 <= v.byteLength ? u16(ifd) : 0;
+      for (let k = 0; k < n; k++) { const e = ifd + 2 + k * 12; if (e + 10 > v.byteLength) break; if (u16(e) === 0x0112) return u16(e + 8); }
+      return 0;
+    }
+    if (m === 0xDA) break;                                         // the picture data starts: no EXIF before it
+    i += 2 + len;
+  }
+  return 0;
+}
+// the one way a picture comes in: decode it (a broken file = ONE toast, nothing lands), keep its long side at 2048 px at
+// most (PNG and WebP go out as PNG, alpha kept; JPEG stays JPEG at 0.9; a small PNG or upright JPEG is kept as it came, a
+// small WebP becomes PNG: the PDF export cannot embed WebP), keep it on the device (keepImport), then cfg.placeImage puts
+// the record on page pageId (js/ink.js placeImage). Returns that record, or null
+export async function importImage(file, pageId) {
+  const no = (msg, why) => { if (why) console.warn('PenWorks: a picture was not opened:', why); cfg.toast(msg, 5000); return null; };
+  if (!file || typeof file.size !== 'number') return null;
+  let kind = '', bmp = null;
+  try { kind = await sniff(file); bmp = await createImageBitmap(file); }
+  catch (e) { return no(IMG_BROKEN, (e && (e.name + ': ' + e.message)) || e); }
+  const w0 = bmp.width, h0 = bmp.height;
+  if (!(w0 > 0 && h0 > 0)) { bmp.close(); return no(IMG_BROKEN, 'no pixels'); }
+  const s = Math.min(1, IMG_LONG / Math.max(w0, h0)), nw = Math.max(1, Math.round(w0 * s)), nh = Math.max(1, Math.round(h0 * s));
+  const jpeg = kind === 'jpeg';
+  let blob = null;
+  try {
+    if (s === 1 && (kind === 'png' || (jpeg && (await jpegTurn(file)) <= 1))) blob = new Blob([file], { type: jpeg ? 'image/jpeg' : 'image/png' });
+    else {
+      const c = document.createElement('canvas');
+      c.width = nw; c.height = nh;
+      const g = c.getContext('2d');
+      g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+      g.drawImage(bmp, 0, 0, nw, nh);
+      blob = await new Promise((ok, bad) => c.toBlob((b) => (b ? ok(b) : bad(new Error('the picture could not be drawn'))), jpeg ? 'image/jpeg' : 'image/png', jpeg ? 0.9 : undefined));
+      c.width = 0; c.height = 0;
+    }
+  } catch (e) { return no(IMG_BROKEN, e && e.message); }
+  finally { bmp.close(); }
+  if (blob.size > IMG_MAX) return no(IMG_TOO_BIG);
+  const path = `${cfg.userId}/${crypto.randomUUID()}.${jpeg ? 'jpg' : 'png'}`;
+  await keepImport(path, blob, (file && file.name) || '');
+  stats.pictures++;
+  return cfg.placeImage ? cfg.placeImage(pageId, { path, nw, nh, blob }) : null;
 }
 
 // ---------------------------------------------------------------- U4b: a PDF shared to PenWorks

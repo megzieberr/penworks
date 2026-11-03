@@ -663,7 +663,7 @@ try:
         r1_ = float(pg.evaluate("document.querySelector('svg.ink g.sel circle.selh') ? document.querySelector('svg.ink g.sel circle.selh').getAttribute('r') : 0"))
         check("zooming keeps the corner handles the same size on screen", z1 != z0 and abs(r1_ * z1 - r0 * z0) < 0.2, [z0, z1, r0, r1_])
         tool(pg, "pen")
-        check("the layer has only hl and pen again after the selection", pg.evaluate("[...document.querySelector('#stack .sheet[data-index=\"1\"] svg.ink').children].map(c => c.getAttribute('class')).join()") == "hl,pen")
+        check("the layer has only img, hl and pen again after the selection", pg.evaluate("[...document.querySelector('#stack .sheet[data-index=\"1\"] svg.ink').children].map(c => c.getAttribute('class')).join()") == "img,hl,pen")   # U4c: the pictures' group is at the bottom of every layer
         ctx.close()
 
         # ------------------------------------------------------------ erasers on shapes
@@ -2958,7 +2958,7 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v8m", "pw-v8m" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v8n", "pw-v8n" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)

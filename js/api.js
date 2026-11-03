@@ -207,10 +207,12 @@ const liveApi = {
 
   // ---------------------------------------------------------------- opened PDFs (U4a, js/pdfin.js)
   // upsert: an upload that landed but whose answer was lost goes again harmlessly (the same bytes at the same path)
+  // U4c: a picture goes up as what it is (image/png or image/jpeg, the bucket allows both); a PDF as before
   async putImport(path, blob) {
     const c = await client();
+    const type = /\.png$/i.test(path) ? 'image/png' : /\.jpe?g$/i.test(path) ? 'image/jpeg' : 'application/pdf';
     const { error } = await c.storage.from(IMPORT_BUCKET).upload(path, blob,
-      { upsert: true, contentType: 'application/pdf', cacheControl: '3600' });
+      { upsert: true, contentType: type, cacheControl: '3600' });
     if (error) throw error;
   },
   async getImport(path) {

@@ -111,9 +111,34 @@
 // triangle: 12.8 / 3.7 / 10.4 / 13.3 px sides, saved as a 4-corner rect). A thin bar (10 x 40) keeps its 4 corners: its
 // long sides are parallel and meet nowhere near. And the ring CLOSES within 10% of the size or 4 page px
 // (CLOSE_PX), whichever is more, like the hook: her other 3 Nov triangle ended 3.1 px short on a 19 px shape and stayed ink.
+// Pictures (U4c, pw-v8n; her ask 24 Oct: "images on a page: place, move, resize, lock and unlock, transparency kept").
+// kind 'image', ONE record, style { colour '#000000', width 0, dash solid, opacity 1 } (the table's shape, unused), data
+// { path, x, y, w, h, nw, nh, rot, locked }: path = the file in the `imports` bucket (<owner>/<uuid>.png or .jpg, kept on
+// this device by js/pdfin.js keepImport, fetched by bytesOf on a device without it); x, y, w, h = the picture's box in page
+// px BEFORE its turn; nw, nh = the stored file's pixel size; rot = degrees clockwise about the box's centre (absent = 0);
+// locked (absent = false). Nothing else is stored: the drawing is worked out from data every time (the axes rule). The
+// bottom layer: every page SVG (buildLayer, thumbSvg) holds <g class="img"> BELOW .hl and .pen, so a picture is always
+// under all ink, whatever its seq (pictures among themselves: seq order). A picture is a <g data-type="image"> holding an
+// SVG <image> (x, y, width, height, preserveAspectRatio none, rotate(rot cx cy) when turned) whose href is a Blob URL of
+// the device copy (ONE per path while the app runs, URLS; never a data URL on screen), so a PNG's see-through shows the
+// paper by itself. Bytes not on this device yet (the phone, before the download): a light grey dashed rectangle of the box
+// (rect.imgWait) until they come (wantImg retries 2, 5, 10, 30 s and on `online`; bytesArrived swaps the <image> in and
+// tells onChange, so the thumbs follow). Select: a TAP inside its turned box picks it when no ink is under the tap (ink is
+// on top); a BOX picks it when it touches the turned rectangle (a box inside the picture too); move, resize (uniform,
+// about the opposite corner; nw, nh untouched) and turn (rot += the turn, about the selection's centre) as every record;
+// no reshape handles. Lock: a padlock chip after Delete whenever the selection holds a picture (Lock, or Unlock when any
+// is locked), one undo step. A LOCKED picture is never taken by a box or Select all, never moves, resizes or turns; a tap
+// on bare locked picture selects it alone with NO corners and NO turn ring, chips Delete and Unlock only, and a drag
+// inside does nothing (a selection holding any locked picture behaves so). The erasers, restyle, the tray's recolour and
+// restyle of a selection, shapeToInk and page Erase never touch a picture: she erases her ink off a photo without biting
+// the photo. The data URL rule: a page drawn through an <img> (app.js renderPage: the share images, U3b's page picture)
+// cannot reach a Blob URL from inside the SVG, so there thumbSvg is handed data URLs (imageHrefs, FileReader on the device
+// copy, once per path per render), and it throws "The picture is not on this device yet" when the bytes are not here,
+// exactly as a missing PDF does. The PDF export (js/pdfout.js) embeds each file once and draws it under the ink.
 
 import * as store from './store.js';
 import { pageAt, pagePoint, view, pageSize, CM } from './page.js';
+import { bytesOf } from './pdfin.js';
 
 // snap: the pen held still this long (ms) at the end of a stroke; ?hold=400 in the address overrides it.
 // 350 is her number (29 Oct 15:30; it was 500)
@@ -143,7 +168,7 @@ export const GRAB = 12;          // selection corners: px on screen (12 px at zo
 export const HANDLE_REACH = 20;  // shape handles (select tool): px on screen (20 px at zoom 1), a pen tip needs room
 const SEL_BLUE = '#2F4BB8';      // the selection box (the paper is white in both modes)
 
-const P = new Map();             // page id -> { strokes (by seq), byId, svg, hl, pen, hlo (opacity -> group), els (id -> path), w, h }
+const P = new Map();             // page id -> { strokes (by seq), byId, svg, img, hl, pen, hlo (opacity -> group), els (id -> path), w, h }
 const boxes = new WeakMap();     // record -> [x0, y0, x1, y1], its points' bounding box
 const T = { tool: 'pen', lastInk: 'pen', style: { colour: '#000000', width: 2.5, dash: 'solid', opacity: 1 } };
 // what restyle hands out: its own colour, and the pen's and the highlighter's current settings (the tray keeps these up to date)
@@ -163,6 +188,8 @@ const SVG_COPY = ICON + '<rect x="8" y="8" width="12" height="12" rx="2"/><path 
 const SVG_CUT = ICON + '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.3 8L20 18M8.3 16L20 6"/></svg>';   // scissors: two loops, two crossed blades
 const SVG_PLUS = ICON + '<path d="M12 5v14M5 12h14"/></svg>';
 const SVG_BIN = ICON + '<path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13"/></svg>';
+const SVG_LOCK = ICON + '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';     // U4c: a closed padlock (Lock)
+const SVG_UNLOCK = ICON + '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/></svg>';  // an open one (Unlock)
 
 const uuid = () => crypto.randomUUID();
 const r1 = (v) => Math.round(v * 10) / 10;
@@ -195,7 +222,7 @@ function data(id) {
   let d = P.get(id);
   if (!d) {
     const strokes = store.load(id).sort(bySeq);
-    d = { strokes, byId: new Map(strokes.map((r) => [r.id, r])), svg: null, hl: null, pen: null, hlo: new Map(), els: new Map(), w: 0, h: 0 };
+    d = { strokes, byId: new Map(strokes.map((r) => [r.id, r])), svg: null, img: null, hl: null, pen: null, hlo: new Map(), els: new Map(), w: 0, h: 0 };
     P.set(id, d);
   }
   return d;
@@ -208,6 +235,7 @@ export function copyStrokes(pageId) { return JSON.parse(JSON.stringify(data(page
 // circle, ellipse, arc or parabola gets (48 for the hit tests, more when it turns into ink)
 export function outline(rec, n = 48) {
   const d = rec.data || {};
+  if (rec.kind === 'image') return imgCorners(rec);                // U4c: the turned box's four corners
   if (rec.kind === 'axes') {                                       // U5e: its box's four corners, then the axes' ends
     const a = axesGeom(rec), b = a && a.box;
     return a ? [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]], ...a.ends] : [];
@@ -303,7 +331,103 @@ function turn(q, c, deg) {
   return [c[0] + x * cs - y * sn, c[1] + x * sn + y * cs];
 }
 const nrmDeg = (a) => { const v = ((a % 360) + 540) % 360 - 180; return v === -180 ? 180 : v; };   // degrees in (-180, 180]
-const pointsOf = (rec) => (rec.kind === 'shape' || rec.kind === 'axes' ? outline(rec) : ((rec.data && rec.data.points) || []));
+const pointsOf = (rec) => (rec.kind === 'image' ? closedCorners(rec)            // U4c: the turned box, closed (its four sides are segments)
+  : rec.kind === 'shape' || rec.kind === 'axes' ? outline(rec) : ((rec.data && rec.data.points) || []));
+// ---------------------------------------------------------------- U4c: pictures (the head's "Pictures" block)
+export const isImg = (rec) => !!rec && rec.kind === 'image';
+const isLocked = (rec) => isImg(rec) && !!(rec.data && rec.data.locked);
+const q2 = (v) => Math.round(v * 100) / 100;
+// the box's corners (top-left, top-right, bottom-right, bottom-left before the turn), turned rot degrees about its centre
+function imgCorners(rec) {
+  const d = rec.data || {}, x = +d.x || 0, y = +d.y || 0, w = +d.w || 0, h = +d.h || 0, c = [x + w / 2, y + h / 2];
+  return [[x, y], [x + w, y], [x + w, y + h], [x, y + h]].map((q) => turn(q, c, +d.rot || 0));
+}
+function closedCorners(rec) { const q = imgCorners(rec); return [...q, q[0]]; }
+// (x, y) inside the turned box, grown by pad page px on every side
+function inImg(rec, x, y, pad = 0) {
+  const d = rec.data || {}, w = +d.w || 0, h = +d.h || 0, c = [(+d.x || 0) + w / 2, (+d.y || 0) + h / 2];
+  const [lx, ly] = turn([x, y], c, -(+d.rot || 0));
+  return Math.abs(lx - c[0]) <= w / 2 + pad && Math.abs(ly - c[1]) <= h / 2 + pad;
+}
+// the matrix [a, b, c, d, e, f] (page px, y down) that puts the unit square of an image (PDF image space: v up) on the
+// turned box: the u axis is the top edge turned (w cos, w sin), the v axis the left edge upwards turned (h sin, -h cos),
+// the origin the box's bottom-left corner (x, y + h) turned about the centre. js/pdfout.js draws the picture with it.
+export function imageMatrix(rec) {
+  const d = rec.data || {}, w = +d.w || 0, h = +d.h || 0, x = +d.x || 0, y = +d.y || 0, t = (+d.rot || 0) * Math.PI / 180;
+  const o = turn([x, y + h], [x + w / 2, y + h / 2], +d.rot || 0);
+  return [w * Math.cos(t), w * Math.sin(t), h * Math.sin(t), -h * Math.cos(t), o[0], o[1]];
+}
+const mimeOf = (path) => (/\.jpe?g$/i.test(String(path)) ? 'image/jpeg' : 'image/png');
+const URLS = new Map();          // path -> the Blob URL of the device copy (one per path while the app runs)
+const WANT = new Map();          // path -> { busy, tries, t }: the bytes asked for, or a retry waiting
+const IMG_BACK = [2000, 5000, 10000, 30000];
+// the device copy of a picture's file as a Blob URL (a blob of the wrong type, as a bucket may hand back, is typed by the path)
+export function keepUrl(path, blob) {
+  if (!path || !blob || URLS.has(path)) return;
+  const t = mimeOf(path);
+  URLS.set(path, URL.createObjectURL(blob.type === t ? blob : new Blob([blob], { type: t })));
+  const w = WANT.get(path);
+  if (w) { clearTimeout(w.t); WANT.delete(path); }
+}
+const urlOf = (path) => { const u = URLS.get(path); if (!u) wantImg(path); return u || null; };
+// ask for a picture's bytes (the device copy, else the bucket); none yet: again after 2, 5, 10, 30 s
+function wantImg(path) {
+  if (!path || URLS.has(path)) return;
+  let w = WANT.get(path);
+  if (w && (w.busy || w.t)) return;
+  if (!w) { w = { busy: false, tries: 0, t: 0 }; WANT.set(path, w); }
+  w.busy = true;
+  const later = () => { w.busy = false; w.t = setTimeout(() => { w.t = 0; wantImg(path); }, IMG_BACK[Math.min(w.tries++, IMG_BACK.length - 1)]); };
+  bytesOf(path).then((blob) => { if (!blob) { later(); return; } w.busy = false; gotImg(path, blob); }, later);
+}
+addEventListener('online', () => { for (const [p, w] of WANT) if (w.t) { clearTimeout(w.t); w.t = 0; w.tries = 0; wantImg(p); } });
+// a picture's bytes are here now: every <g> of that path gets its <image>, and the pages holding it are told (their thumbs)
+function gotImg(path, blob) {
+  keepUrl(path, blob);
+  for (const [pid, d] of P) {
+    let hit = false;
+    for (const r of d.strokes) {
+      if (!isImg(r) || !r.data || r.data.path !== path) continue;
+      hit = true;
+      const el = d.els.get(r.id);
+      if (el) setImg(el, r);
+    }
+    if (hit && onChange) onChange(pid, { remote: true });
+  }
+}
+// js/pdfin.js onBytes: some file's bytes landed on this device (a download); a picture waiting for them draws now
+export function bytesArrived(path) { if (WANT.has(path)) { const w = WANT.get(path); clearTimeout(w.t); w.t = 0; wantImg(path); } }
+// the share images and the page picture (app.js renderPage): each picture's file as a data URL, once per path; throws
+// when a file is not on this device yet (snap.js tries again later, the share says so)
+export async function imageHrefs(recs) {
+  const out = new Map();
+  for (const r of recs || []) {
+    const path = isImg(r) && r.data && r.data.path;
+    if (!path || out.has(path)) continue;
+    const blob = await bytesOf(path);
+    if (!blob) throw new Error('The picture is not on this device yet');
+    const typed = blob.type === mimeOf(path) ? blob : new Blob([blob], { type: mimeOf(path) });
+    out.set(path, await new Promise((ok, no) => { const f = new FileReader(); f.onload = () => ok(f.result); f.onerror = () => no(f.error); f.readAsDataURL(typed); }));
+  }
+  return out;
+}
+// the picture's <g>: its <image> (or the wait rectangle) at the box, turned about the box's centre. hrefOf: the data
+// URLs of a render (thumbSvg's hrefs); none = this device's Blob URLs (asked for when missing)
+function setImg(g, rec, hrefOf) {
+  const d = rec.data || {}, href = hrefOf ? hrefOf(d.path) : urlOf(d.path), tag = href ? 'image' : 'rect';
+  let el = g.firstChild;
+  if (!el || el.tagName !== tag) { el = document.createElementNS(SVGNS, tag); g.replaceChildren(el); }
+  const x = +d.x || 0, y = +d.y || 0, w = Math.max(0, +d.w || 0), h = Math.max(0, +d.h || 0), a = +d.rot || 0;
+  el.setAttribute('x', f2(x)); el.setAttribute('y', f2(y)); el.setAttribute('width', f2(w)); el.setAttribute('height', f2(h));
+  if (a) el.setAttribute('transform', `rotate(${f2(a)} ${f2(x + w / 2)} ${f2(y + h / 2)})`); else el.removeAttribute('transform');
+  if (href) {
+    el.setAttribute('preserveAspectRatio', 'none');
+    if (el.getAttribute('href') !== href) el.setAttribute('href', href);
+  } else {
+    el.setAttribute('class', 'imgWait'); el.setAttribute('fill', '#F1F3F5'); el.setAttribute('stroke', '#B8BEC6');
+    el.setAttribute('stroke-width', '1.5'); el.setAttribute('stroke-dasharray', '6 4');
+  }
+}
 function boxOf(rec) {
   let b = boxes.get(rec);
   if (!b) {
@@ -490,6 +614,7 @@ export function arcD(d) {                                             // M start
     : 'M' + p(d.x1, d.y1) + 'L' + p(d.xm, d.ym) + 'L' + p(d.x2, d.y2);
 }
 function setGeom(el, rec) {
+  if (rec.kind === 'image') { setImg(el, rec); return; }          // U4c: the picture at its box
   if (rec.kind === 'axes') { setAxes(el, rec); return; }           // U5e: the stamp is drawn again whole
   const d = rec.data;
   if ((d.type === 'arc' || d.type === 'circle') && el.tagName === 'g') {   // U5c: a compass shape: the shape, then its needle mark
@@ -521,7 +646,13 @@ function setGeom(el, rec) {
     el.setAttribute('d', 'M' + p(d.x1, d.y1) + 'Q' + p(d.cx, d.cy) + ' ' + p(d.x2, d.y2));
   }
 }
-function makeEl(rec) {
+function makeEl(rec, hrefOf) {
+  if (rec.kind === 'image') {                                      // U4c: a <g> holding the <image> (or the wait rectangle)
+    const g = document.createElementNS(SVGNS, 'g');
+    g.dataset.id = rec.id; g.dataset.type = 'image'; g.setAttribute('class', 'image');
+    setImg(g, rec, hrefOf);
+    return g;
+  }
   if (rec.kind === 'axes') {                                       // U5e: a <g> of lines, ticks, heads and labels (never dashed)
     const g = document.createElementNS(SVGNS, 'g');
     g.dataset.id = rec.id; g.dataset.type = 'axes';
@@ -552,7 +683,7 @@ function makeEl(rec) {
 // or a shape with opacity under 1 (a highlighter-born shape), lives in the highlighter layer
 export const inHl = (rec) => rec.kind === 'highlighter' || (rec.kind === 'shape' && +((rec.style && rec.style.opacity) ?? 1) < 1);
 export const opKey = (rec) => String(+((rec.style && rec.style.opacity) ?? 0.4));
-const keyOf = (rec) => (inHl(rec) ? 'hl' + opKey(rec) : 'pen');
+const keyOf = (rec) => (rec.kind === 'image' ? 'img' : inHl(rec) ? 'hl' + opKey(rec) : 'pen');
 function hloGroup(d, key) {
   let g = d.hlo.get(key);
   if (!g) {
@@ -564,7 +695,7 @@ function hloGroup(d, key) {
   }
   return g;
 }
-function groupFor(d, rec) { return inHl(rec) ? hloGroup(d, opKey(rec)) : d.pen; }
+function groupFor(d, rec) { return rec.kind === 'image' ? d.img : inHl(rec) ? hloGroup(d, opKey(rec)) : d.pen; }   // U4c: pictures in the bottom group
 // put a record's path in its group, before the next record (by seq) that shares that group
 function place(d, rec, el, idx) {
   const parent = groupFor(d, rec), k = keyOf(rec);
@@ -584,11 +715,12 @@ function unplace(d, el) {
 function buildLayer(d, w, h) {
   const svg = document.createElementNS(SVGNS, 'svg');
   svg.setAttribute('class', 'ink');
+  d.img = document.createElementNS(SVGNS, 'g'); d.img.setAttribute('class', 'img');   // U4c: the pictures, under all ink
   d.hl = document.createElementNS(SVGNS, 'g'); d.hl.setAttribute('class', 'hl');
   d.pen = document.createElementNS(SVGNS, 'g'); d.pen.setAttribute('class', 'pen');
   d.hlo = new Map();
   for (const rec of d.strokes) { const el = makeEl(rec); d.els.set(rec.id, el); groupFor(d, rec).appendChild(el); }
-  svg.append(d.hl, d.pen);
+  svg.append(d.img, d.hl, d.pen);
   d.svg = svg;
   sizeLayer(d, w, h);
 }
@@ -616,7 +748,9 @@ export function attach(sheets) {
 // U3b: `recs` given = draw those records instead (a page picture made from the database's copy of a page this device
 // has not read); the page's own model is not touched then.
 // U4a: `page` is the page row (a PDF page has its own shape, page.js pageSize) or, as before, just an orientation.
-export function thumbSvg(pageId, page = 'portrait', recs = null) {
+// U4c: pictures in a bottom <g class="img">; `hrefs` given (a Map path -> data URL, imageHrefs) = those instead of this
+// device's Blob URLs (a serialised SVG drawn through an <img> cannot reach a Blob URL).
+export function thumbSvg(pageId, page = 'portrait', recs = null, hrefs = null) {
   const d = recs ? { strokes: recs.slice().sort(bySeq), w: 0, h: 0 } : data(pageId), sz = d.w && d.h ? { w: d.w, h: d.h } : pageSize(page);
   const svg = document.createElementNS(SVGNS, 'svg');
   svg.setAttribute('class', 'thumbInk');
@@ -624,10 +758,11 @@ export function thumbSvg(pageId, page = 'portrait', recs = null) {
   svg.setAttribute('width', '100%'); svg.setAttribute('height', '100%');
   svg.setAttribute('preserveAspectRatio', 'none');
   svg.setAttribute('pointer-events', 'none');
-  const t = { hl: document.createElementNS(SVGNS, 'g'), pen: document.createElementNS(SVGNS, 'g'), hlo: new Map() };
-  t.hl.setAttribute('class', 'hl'); t.pen.setAttribute('class', 'pen');
-  for (const rec of d.strokes) groupFor(t, rec).appendChild(makeEl(rec));
-  svg.append(t.hl, t.pen);
+  const t = { img: document.createElementNS(SVGNS, 'g'), hl: document.createElementNS(SVGNS, 'g'), pen: document.createElementNS(SVGNS, 'g'), hlo: new Map() };
+  t.img.setAttribute('class', 'img'); t.hl.setAttribute('class', 'hl'); t.pen.setAttribute('class', 'pen');
+  const hrefOf = hrefs ? (path) => hrefs.get(path) || null : null;
+  for (const rec of d.strokes) groupFor(t, rec).appendChild(makeEl(rec, hrefOf));
+  svg.append(t.img, t.hl, t.pen);
   return svg;
 }
 
@@ -707,8 +842,9 @@ function changeOp(changes) {
 
 // for the page menu (app.js): put records on a page, erase a page, forget a page that is gone for good
 export function put(pageId, recs) { apply(pageId, [], recs); }
+// U4c: page Erase takes the ink only; pictures stay (an axes stamp goes with the ink, as before)
 export function erasePageOp(pageId) {
-  const all = data(pageId).strokes.slice();
+  const all = data(pageId).strokes.filter((r) => !isImg(r));
   return all.length ? changeOp([{ page: pageId, removed: all, added: [] }]) : null;
 }
 export function forget(pageId) { P.delete(pageId); dirty.delete(pageId); store.forget(pageId); }
@@ -722,7 +858,7 @@ export function replace(pageId, recs) {
   const strokes = recs.slice().sort(bySeq);
   d.strokes = strokes; d.byId = new Map(strokes.map((r) => [r.id, r]));
   if (d.svg) {
-    d.els.clear(); d.hlo = new Map(); d.hl.replaceChildren(); d.pen.replaceChildren();
+    d.els.clear(); d.hlo = new Map(); d.img.replaceChildren(); d.hl.replaceChildren(); d.pen.replaceChildren();
     for (const rec of strokes) { const el = makeEl(rec); d.els.set(rec.id, el); groupFor(d, rec).appendChild(el); }
   }
   if (onChange) onChange(pageId, { remote: true });    // the page list's thumb follows; no picture (U3d)
@@ -740,6 +876,7 @@ function near(rec, x, y, reach) {
   const b = boxOf(rec);
   if (x < b[0] - reach || x > b[2] + reach || y < b[1] - reach || y > b[3] + reach) return false;
   const r2 = reach * reach;
+  if (rec.kind === 'image') return inImg(rec, x, y, reach);       // U4c: inside its turned box (grown by reach)
   if (rec.kind === 'axes') { const a = axesGeom(rec); return !!a && a.lines.some((s) => segDist2(x, y, s[0], s[1]) <= r2); }   // U5e: on an axis line
   const pts = pointsOf(rec);
   if (pts.length === 1) return (pts[0][0] - x) ** 2 + (pts[0][1] - y) ** 2 <= r2;
@@ -1233,7 +1370,7 @@ export function classify(raw) {
 // ---------------------------------------------------------------- shape handles (grab with the select tool)
 export function handles(rec) {
   const d = rec.data || {};
-  if (rec.kind === 'axes') return [];                              // U5e: an axes stamp has no reshape handles
+  if (rec.kind === 'axes' || rec.kind === 'image') return [];     // U5e, U4c: an axes stamp and a picture have no reshape handles                              // U5e: an axes stamp has no reshape handles
   if (d.fixed) return [];                                          // U5a: a ruler line (fixed) moves whole, its ends are never reshaped
   if (d.type === 'line' || d.type === 'arrow') return [[d.x1, d.y1], [d.x2, d.y2]];
   if (d.type === 'rect' || d.type === 'triangle') return d.points.map((q) => [q[0], q[1]]);
@@ -1298,7 +1435,7 @@ function inSel(at) {
 // the selection's own grips at page point `at` (page at.id): 'rot' on its turn ring, a corner index 0..3, else null.
 // pw-v7m: a corner only from OUTSIDE the box (within GRAB of it); inside the box is always a move
 function selGrip(at, z) {
-  if (!SEL || SEL.page !== at.id || !SEL.box) return null;
+  if (!SEL || SEL.page !== at.id || !SEL.box || SEL.locked) return null;   // U4c: a locked picture has no grips
   const reach = GRAB / z;
   if (SEL.rot && Math.hypot(SEL.rot[0] - at.x, SEL.rot[1] - at.y) <= reach) return 'rot';
   if (inSel(at)) return null;
@@ -1322,6 +1459,12 @@ function hover(e) {
 function xform(rec, f, s, rot) {
   const d = rec.data, P = (q) => rp(f(q));
   let nd;
+  if (rec.kind === 'image') {                                      // U4c: the box's centre through f, w and h x s (nw, nh stay), rot + the turn
+    const c = f([d.x + d.w / 2, d.y + d.h / 2]), w = d.w * s, h = d.h * s;
+    nd = { ...d, x: q2(c[0] - w / 2), y: q2(c[1] - h / 2), w: q2(w), h: q2(h) };
+    if (rot) nd.rot = nrmDeg(r1((+d.rot || 0) + rot)) || 0;
+    return { ...rec, style: { ...rec.style }, data: nd };
+  }
   if (rec.kind === 'axes') {                                       // U5e: the origin through f, px and py x s; it never turns (rot: left as it was)
     if (rot) return { ...rec, style: { ...rec.style }, data: { ...d } };
     const o = f([d.x0, d.y0]), q2 = (v) => Math.round(v * 100) / 100;
@@ -1381,6 +1524,14 @@ function renderSel(t) {                          // t: a live transform while dr
   setAttrs(box, { class: 'selbox', x: x0, y: y0, width: x1 - x0, height: y1 - y0, fill: 'none', stroke: SEL_BLUE,
     'stroke-width': 1.5 / z, 'stroke-dasharray': f1(6 / z) + ' ' + f1(4 / z) });
   SEL.g.appendChild(box);
+  fillChips();
+  if (SEL.locked) {                              // U4c: a locked picture: the dashed box only, no corners, no turn ring
+    SEL.rot = null;
+    if (t) SEL.g.setAttribute('transform', t); else SEL.g.removeAttribute('transform');
+    SEL.box = [x0, y0, x1, y1];
+    placeChips(t ? SEL.live : null);
+    return;
+  }
   selCorners([x0, y0, x1, y1]).forEach((q, k) => {
     const c = document.createElementNS(SVGNS, 'circle');
     setAttrs(c, { class: 'selh', 'data-corner': String(k), cx: q[0], cy: q[1], r: 6 / z, fill: '#FFFFFF', stroke: SEL_BLUE, 'stroke-width': 1.5 / z });
@@ -1429,6 +1580,20 @@ function makeSel(page, ids) {
   clearSelection();
   const g = document.createElementNS(SVGNS, 'g'); g.setAttribute('class', 'sel');
   const chips = document.createElement('div'); chips.className = 'selChips';
+  const deg = document.createElement('div'); deg.className = 'selDeg';   // the turn's degrees, shown only while turning
+  SEL = { page, ids: new Set(ids), g, chips, deg, z: 0, box: null, rot: null, live: null, locked: false, ckey: null };
+  renderSel();
+}
+// the chips for what is selected now (renderSel calls it; they are made again only when that changes): Copy, Cut, Duplicate,
+// Delete, and U4c's padlock after Delete when a picture is selected (Lock; Unlock when any selected picture is locked).
+// A selection holding a locked picture has Delete and Unlock only.
+function fillChips() {
+  const recs = selRecs(), pic = recs.some(isImg), locked = recs.some(isLocked), key = (pic ? 'p' : '-') + (locked ? 'l' : '-');
+  SEL.locked = locked;
+  if (SEL.ckey === key) return;
+  SEL.ckey = key;
+  const chips = SEL.chips;
+  chips.replaceChildren();
   const chip = (act, label, icon, fn) => {        // an icon only: the word lives in aria-label and title
     const btn = document.createElement('button');
     btn.type = 'button'; btn.className = 'chip'; btn.dataset.act = act; btn.innerHTML = icon;
@@ -1436,11 +1601,15 @@ function makeSel(page, ids) {
     btn.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
     chips.appendChild(btn);
   };
-  chip('copy', 'Copy', SVG_COPY, copySel); chip('cut', 'Cut', SVG_CUT, cutSel);
-  chip('duplicate', 'Duplicate', SVG_PLUS, duplicateSel); chip('delete', 'Delete', SVG_BIN, deleteSel);
-  const deg = document.createElement('div'); deg.className = 'selDeg';   // the turn's degrees, shown only while turning
-  SEL = { page, ids: new Set(ids), g, chips, deg, z: 0, box: null, rot: null, live: null };
-  renderSel();
+  if (!locked) { chip('copy', 'Copy', SVG_COPY, copySel); chip('cut', 'Cut', SVG_CUT, cutSel); chip('duplicate', 'Duplicate', SVG_PLUS, duplicateSel); }
+  chip('delete', 'Delete', SVG_BIN, deleteSel);
+  if (pic) chip('lock', locked ? 'Unlock' : 'Lock', locked ? SVG_UNLOCK : SVG_LOCK, lockSel);
+}
+// U4c: the padlock chip: every selected picture locked (none was) or unlocked (any was), one undo step; the selection stays
+function lockSel() {
+  if (!SEL) return;
+  const to = !selRecs().some(isLocked);
+  changeSel((r) => (isImg(r) && !!(r.data && r.data.locked) !== to ? { ...r, style: { ...r.style }, data: { ...r.data, locked: to } } : null));
 }
 // Copy: the selection goes on the clipboard; nothing is added, the selection stays, no undo step
 function copySel() {
@@ -1489,6 +1658,29 @@ function addCopies(pageId, recs, dx, dy) {
   if (d.svg) makeSel(pageId, news.map((r) => r.id));
   return news;
 }
+// U4c: a new picture on page pageId (js/pdfin.js importImage, the + menu's Image): w = min(nw, 0.8 x the page's width),
+// scaled down further when its height would pass 0.8 x the page's height; centred in the part of the page she sees (the
+// axes stamp's rule) and kept on the page; rot 0, unlocked; ONE undo step; it lands selected with the select tool on, so
+// the next pen touch moves it. blob: the device copy, so it draws at once. Returns the record, or null (no page on screen)
+export function placeImage(pageId, { path, nw, nh, blob }) {
+  const d = data(pageId), sheet = document.querySelector(`#stack .sheet[data-id="${CSS.escape(pageId)}"]`);
+  if (!d.svg || !sheet || !path || !(nw > 0) || !(nh > 0)) return null;
+  if (blob) keepUrl(path, blob);
+  const W = d.w, H = d.h, idx = +sheet.dataset.index - 1, db = deskEl.getBoundingClientRect();
+  const a = pagePoint(idx, db.left, db.top), b = pagePoint(idx, db.right, db.bottom), cl = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const cx = (cl(a[0], 0, W) + cl(b[0], 0, W)) / 2, cy = (cl(a[1], 0, H) + cl(b[1], 0, H)) / 2;
+  let w = Math.min(nw, 0.8 * W), h = w * nh / nw;
+  if (h > 0.8 * H) { h = 0.8 * H; w = h * nw / nh; }
+  const x = cl(cx - w / 2, 0, W - w), y = cl(cy - h / 2, 0, H - h);
+  const top = d.strokes.length ? d.strokes[d.strokes.length - 1].seq : 0;
+  const rec = { id: uuid(), page_id: pageId, seq: Math.max(Date.now(), top + 1), kind: 'image',
+                style: { colour: '#000000', width: 0, dash: 'solid', opacity: 1 },
+                data: { path, x: q2(x), y: q2(y), w: q2(w), h: q2(h), nw, nh, rot: 0, locked: false } };
+  doOp(changeOp([{ page: pageId, removed: [], added: [rec] }]));
+  if (T.tool !== 'select') { if (selectTool) selectTool(); else setTool('select'); }
+  makeSel(pageId, [rec.id]);
+  return rec;
+}
 // Duplicate (pw-v4o): a copy of the selection 24 px right and down, pulled back inside the page where it would leave it
 // (along an axis where the box is wider than the page it keeps the plain 24 px); the copy is selected; CLIP stays as it was
 const DUP_STEP = 24;
@@ -1505,9 +1697,10 @@ function duplicateSel() {
 // the select tool on, the way a paste does; no undo step (a selection is not a change). False when the page is empty.
 export function selectAll(pageId) {
   const d = data(pageId);
-  if (!d.strokes.length || !d.svg) return false;
+  const ids = d.strokes.filter((r) => !isLocked(r)).map((r) => r.id);   // U4c: a locked picture stays out
+  if (!ids.length || !d.svg) return false;
   if (T.tool !== 'select') { if (selectTool) selectTool(); else setTool('select'); }
-  makeSel(pageId, d.strokes.map((r) => r.id));
+  makeSel(pageId, ids);
   return true;
 }
 // a finger held still on the desk (page.js): over a page, a small menu with Select all (disabled on an empty page)
@@ -1517,7 +1710,7 @@ function holdMenu(cx, cy) {
   const at = pageAt(cx, cy);
   if (!at) return;                                 // off every page: nothing opens
   const pageId = at.id, x = at.x, y = at.y;
-  openMenuAt(cx, cy, [data(pageId).strokes.length ? { label: 'Select all', fn: () => selectAll(pageId) }
+  openMenuAt(cx, cy, [data(pageId).strokes.some((r) => !isLocked(r)) ? { label: 'Select all', fn: () => selectAll(pageId) }   // U4c: a locked picture alone is nothing to select
                                                   : { label: 'Nothing to select', disabled: true, fn: () => {} },
                       CLIP ? { label: 'Paste', fn: () => pasteAt(pageId, x, y) }
                            : { label: 'Nothing to paste', disabled: true, fn: () => {} }]);
@@ -1546,6 +1739,14 @@ function inBox(id, b) {
   for (const r of data(id).strokes) {
     const q = boxOf(r), w = Math.max(1, (r.style.width || 0) / 2), B = [b[0] - w, b[1] - w, b[2] + w, b[3] + w];
     if (q[2] < B[0] || q[0] > B[2] || q[3] < B[1] || q[1] > B[3]) continue;   // nowhere near
+    if (isImg(r)) {                                                // U4c: an unlocked picture whose turned box the box touches (or holds the box)
+      if (isLocked(r)) continue;
+      const pts = pointsOf(r);
+      let hit = inImg(r, (b[0] + b[2]) / 2, (b[1] + b[3]) / 2) || pts.some(([x, y]) => x >= B[0] && x <= B[2] && y >= B[1] && y <= B[3]);
+      for (let i = 1; !hit && i < pts.length; i++) hit = segInBox(pts[i - 1], pts[i], B);
+      if (hit) out.push(r.id);
+      continue;
+    }
     if (r.kind === 'axes') {                                       // U5e: an axis's end inside, or an axis line crossing the box
       const a = axesGeom(r);
       if (a && a.lines.some((s) => segInBox(s[0], s[1], B))) out.push(r.id);
@@ -1560,10 +1761,11 @@ function inBox(id, b) {
 }
 // the stroke a tap lands on: every record within reach; when the hits hold both a highlighter-layer and a pen-layer
 // record, only the layer of the last ink tool counts (pw-v4m); the topmost of what counts (highest seq) wins
+// U4c: pictures are under all ink, so one counts only when no ink is in reach: the topmost picture whose turned box holds the tap
 function topAt(id, x, y, reach) {
   const all = data(id).strokes, hits = [];
-  for (let i = all.length - 1; i >= 0; i--) if (near(all[i], x, y, reach)) hits.push(all[i]);   // top of the stack first
-  if (!hits.length) return null;
+  for (let i = all.length - 1; i >= 0; i--) if (!isImg(all[i]) && near(all[i], x, y, reach)) hits.push(all[i]);   // top of the stack first
+  if (!hits.length) { for (let i = all.length - 1; i >= 0; i--) if (isImg(all[i]) && inImg(all[i], x, y)) return all[i].id; return null; }
   if (hits.some(inHl) && hits.some((r) => !inHl(r))) {
     const wantHl = T.lastInk === 'highlighter';
     return hits.find((r) => inHl(r) === wantHl).id;
@@ -1586,13 +1788,14 @@ function changeSel(fn) {
   if (olds.length) doOp(changeOp([{ page: SEL.page, removed: olds, added: news }]));
   return true;
 }
-export function recolourSelection(c) {          // colour only: width, dash, opacity and geometry stay
-  return changeSel((r) => (same((r.style || {}).colour, c) ? null : { ...r, style: { ...r.style, colour: c } }));
+export function recolourSelection(c) {          // colour only: width, dash, opacity and geometry stay (U4c: never a picture)
+  return changeSel((r) => (isImg(r) || same((r.style || {}).colour, c) ? null : { ...r, style: { ...r.style, colour: c } }));
 }
 export function restyleSelection() { return changeSel(restyled); }   // the full restyle rule
 
 // ---------------------------------------------------------------- restyle: its own colour, the matching tool's width and opacity; restyle never changes the dash
 function restyled(r) {
+  if (isImg(r)) return null;                                       // U4c: restyle never touches a picture
   if (r.kind === 'axes') {                                         // U5e: colour only; an axes stays thin, solid and opaque
     const c2 = (ST.restyle && ST.restyle.colour) || ST.pen.colour;
     return same((r.style || {}).colour, c2) ? null : { ...r, style: { ...r.style, colour: c2 } };
@@ -1631,7 +1834,7 @@ function eraseHere(cx, cy) {
   const d = data(at.id);
   if (G.kind === 'eraser') {
     const reach = ERASE_REACH / G.z;
-    const hits = d.strokes.filter((r) => near(r, at.x, at.y, reach + (r.style.width || 0) / 2));
+    const hits = d.strokes.filter((r) => !isImg(r) && near(r, at.x, at.y, reach + (r.style.width || 0) / 2));   // U4c: never a picture
     if (!hits.length) return;
     note(at.id, hits, []);
     apply(at.id, hits.map((r) => r.id), []);
@@ -1640,7 +1843,7 @@ function eraseHere(cx, cy) {
   if (G.kind === 'restyle') {                                      // each stroke it touches, once per drag
     const reach = ERASE_REACH / G.z, olds = [], news = [];
     for (const r of d.strokes) {
-      if (G.done.has(r.id) || !near(r, at.x, at.y, reach + (r.style.width || 0) / 2)) continue;
+      if (isImg(r) || G.done.has(r.id) || !near(r, at.x, at.y, reach + (r.style.width || 0) / 2)) continue;
       G.done.add(r.id);
       const n = restyled(r);
       if (n) { olds.push(r); news.push(n); }
@@ -1652,6 +1855,7 @@ function eraseHere(cx, cy) {
   }
   const rad = AREA_SIZE / 2 / G.z, gone = [], pieces = [];
   for (const r of d.strokes) {
+    if (isImg(r)) continue;                                        // U4c: the ring never bites a picture (not "later kinds go whole")
     const R = rad + (r.style.width || 0) / 2;
     if (r.kind === 'shape') {                                      // the stroke eraser removes a shape whole; this ring turns it into ink and cuts it
       if (!near(r, at.x, at.y, R)) continue;
@@ -1815,6 +2019,7 @@ function down(e) {
       G = { kind: 'sresize', index: at.index, page: at.id, o, c, s: 1, recs: selRecs(), off: [c[0] - at.x, c[1] - at.y] };   // pw-v7m: off, no jump
       return true;
     }
+    if (inSel(at) && SEL.locked) { G = { kind: 'still' }; return true; }   // U4c: a locked picture: a drag inside does nothing
     if (inSel(at)) {                                               // pw-v7m: inside the box (corner bands and handles too): move
       G = { kind: 'smove', index: at.index, page: at.id, p0: [at.x, at.y], dx: 0, dy: 0, recs: selRecs() };
       return true;
@@ -1840,7 +2045,7 @@ function down(e) {
 // the live preview while the selection is dragged: each selected path is redrawn from its record put through the
 // gesture (no transform on the ink, so its width never changes); the records change on lift. The box and its
 // handles ride a transform; the chips ride a move or a resize and hide during a turn
-function redraw(el, rec) { if (rec.kind === 'shape' || rec.kind === 'axes') setGeom(el, rec); else el.setAttribute('d', dOf(rec)); }
+function redraw(el, rec) { if (rec.kind === 'shape' || rec.kind === 'axes' || rec.kind === 'image') setGeom(el, rec); else el.setAttribute('d', dOf(rec)); }
 function liveSel(g) {
   const d = data(g.page), [f, s, rot] = selXf(g);
   for (const r of g.recs) { const el = d.els.get(r.id); if (el) redraw(el, xform(r, f, s, rot)); }
@@ -1882,7 +2087,7 @@ function move(events) {
     G.el.setAttribute('d', pathD(pts));
     return;
   }
-  if (G.kind === 'snapped') return;                                // a snapped shape stays put until the pen lifts
+  if (G.kind === 'snapped' || G.kind === 'still') return;         // a snapped shape stays put until the pen lifts (U4c: 'still', a locked picture)
   if (G.kind === 'grab') {
     const [x, y] = pagePoint(G.index, ev.clientX, ev.clientY);
     for (const e of events) {                                      // how far the pen ever got from where it landed (the tap rule)
@@ -1926,7 +2131,7 @@ function move(events) {
 }
 function up(e, cancelled) {
   const g = G; G = null;
-  if (!g) return;
+  if (!g || g.kind === 'still') return;
   if (g.kind === 'draw' || g.kind === 'snapped') {
     clearTimeout(g.holdT);
     let lag = null;
@@ -1978,7 +2183,7 @@ function up(e, cancelled) {
     if (cancelled || same) return;                                 // a tap or a 0 px drag: nothing changes, no reorder
     // the changed selection comes to the front: fresh seq values after every stroke on the page, in its own order
     // U5e: a turn leaves an axes stamp exactly as it was (no new seq either)
-    const recs = g.kind === 'srotate' ? g.recs.filter((r) => r.kind !== 'axes') : g.recs;
+    const recs = (g.kind === 'srotate' ? g.recs.filter((r) => r.kind !== 'axes') : g.recs).filter((r) => !isLocked(r));   // U4c: a locked picture never moves
     if (!recs.length) return;
     const [f, s, rot] = selXf(g), all = data(g.page).strokes, top = all.length ? all[all.length - 1].seq : 0;
     const base = Math.max(Date.now(), top + 1);
