@@ -45,7 +45,8 @@ let backT = 0;       // pw-v8i: the timer that puts the hint back on after HINT_
 let movedAt = 0;     // U4a: when a frame last moved the stack (a pan, a glide, a pinch, the wheel)
 let bgN = 0;         // unique pattern ids, one set per page
 let lock = false;    // pw-v7b: the zoom lock, per open note (app.js turns it off on every open and close; never saved)
-const stats = { resizes: 0, fits: 0, cause: '', redraws: 0 };   // pw-v7b: window resizes, fit() calls and the last fit's cause, for ?dbg=1; pw-v8i: redraws = the will-change hint taken off after a still moment
+let held = false;    // pw-v8k: the stack was shifted to stay under the pen across a resize; the clamp waits for the lift
+const stats = { resizes: 0, fits: 0, cause: '', redraws: 0, holds: 0 };   // pw-v7b: window resizes, fit() calls and the last fit's cause, for ?dbg=1; pw-v8i: redraws = the will-change hint taken off after a still moment; pw-v8k: holds = resizes ridden out under the pen
 
 // a page's size in page px at zoom 1. `p` is the page row (or, as before U4a, just its orientation). A normal page is A4
 // in its orientation. U4a: a page made from a PDF page (pdf_w, pdf_h = that page's size in PDF points) takes the PDF
@@ -276,12 +277,26 @@ export function scrollToPage(index) {
 // so every resize her tablet fired while she explained threw her zoom away (27 Oct, about 30 times in a day).
 export function relayout() { R = null; stopGlide(); settle(); clampView(); apply(); }
 
+// pw-v8k: a resize WHILE THE PEN WRITES. Her palm on the screen's edge shows Android's bars (and a few seconds later hides
+// them); Chrome resizes the page each time, so the desk moves on screen by the bar's height while her pen stays where it
+// is. The maths were right and the ink wrong: it carried on where the pen now sat on the moved page, a kink the height
+// of a bar mid-stroke (her video, 3 Nov 16:51). Now the stack is shifted the other way by exactly what the desk moved,
+// with no clamp, so the page point under the pen tip does not move and the stroke runs straight on; the clamp (and a
+// normal relayout) waits for the lift. R is the desk's place as last measured (pen-down or the previous hold).
+function holdUnderPen() {
+  const old = R, r = (R = desk.getBoundingClientRect());
+  V.x -= r.left - old.left; V.y -= r.top - old.top;
+  held = true; stats.holds++;
+  stopGlide(); if (raf) { cancelAnimationFrame(raf); raf = 0; }
+  apply();
+}
+
 // pw-v7b: the zoom lock. Locked: the zoom cannot change and only two fingers move the stack (see initPage); a glide
 // still running stops where it is. app.js owns the button and turns the lock off on every note open and close.
 export function setLock(on) { lock = !!on; if (lock) stopGlide(); }
 export function locked() { return lock; }
 // ?dbg=1 (js/dbg.js): window resizes seen, fit() calls and the last fit's cause, and the lock
-export function viewStats() { return { resizes: stats.resizes, fits: stats.fits, cause: stats.cause, lock, hint: !!hintT, redraws: stats.redraws }; }   // pw-v8i: hint = a gesture's hint is on now; redraws = settles so far
+export function viewStats() { return { resizes: stats.resizes, fits: stats.fits, cause: stats.cause, lock, hint: !!hintT, redraws: stats.redraws, holds: stats.holds, held }; }   // pw-v8i: hint = a gesture's hint is on now; redraws = settles so far
 
 // the desk must never scroll natively (css overflow: clip); if a browser scrolled it anyway, the stack would show
 // shifted while the pen maths below still use the transform alone: every stroke off by that scroll. Reset it.
@@ -428,7 +443,7 @@ export function initPage(els) {
     if (e.pointerType === 'pen') { penSeen = performance.now(); if (holdT) cancelHold(); }
     if (e.pointerId === inkId) {
       if (chord && !(e.buttons & 1)) {                                     // the tip lifted, the pen button still held: the end
-        inkId = null; chord = false; ink.up(e, false);
+        endInk(e, false);
         try { desk.releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
         return;
       }
@@ -458,8 +473,14 @@ export function initPage(els) {
       if (!lock) request();
     }
   });
+  // the pen's stroke ends (lift, cancel, or the tip up with the button still held). pw-v8k: a stroke that rode out a
+  // resize (holdUnderPen) gets its normal relayout now, the clamp included: a jump between strokes, never inside one
+  function endInk(e, cancelled) {
+    inkId = null; chord = false; ink.up(e, cancelled);
+    if (held) { held = false; gRect = null; relayout(); }
+  }
   const up = (e) => {
-    if (e.pointerId === inkId) { inkId = null; chord = false; ink.up(e, e.type === 'pointercancel'); return; }
+    if (e.pointerId === inkId) { endInk(e, e.type === 'pointercancel'); return; }
     if (!touches.has(e.pointerId)) return;
     touches.delete(e.pointerId);
     if (drag && drag.id === e.pointerId) cancelHold();                     // lifted or cancelled before the hold
@@ -491,6 +512,11 @@ export function initPage(els) {
     onPenButton(e);
   });
   // pw-v7b: a resize keeps the zoom and the place (relayout), whatever fired it (the system bars, a keyboard, split screen)
-  window.addEventListener('resize', () => { stats.resizes++; R = null; gRect = null; stopGlide(); if (L.tops.length) relayout(); });
+  // pw-v8k: while the pen writes, the resize is ridden out under the pen (holdUnderPen) and the relayout waits for the lift
+  window.addEventListener('resize', () => {
+    stats.resizes++;
+    if (inkId !== null && R && L.tops.length) { holdUnderPen(); return; }
+    R = null; gRect = null; stopGlide(); if (L.tops.length) relayout();
+  });
   desk.addEventListener('scroll', () => { unscroll(); R = null; gRect = null; }, { passive: true });   // cannot fire with overflow: clip; a fallback only
 }

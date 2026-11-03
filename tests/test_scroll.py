@@ -584,7 +584,7 @@ try:
           inline: document.getElementById('stack').style.willChange, hint: m.viewStats().hint, redraws: m.viewStats().redraws, z: m.view().z, y: m.view().y }))"""
         wc = lambda: pg6.evaluate(WC)
         w0 = wc()
-        check("(a) 600 ms after opening: the hint is on (pw-v8j: a fresh stack at the fitted zoom needs no redraw cycle), no gesture hint, no redraw yet",
+        check("(a) 600 ms after opening: the hint is on (pw-v8k: a fresh stack at the fitted zoom needs no redraw cycle), no gesture hint, no redraw yet",
               w0["wc"] == "transform" and w0["inline"] == "transform" and not w0["hint"] and w0["redraws"] == 0, w0)
         pg6.wait_for_timeout(900)
         w0b = wc()
@@ -640,6 +640,57 @@ try:
         check("(e) the stack's transform is untouched by the hint", pg6.evaluate("document.getElementById('stack').style.transform").startswith("translate("))
         check("no page errors (crisp after a pinch)", not errs6, errs6)
         ctx6.close()
+
+        # ---- pw-v8k: a resize while the pen writes is ridden out under the pen ----
+        # Her palm on the screen's edge shows Android's bars (then hides them); Chrome resizes and the desk moves on screen
+        # while the pen stays put, so the ink kinked by a bar's height (her video, 3 Nov 16:51). The desk's move is played
+        # here by a CSS translate on #desk (48 px down) plus a window resize event; with the pen down, the stack shifts the
+        # other way (holds + 1), the page point under a fixed screen spot does not move, the stroke stays straight; the
+        # lift runs the normal relayout (clamp). Without the pen down, a resize relayouts as before.
+        group[0] = "held under the pen (pw-v8k)"
+        ctx7 = b.new_context(viewport={"width": 1280, "height": 800}, has_touch=True)
+        pg7 = ctx7.new_page(); errs7 = []
+        pg7.on("pageerror", lambda e: errs7.append(str(e)))
+        pg7.goto(LOCAL); ready(pg7); pg7.evaluate(SEED); pg7.reload(); ready(pg7)
+        pg7.locator(".nrow").first.click(); pg7.wait_for_selector("#noteView:not([hidden])"); pg7.wait_for_timeout(600)
+        cdp7 = ctx7.new_cdp_session(pg7)
+        pen7 = lambda t, x, yy: cdp7.send("Input.dispatchMouseEvent", {"type": t, "x": x, "y": yy, "button": "left", "buttons": 1, "clickCount": 1, "pointerType": "pen"})
+        HV = """() => import('./js/page.js').then((m) => { const s = m.viewStats(), v = m.view(), de = document.getElementById('desk'), st = document.getElementById('stack'), d = de.getBoundingClientRect();
+          const p = m.pagePoint(m.current(), 700, 405); return { holds: s.holds, held: s.held, resizes: s.resizes, fits: s.fits, x: v.x, y: v.y, z: v.z, top: d.top, px: p[0], py: p[1],
+            dw: de.clientWidth, dh: de.clientHeight, w: parseFloat(st.style.width), h: parseFloat(st.style.height) }; })"""
+        hv = lambda: pg7.evaluate(HV)
+        shift = lambda px: pg7.evaluate("(px) => { document.getElementById('desk').style.translate = px ? `0 ${px}px` : ''; window.dispatchEvent(new Event('resize')); }", px)
+        h0 = hv()
+        check("(a) set-up: a note open at its fitted zoom, no hold yet", h0["holds"] == 0 and not h0["held"] and h0["fits"] == 1, h0)
+        pen7("mousePressed", 640, 400); pg7.wait_for_timeout(30)
+        for i in range(1, 7): pen7("mouseMoved", 640 + 8 * i, 400 + i); pg7.wait_for_timeout(16)
+        h1 = hv()
+        shift(48); pg7.wait_for_timeout(120)
+        h2 = hv()
+        check("(b) the desk moves 48 px down while the pen writes: the stack shifts 48 px the other way, no clamp (view.y down by 48), holds 1, held",
+              abs(h2["top"] - h1["top"] - 48) < 0.6 and abs((h1["y"] - h2["y"]) - 48) < 0.6 and h2["holds"] == 1 and h2["held"] and h2["z"] == h1["z"], [h1, h2])
+        check("(b) the page point under the pen tip's screen spot did not move (within 0.5 page px)",
+              abs(h2["px"] - h1["px"]) < 0.5 and abs(h2["py"] - h1["py"]) < 0.5, [h1, h2])
+        for i in range(7, 13): pen7("mouseMoved", 640 + 8 * i, 400 + i); pg7.wait_for_timeout(16)
+        shift(0); pg7.wait_for_timeout(120)
+        h3 = hv()
+        check("(c) the desk moves back up mid-stroke: a second hold, the stack back where it was, still held",
+              h3["holds"] == 2 and h3["held"] and abs(h3["y"] - h1["y"]) < 0.6 and abs(h3["py"] - h1["py"]) < 0.5, [h1, h3])
+        for i in range(13, 19): pen7("mouseMoved", 640 + 8 * i, 400 + i); pg7.wait_for_timeout(16)
+        pen7("mouseReleased", 640 + 8 * 18, 418); pg7.wait_for_timeout(250)
+        h4 = hv()
+        Ls = pg7.evaluate("window.__pw.ink.lastStroke()")
+        pts = (Ls or {}).get("points") or []
+        steps = [abs(pts[i + 1][1] - pts[i][1]) for i in range(len(pts) - 1)] if pts and isinstance(pts[0], list) else []
+        check("(d) the stroke's recorded points run straight on through both resizes: no vertical step over 6 page px (a 48 px bar would be " + str(round(48 / max(h1["z"], 0.01))) + ")",
+              len(pts) >= 12 and steps and max(steps) < 6, [len(pts), max(steps) if steps else None, pts[:3], pts[-3:]])
+        check("(e) the lift: held off, the normal relayout ran (view back inside the clamp, the zoom and fit count untouched)",
+              not h4["held"] and inside(h4) and h4["z"] == h1["z"] and h4["fits"] == 1 and abs(h4["y"] - h1["y"]) < 0.6, [h1, h4])
+        shift(48); pg7.wait_for_timeout(120); h5 = hv(); shift(0); pg7.wait_for_timeout(120); h6 = hv()
+        check("(f) the same desk move with no pen down: a plain relayout, no hold (holds stays 2), the view clamped as before",
+              h5["holds"] == 2 and h6["holds"] == 2 and not h5["held"] and h6["resizes"] == h4["resizes"] + 2 and abs(h6["y"] - h1["y"]) < 0.6, [h4, h5, h6])
+        check("no page errors (held under the pen)", not errs7, errs7)
+        ctx7.close()
         b.close()
 finally:
     srv.terminate()
