@@ -90,6 +90,9 @@
 //   0, 360, 90 and every x label gets °; unticked: x goes back to -5, 5, 1),
 //   a Number line tick (no y-axis: the y line greys), Place and an X. Defaults -5, 5, 1 for both; the last settings are
 //   remembered on this device (localStorage pw.axes, saved on every change) and come back next time.
+// - pw-v8m: a small ± button sits beside each START and END field (four: x and y), because her tablet keyboard has no minus key
+//   on a number field. A tap flips the sign of a finite, non-zero value (then checks and saves); an empty or 0 field is left alone and
+//   just takes focus. The y buttons grey with the y fields under Number line. Step has none.
 // - A bad axis reddens its fields and the line under them says why ("Start must be smaller than End", "Step must be more
 //   than 0", "Too many steps (60 at most)", "Fill in every number"); Place then lands nothing.
 // - The card closes on Place, on its X, on Escape and whenever the panel closes (a tray button, the Tools button, leaving
@@ -798,9 +801,15 @@ function saveAxes() {
   try { localStorage.setItem(AX_KEY, JSON.stringify(v)); } catch (e) { /* private window: this session only */ }
 }
 function setX(o) { fld.xs.value = String(o.xs); fld.xe.value = String(o.xe); fld.xd.value = String(o.xd); }
+function flipSign(k) {                                             // pw-v8m: the plus-minus button; a number input refuses a bare "-"
+  const n = fieldNum(k);
+  if (Number.isFinite(n) && n !== 0) { fld[k].value = String(-n); checkAxes(); saveAxes(); }
+  else fld[k].focus();
+}
 function greyY() {                                                 // a number line has no y-axis: the y fields go grey
   const off = cardLine.checked;
   for (const k of ['ys', 'ye', 'yd']) fld[k].disabled = off;
+  for (const k of ['ys', 'ye']) card.querySelector('#ax-' + k + '-sign').disabled = off;
   card.querySelector('.axRow[data-axis="y"]').classList.toggle('off', off);
 }
 // the fields as numbers, or null; a bad range reddens its fields and the line under them says why
@@ -843,12 +852,22 @@ function buildCard() {
     lab.className = 'axName'; lab.textContent = a + ':';
     row.append(lab);
     for (const [k, word] of [['s', 'start'], ['e', 'end'], ['d', 'step']]) {
+      const cell = document.createElement('span');
+      cell.className = 'axCell';
       const f = document.createElement('input');
       f.type = 'number'; f.step = 'any'; f.id = 'ax-' + a + k; f.className = 'axNum';
       f.setAttribute('aria-label', a + ' ' + word);
       f.addEventListener('input', () => { checkAxes(); saveAxes(); });
       fld[a + k] = f;
-      row.append(f);
+      cell.append(f);
+      if (k !== 'd') {                                             // pw-v8m: no minus key on her tablet keyboard, so a sign flip beside the field
+        const sg = document.createElement('button');
+        sg.type = 'button'; sg.className = 'axSign'; sg.id = 'ax-' + a + k + '-sign';
+        sg.setAttribute('aria-label', 'Flip the sign of ' + a + ' ' + word); sg.textContent = '±';
+        sg.addEventListener('click', () => flipSign(a + k));
+        cell.append(sg);
+      }
+      row.append(cell);
     }
     card.append(row);
   }

@@ -49,7 +49,8 @@ HELP = """async () => {
   T.client = (id, x, y) => { const r = T.sheet(id).getBoundingClientRect(), z = T.z(); return [r.left + x * z, r.top + y * z]; };
   T.ev = (type, id, kind, x, y, buttons) => document.getElementById('desk').dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: kind,
     isPrimary: true, bubbles: true, cancelable: true, button: type === 'pointermove' ? -1 : 0,
-    buttons: buttons !== undefined ? buttons : type === 'pointerup' ? 0 : 1, clientX: x, clientY: y }));
+    buttons: buttons !== undefined ? buttons : type === 'pointerup' ? 0 : 1, clientX: x, clientY: y,
+    screenX: x + 10, screenY: y + 80 }));   // pw-v8m: a constant screen-minus-client gap, as a real pen has (pw-v8l penGap reads it; 0 made the view jump)
   T.R = () => window.__TL.rulerState();
   T.C = () => window.__TL.compassState();
   T.local = (lx, ly) => { const s = T.R(), u = [Math.cos(s.ang), Math.sin(s.ang)], n = [-u[1], u[0]];
@@ -167,7 +168,7 @@ try:
         check("the defaults: -5, 5, 1 for x and for y, Degrees and Number line off, no message",
               vals(pg) == ["-5", "5", "1", "-5", "5", "1"] and ticks(pg) == [False, False] and msg(pg) == "" and bads(pg) == [], [vals(pg), ticks(pg), msg(pg)])
         fs = pg.evaluate("[...document.querySelectorAll('#axesCard input.axNum')].map((f) => [f.type, f.step, f.getAttribute('inputmode'), Math.round(f.getBoundingClientRect().width), Math.round(f.getBoundingClientRect().height)])")
-        check("six number fields (type number, step any, NO inputmode: a number pad with - and .), 64 x 40 px", len(fs) == 6 and all(f == ["number", "any", None, 64, 40] for f in fs), fs)
+        check("six number fields (type number, step any, NO inputmode: a number pad with - and .), 56 x 40 px (pw-v8m)", len(fs) == 6 and all(f == ["number", "any", None, 56, 40] for f in fs), fs)
         tk = pg.evaluate("[...document.querySelectorAll('#axesCard .axTick input')].map((c) => [c.id, Math.round(c.getBoundingClientRect().width)])")
         check("two ticks of 24 px: Degrees and Number line", tk == [["ax-deg", 24], ["ax-line", 24]], tk)
         set_tick(pg, "#ax-deg", True)
@@ -406,6 +407,68 @@ try:
         toggle(pg, "compass"); close_panel(pg)
         check("only the stamp is on the page (the tools drew nothing)", [r["kind"] for r in recs(pg)] == ["axes"], [r["kind"] for r in recs(pg)])
         check("no page errors", not errs, errs)
+        ctx.close()
+
+        # ------------------------------------------------------------ J: the sign buttons (pw-v8m)
+        group[0] = "J. sign"
+        ctx = b.new_context(viewport={"width": 1280, "height": 800})
+        pg = ctx.new_page(); errs = []
+        pg.on("pageerror", lambda e: errs.append(str(e)))
+        pg.goto(LOCAL); ready(pg); pg.evaluate(SEED); pg.reload(); ready(pg)
+        open_note(pg); pg.evaluate(HELP)
+        open_card(pg)
+        IDS = {"xs": "x start", "xe": "x end", "ys": "y start", "ye": "y end"}
+        info = pg.evaluate("Object.fromEntries(['xs','xe','ys','ye'].map((k) => { const b = document.getElementById('ax-' + k + '-sign'); return [k, b ? [b.type, b.getAttribute('aria-label'), b.textContent, b.getBoundingClientRect().width, b.getBoundingClientRect().height, b.closest('#axesCard') !== null] : null]; }))")
+        check("four sign buttons exist (ax-xs-sign, ax-xe-sign, ax-ys-sign, ax-ye-sign), type button, plus-minus text, inside the card, aria 'Flip the sign of <a> <word>'",
+              all(info[k] and info[k][0] == "button" and info[k][1] == "Flip the sign of " + IDS[k] and info[k][2] == "±" and info[k][5] for k in IDS), info)
+        check("... and only four: #axesCard .axSign count 4; the step cells hold no button",
+              pg.locator("#axesCard .axSign").count() == 4 and pg.locator("#axesCard .axCell button").count() == 4 and pg.locator("#ax-xd-sign, #ax-yd-sign").count() == 0)
+        check("each button is at least 36 x 36 CSS px", all(info[k][3] >= 36 and info[k][4] >= 36 for k in IDS), {k: info[k][3:5] for k in IDS})
+        check("every row has three .axCell cells; each holds its field", pg.evaluate("[...document.querySelectorAll('#axesCard .axRow')].every((r) => r.querySelectorAll(':scope > .axCell').length === 3 && [...r.querySelectorAll('.axCell')].every((c) => c.querySelector('input.axNum')))"))
+        cw = rect(pg, "#axesCard")["w"]
+        check("the card's width at 1280 px (for the report)", 280 <= cw <= 340, cw)
+        print("card width at 1280 px:", cw)
+        pg.click("#ax-xs-sign"); pg.wait_for_timeout(30)
+        check("x start reads -5 by default; one tap gives 5", vals(pg)[0] == "5", vals(pg))
+        check("... the flip ran checkAxes: 5 to 5 reddens start and end, the line says 'Start must be smaller than End'",
+              bads(pg) == ["xs", "xe"] and msg(pg) == "Start must be smaller than End", [bads(pg), msg(pg)])
+        sv = pg.evaluate("JSON.parse(localStorage.getItem('pw.axes'))")
+        check("... and saveAxes ran: localStorage pw.axes carries xs = 5", sv.get("xs") == 5, sv)
+        pg.click("#ax-xs-sign"); pg.wait_for_timeout(30)
+        check("a second tap gives -5 again; the red and the message clear",
+              vals(pg)[0] == "-5" and bads(pg) == [] and msg(pg) == "", [vals(pg), bads(pg), msg(pg)])
+        check("... and the saved value is -5 again", pg.evaluate("JSON.parse(localStorage.getItem('pw.axes')).xs") == -5)
+        pg.fill("#ax-xs", ""); pg.click("#ax-xs-sign"); pg.wait_for_timeout(30)
+        check("an empty field: a tap leaves it empty and focuses it",
+              pg.input_value("#ax-xs") == "" and pg.evaluate("document.activeElement.id") == "ax-xs", [pg.input_value("#ax-xs"), pg.evaluate("document.activeElement.id")])
+        pg.fill("#ax-xs", "0"); pg.click("#ax-xs-sign"); pg.wait_for_timeout(30)
+        check("a 0 field: a tap leaves 0 (and focuses it)", pg.input_value("#ax-xs") == "0" and pg.evaluate("document.activeElement.id") == "ax-xs", pg.input_value("#ax-xs"))
+        pg.fill("#ax-xs", "-5")
+        set_tick(pg, "#ax-line", True)
+        dis = pg.evaluate("['xs','xe','ys','ye'].map((k) => document.getElementById('ax-' + k + '-sign').disabled)")
+        check("Number line ticked: the two y buttons are disabled, the two x buttons stay live", dis == [False, False, True, True], dis)
+        set_tick(pg, "#ax-line", False)
+        dis = pg.evaluate("['xs','xe','ys','ye'].map((k) => document.getElementById('ax-' + k + '-sign').disabled)")
+        check("unticked: all four are enabled again", dis == [False] * 4, dis)
+        set_fields(pg, [-5, 5, 1, -5, 5, 1])
+        pg.click("#ax-ys-sign"); pg.click("#ax-ye-sign"); pg.wait_for_timeout(30)
+        check("flip y start to 5 and y end to -5 is refused (both red, 'Start must be smaller than End')",
+              vals(pg)[3:5] == ["5", "-5"] and bads(pg) == ["ys", "ye"] and msg(pg) == "Start must be smaller than End", [vals(pg), bads(pg), msg(pg)])
+        n0 = len(recs(pg)); place(pg)
+        check("... and Place lands nothing (the card stays)", len(recs(pg)) == n0 and card_shown(pg))
+        set_fields(pg, [-5, 5, 1, 2, 5, 1])
+        pg.click("#ax-ys-sign"); pg.wait_for_timeout(30)
+        check("y start 2 flipped gives -2; the fields read x -5, 5, 1 and y -2, 5, 1", vals(pg) == ["-5", "5", "1", "-2", "5", "1"] and bads(pg) == [], [vals(pg), bads(pg)])
+        al = pg.evaluate("""() => { const hc = [...document.querySelectorAll('#axesCard .axCols span')].map((e) => { const b = e.getBoundingClientRect(); return b.left + b.width / 2; });
+          return ['x', 'y'].map((a) => [...document.querySelectorAll('#axesCard .axRow[data-axis="' + a + '"] .axCell')].map((e) => { const b = e.getBoundingClientRect(); return b.left + b.width / 2; })).map((cs) => cs.map((c, i) => Math.abs(c - hc[i]))); }""")
+        check("the header cells line up with the row cells (x centres within 1 px, both rows)", len(al) == 2 and all(len(r) == 3 and all(d <= 1 for d in r) for r in al), al)
+        pg.click("#ax-xe-sign"); pg.wait_for_timeout(30); pg.click("#ax-xe-sign"); pg.wait_for_timeout(30)
+        check("a press on a sign button does not close the card or the panel", card_shown(pg) and panel_shown(pg))
+        place(pg)
+        ar = axes_recs(pg)
+        check("Place lands ONE axes record whose data.ys is -2 (the flipped value went into the stamp)",
+              len(ar) == 1 and ar[0]["data"]["ys"] == -2 and ar[0]["data"]["ye"] == 5 and ar[0]["data"]["xs"] == -5, [r["data"] for r in ar])
+        check("no page errors (sign)", not errs, errs)
         ctx.close()
 
         # ------------------------------------------------------------ I: the phone width (a look, for the report)

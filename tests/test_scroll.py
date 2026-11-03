@@ -546,7 +546,7 @@ try:
         pg5.on("pageerror", lambda e: errs5.append(str(e)))
         pg5.goto(LOCAL + "&dbg=1"); ready(pg5); pg5.evaluate(SEED); pg5.reload(); ready(pg5)
         pg5.locator(".nrow").first.click(); pg5.wait_for_selector("#noteView:not([hidden])"); pg5.wait_for_timeout(400)
-        LINE = r"resize (\d+) \| fit (\d+) \((\w+)\) \| lock (on|off) \| hold \d+(?: \w+ -?\d+ -?\d+)?(?: gap -?\d+ -?\d+)?(?: \| oe [\d.]+ [\d.]+)?"   # pw-v7i: the pen filter pair follows; pw-v8l: the hold count (+ last source and shift, + the pen's gap) before it
+        LINE = r"resize (\d+) \| fit (\d+) \((\w+)\) \| lock (on|off) \| hold \d+(?: \w+ -?\d+ -?\d+)?(?: gap -?\d+ -?\d+)?(?: \| oe [\d.]+ [\d.]+)?"   # pw-v7i: the pen filter pair follows; pw-v8m: the hold count (+ last source and shift, + the pen's gap) before it
         dl = lambda: pg5.evaluate("document.getElementById('dbgView').textContent").split("\n")
         l1 = dl(); m1 = re.fullmatch(LINE, l1[1]) if len(l1) == 2 else None
         check("(m) ?dbg=1: #dbgView's second line reads 'resize <n> | fit 1 (open) | lock off'", m1 is not None and m1.group(2) == "1" and m1.group(3) == "open" and m1.group(4) == "off", l1)
@@ -689,7 +689,7 @@ try:
         shift(48); pg7.wait_for_timeout(120); h5 = hv(); shift(0); pg7.wait_for_timeout(120); h6 = hv()
         check("(f) the same desk move with no pen down: a plain relayout, no hold (holds stays 2), the view clamped as before",
               h5["holds"] == 2 and h6["holds"] == 2 and not h5["held"] and h6["resizes"] == h4["resizes"] + 2 and abs(h6["y"] - h1["y"]) < 0.6, [h4, h5, h6])
-        # (g) pw-v8l: the WINDOW moves on the screen (her tablet's case, 3 Nov 17:51 "still a failure"): the desk's rect inside
+        # (g) pw-v8m: the WINDOW moves on the screen (her tablet's case, 3 Nov 17:51 "still a failure"): the desk's rect inside
         # the window does not change, so the rect read 0 in pw-v8k; the pen's screen position holds while its client position
         # jumps by the bar. Played with synthetic pen PointerEvents carrying screenX/Y: the same screen spot comes in 40 px
         # higher in client terms (screenY - clientY from 100 to 140), later back. Expected: a 'gap' hold of 40, view.y down by
