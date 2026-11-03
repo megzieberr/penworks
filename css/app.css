@@ -278,7 +278,7 @@ input.rename {
    lands a fixed distance from the pen (her tablet, 25 Oct). clip can never scroll; hidden stays for old browsers. */
 #desk { position: absolute; inset: 0; overflow: hidden; overflow: clip; touch-action: none; background: var(--note-desk);
   user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
-#stack { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+#stack { position: absolute; left: 0; top: 0; transform-origin: 0 0; }   /* pw-v8i: will-change: transform is put on by js/page.js only while the stack moves (hint); left on, Chrome kept the raster of the OLD zoom and stretched it after every pinch (her "washy" look) */
 .sheet {
   position: absolute; background: var(--paper); border-radius: 2px;
   box-shadow: 0 1px 2px rgba(38,42,48,.10), 0 8px 26px rgba(38,42,48,.12);

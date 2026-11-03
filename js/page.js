@@ -27,6 +27,8 @@ export const LINE_TOP = GRID_TOP;                  // and the grid's 6 mm start,
 const ZMIN = 0.2, ZMAX = 4, MARGIN = 24, GAP = 24, BELOW = 90;   // BELOW: room for "Add a page below"
 const SVGNS = 'http://www.w3.org/2000/svg';
 const FLICK = 0.25, STOP = 0.02, DECAY = 0.95, FRAME = 1000 / 60, WINDOW = 100;   // glide: px per ms, per 16.7 ms, ms
+const HINT_MS = 250;        // pw-v8i: ms of a still stack before the will-change hint comes off (Chrome then redraws at the new zoom)
+const HINT_BACK_MS = 1000;  // pw-v8i: ms after that before the hint goes back on (the stack composited before her next finger lands)
 
 let desk, stack, addBelow, onCurrent = () => {}, onSheets = () => {}, onPenButton = () => {}, onView = () => {}, ink = null;
 let viewKey = '';     // U4a: the pages on screen and the zoom, as last told to onView
@@ -38,10 +40,12 @@ let pinned = null;   // a page asked for by number (arrows, page list) stays cur
 let raf = 0;         // a frame is asked for
 let glide = null;    // { vx, vy (px per ms on screen), t } while the stack glides after a flick
 let shown = '';      // the transform last written
+let hintT = 0;       // pw-v8i: while set, #stack carries will-change: transform for a gesture (hint()); the timer takes it off
+let backT = 0;       // pw-v8i: the timer that puts the hint back on after HINT_BACK_MS of rest
 let movedAt = 0;     // U4a: when a frame last moved the stack (a pan, a glide, a pinch, the wheel)
 let bgN = 0;         // unique pattern ids, one set per page
 let lock = false;    // pw-v7b: the zoom lock, per open note (app.js turns it off on every open and close; never saved)
-const stats = { resizes: 0, fits: 0, cause: '' };   // pw-v7b: window resizes, fit() calls and the last fit's cause, for ?dbg=1
+const stats = { resizes: 0, fits: 0, cause: '', redraws: 0 };   // pw-v7b: window resizes, fit() calls and the last fit's cause, for ?dbg=1; pw-v8i: redraws = the will-change hint taken off after a still moment
 
 // a page's size in page px at zoom 1. `p` is the page row (or, as before U4a, just its orientation). A normal page is A4
 // in its orientation. U4a: a page made from a PDF page (pdf_w, pdf_h = that page's size in PDF points) takes the PDF
@@ -108,9 +112,33 @@ function findCurrent() {
   return best;
 }
 
+// pw-v8i (her "washy, still loading" look on an old note, PROVEN on her tablet 3 Nov over the cable): with `will-change:
+// transform` always on #stack, Chrome kept the raster it drew at the OLD zoom and stretched it after every pinch (her
+// ink's edges faded over 4 px instead of 1; the PDF canvases, their own layers, were fine) until something redrew the
+// stack: a page added (the stack's size changes), the screen off and on (her "10 minutes"). So the hint is on the stack
+// only while it moves: put on before the first move's frame (request, a finger down) and taken off once the stack has
+// been still HINT_MS, which makes Chrome redraw at the new zoom; the pinch itself stays composited. Measured on the
+// tablet: the same screen went crisp within 0.3 s of the hint coming off (measured at 0.3, 0.6 and 1.0 s), and STAYED
+// crisp when the hint went back on a second later (twice: after 1.0 s and after 1.5 s off). So the hint goes back on
+// HINT_BACK_MS after it came off: left off until the next gesture, Chrome composited the stack again at that gesture's
+// first frame, a 66 ms frame on the slowed-CPU scroll measurement (tests/test_pdfscroll.py, the plain ink note); this
+// way both redraws land while she is still. A gesture inside that second just puts the hint on at once. (A one-frame
+// off, two rAFs, was never proven on the tablet: a short off may not finish its redraw before the layer is made again.)
+// stats.redraws counts the hint coming off (viewStats).
+function hint() {
+  if (backT) { clearTimeout(backT); backT = 0; }
+  if (!hintT) stack.style.willChange = 'transform';
+  else clearTimeout(hintT);
+  hintT = setTimeout(() => {
+    hintT = 0; stats.redraws++;
+    stack.style.willChange = '';                                             // off: Chrome redraws the stack at this zoom
+    backT = setTimeout(() => { backT = 0; if (!hintT) stack.style.willChange = 'transform'; }, HINT_BACK_MS);
+  }, HINT_MS);
+}
+
 function apply() {
   const t = `translate(${V.x}px, ${V.y}px) scale(${V.z})`;
-  if (t !== shown) { shown = t; stack.style.transform = t; stack.dataset.zoom = V.z.toFixed(3); }
+  if (t !== shown) { hint(); shown = t; stack.style.transform = t; stack.dataset.zoom = V.z.toFixed(3); }
   const c = findCurrent();
   if (c !== cur) { cur = c; onCurrent(cur); }
   tellView();
@@ -131,7 +159,7 @@ function tellView() {
 }
 
 // moves call this; the frame does the clamp, the one transform write and the current page
-function request() { if (!raf) raf = requestAnimationFrame(frame); }
+function request() { hint(); if (!raf) raf = requestAnimationFrame(frame); }   // pw-v8i: the hint goes on before the move's frame
 function frame(now) {
   raf = 0;
   movedAt = performance.now();
@@ -244,7 +272,7 @@ export function relayout() { R = null; stopGlide(); settle(); clampView(); apply
 export function setLock(on) { lock = !!on; if (lock) stopGlide(); }
 export function locked() { return lock; }
 // ?dbg=1 (js/dbg.js): window resizes seen, fit() calls and the last fit's cause, and the lock
-export function viewStats() { return { resizes: stats.resizes, fits: stats.fits, cause: stats.cause, lock }; }
+export function viewStats() { return { resizes: stats.resizes, fits: stats.fits, cause: stats.cause, lock, hint: !!hintT, redraws: stats.redraws }; }   // pw-v8i: hint = a gesture's hint is on now; redraws = settles so far
 
 // the desk must never scroll natively (css overflow: clip); if a browser scrolled it anyway, the stack would show
 // shifted while the pen maths below still use the transform alone: every stroke off by that scroll. Reset it.
@@ -376,6 +404,7 @@ export function initPage(els) {
     if (performance.now() - penSeen < 600) return;                         // palm while the pen is near
     if (!touches.size) gRect = desk.getBoundingClientRect();              // the first finger: the desk's place for this gesture
     touches.set(e.pointerId, pt(e));
+    hint();                                                                // pw-v8i: composited before the first move
     try { desk.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
     pinned = null;
     if (touches.size >= 2) startPinch();

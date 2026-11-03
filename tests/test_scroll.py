@@ -564,6 +564,82 @@ try:
               all(abs(geo5[k] - 64) < 0.5 for k in ("dbg", "view", "copy")) and geo5["hit"] and geo5["chipRight"] <= 64, geo5)
         check("no page errors (zoom lock, dbg)", not errs5, errs5)
         ctx5.close()
+
+        # ------------------------------------------------------------ pw-v8i: the will-change hint only while the stack moves
+        # Her tablet (3 Nov, proven over the cable): after a pinch the whole stack, her ink included, stayed a stretched copy of
+        # the OLD zoom ("washy, still loading") until a page was added or the screen went off and on: `will-change: transform`
+        # always on #stack made Chrome keep the old raster. Now page.js puts the hint on only while the stack moves (a finger
+        # down, request, a transform write) and takes it off HINT_MS (250 ms) after the last move, so Chrome redraws at the new zoom,
+        # then puts it back HINT_BACK_MS (1 s) later (the stack is composited before her next finger lands; measured on the tablet:
+        # crisp 0.3 s after the off, still crisp with the hint back on). viewStats(): hint = a gesture's hint is on now, redraws =
+        # how many times it has come off.
+        group[0] = "crisp after a pinch (pw-v8i)"
+        ctx6 = b.new_context(viewport={"width": 1280, "height": 800}, has_touch=True)
+        pg6 = ctx6.new_page(); errs6 = []
+        pg6.on("pageerror", lambda e: errs6.append(str(e)))
+        pg6.goto(LOCAL); ready(pg6); pg6.evaluate(SEED); pg6.reload(); ready(pg6)
+        pg6.locator(".nrow").first.click(); pg6.wait_for_selector("#noteView:not([hidden])"); pg6.wait_for_timeout(600)
+        cdp6 = ctx6.new_cdp_session(pg6)
+        WC = """() => import('./js/page.js').then((m) => ({ wc: getComputedStyle(document.getElementById('stack')).willChange,
+          inline: document.getElementById('stack').style.willChange, hint: m.viewStats().hint, redraws: m.viewStats().redraws, z: m.view().z, y: m.view().y }))"""
+        wc = lambda: pg6.evaluate(WC)
+        w0 = wc()
+        check("(a) 600 ms after opening (the open's fit settled at 250 ms): the hint is off (computed 'auto'), no gesture hint, one redraw",
+              w0["wc"] == "auto" and w0["inline"] == "" and not w0["hint"] and w0["redraws"] == 1, w0)
+        pg6.wait_for_timeout(900)
+        w0b = wc()
+        check("(a) 1.5 s after opening: the hint is back on (inline will-change: transform), still one redraw", w0b["wc"] == "transform" and w0b["inline"] == "transform" and w0b["redraws"] == 1, w0b)
+        check("(a) the stylesheet no longer sets it: #stack's will-change comes from page.js alone",
+              pg6.evaluate("[...document.styleSheets].flatMap((s) => { try { return [...s.cssRules]; } catch (_) { return []; } }).filter((r) => r.selectorText === '#stack').every((r) => !r.style.willChange)"))
+        touch(cdp6, "touchStart", 640, 500); pg6.wait_for_timeout(60)
+        w1 = wc()
+        check("(b) a finger down, no move yet: the hint is on before the first move's frame", w1["wc"] == "transform" and w1["hint"], w1)
+        for k in range(1, 9):                                             # a slow drag (0.14 px per ms): no glide after the lift
+            touch(cdp6, "touchMove", 640, 500 - 10 * k); pg6.wait_for_timeout(70)
+        w2 = wc()
+        check("(b) while the finger drags: still on, and the stack moved", w2["wc"] == "transform" and w2["hint"] and abs(w2["y"] - w0["y"]) > 50, [w0["y"], w2])
+        touch(cdp6, "touchEnd"); pg6.wait_for_timeout(120)
+        w3 = wc()
+        check("(c) 120 ms after the lift: still on (within HINT_MS)", w3["wc"] == "transform" and w3["hint"], w3)
+        pg6.wait_for_timeout(450)
+        w4 = wc()
+        check("(c) about 570 ms after the lift: the settle happened (redraws 2), the hint is off (Chrome redraws at this view)",
+              w4["wc"] == "auto" and w4["inline"] == "" and not w4["hint"] and w4["redraws"] == 2, w4)
+        pg6.wait_for_timeout(1000)
+        w4b = wc()
+        check("(c) 1.6 s after the lift: the hint is back on, no new redraw", w4b["wc"] == "transform" and w4b["redraws"] == 2 and not w4b["hint"], w4b)
+        OFF = """() => new Promise((ok) => { const s = document.getElementById('stack'), seen = []; const t0 = performance.now();
+          const look = () => { seen.push(s.style.willChange || 'off'); if (performance.now() - t0 < 700) requestAnimationFrame(look); else ok(seen); }; look(); })"""
+        touch(cdp6, "touchStart", 640, 400); pg6.wait_for_timeout(40); touch(cdp6, "touchMove", 640, 390); pg6.wait_for_timeout(40); touch(cdp6, "touchEnd")
+        frames = pg6.evaluate(OFF)
+        offs = [k for k, v in enumerate(frames) if v == "off"]
+        check("(c) watched frame by frame for 700 ms after a small drag: on through the lift, off from about HINT_MS after it to the end of the watch",
+              len(offs) >= 10 and 10 <= offs[0] <= 30 and offs == list(range(offs[0], len(frames))) and frames[0] == "transform", [len(frames), offs[:2], offs[-1:], frames[:3], frames[-2:]])
+        pg6.wait_for_timeout(1100)
+        check("(c) and about 1.8 s after that lift it is back on", pg6.evaluate("document.getElementById('stack').style.willChange") == "transform")
+        pg6.evaluate("""() => document.getElementById('desk').dispatchEvent(new WheelEvent('wheel', { deltaY: -300, ctrlKey: true, clientX: 640, clientY: 400, bubbles: true, cancelable: true }))""")
+        pg6.wait_for_timeout(60)
+        w5 = wc()
+        check("(d) a Ctrl + wheel zoom: the hint is on right after it and the zoom changed (x 2.1)", w5["wc"] == "transform" and w5["hint"] and w5["z"] > w4["z"] * 2, [w4["z"], w5])
+        pg6.wait_for_timeout(450)
+        w6 = wc()
+        check("(d) about 500 ms later: settled again (one more redraw), the zoom kept, the hint off",
+              w6["redraws"] == w5["redraws"] + 1 and not w6["hint"] and w6["z"] == w5["z"] and w6["wc"] == "auto", [w5["redraws"], w6])
+        pg6.wait_for_timeout(1000)
+        w6b = wc()
+        check("(d) 1.5 s after the zoom: back on, the zoom kept", w6b["wc"] == "transform" and w6b["z"] == w5["z"] and w6b["redraws"] == w6["redraws"], w6b)
+        # a gesture inside the back-on second: the hint goes on at once and the back-on timer is dropped (one redraw per settle)
+        pg6.evaluate("""() => document.getElementById('desk').dispatchEvent(new WheelEvent('wheel', { deltaY: 40, ctrlKey: false, clientX: 640, clientY: 400, bubbles: true, cancelable: true }))""")
+        pg6.wait_for_timeout(400)
+        touch(cdp6, "touchStart", 640, 400); pg6.wait_for_timeout(40); touch(cdp6, "touchMove", 640, 395); pg6.wait_for_timeout(40)
+        w7 = wc()
+        check("(e) a finger down 400 ms after a wheel settle: the hint is on at once (gesture hint true)", w7["wc"] == "transform" and w7["hint"], w7)
+        touch(cdp6, "touchEnd"); pg6.wait_for_timeout(1700)
+        w8 = wc()
+        check("(e) 1.7 s after that lift: two more redraws than before the wheel (the wheel's and the finger's), and back on", w8["redraws"] == w6b["redraws"] + 2 and w8["wc"] == "transform" and not w8["hint"], [w6b["redraws"], w8])
+        check("(e) the stack's transform is untouched by the hint", pg6.evaluate("document.getElementById('stack').style.transform").startswith("translate("))
+        check("no page errors (crisp after a pinch)", not errs6, errs6)
+        ctx6.close()
         b.close()
 finally:
     srv.terminate()
