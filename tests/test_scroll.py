@@ -546,7 +546,7 @@ try:
         pg5.on("pageerror", lambda e: errs5.append(str(e)))
         pg5.goto(LOCAL + "&dbg=1"); ready(pg5); pg5.evaluate(SEED); pg5.reload(); ready(pg5)
         pg5.locator(".nrow").first.click(); pg5.wait_for_selector("#noteView:not([hidden])"); pg5.wait_for_timeout(400)
-        LINE = r"resize (\d+) \| fit (\d+) \((\w+)\) \| lock (on|off)(?: \| oe [\d.]+ [\d.]+)?"   # pw-v7i: the pen filter pair follows
+        LINE = r"resize (\d+) \| fit (\d+) \((\w+)\) \| lock (on|off) \| hold \d+(?: \w+ -?\d+ -?\d+)?(?: gap -?\d+ -?\d+)?(?: \| oe [\d.]+ [\d.]+)?"   # pw-v7i: the pen filter pair follows; pw-v8l: the hold count (+ last source and shift, + the pen's gap) before it
         dl = lambda: pg5.evaluate("document.getElementById('dbgView').textContent").split("\n")
         l1 = dl(); m1 = re.fullmatch(LINE, l1[1]) if len(l1) == 2 else None
         check("(m) ?dbg=1: #dbgView's second line reads 'resize <n> | fit 1 (open) | lock off'", m1 is not None and m1.group(2) == "1" and m1.group(3) == "open" and m1.group(4) == "off", l1)
@@ -657,7 +657,7 @@ try:
         pen7 = lambda t, x, yy: cdp7.send("Input.dispatchMouseEvent", {"type": t, "x": x, "y": yy, "button": "left", "buttons": 1, "clickCount": 1, "pointerType": "pen"})
         HV = """() => import('./js/page.js').then((m) => { const s = m.viewStats(), v = m.view(), de = document.getElementById('desk'), st = document.getElementById('stack'), d = de.getBoundingClientRect();
           const p = m.pagePoint(m.current(), 700, 405); return { holds: s.holds, held: s.held, resizes: s.resizes, fits: s.fits, x: v.x, y: v.y, z: v.z, top: d.top, px: p[0], py: p[1],
-            dw: de.clientWidth, dh: de.clientHeight, w: parseFloat(st.style.width), h: parseFloat(st.style.height) }; })"""
+            dw: de.clientWidth, dh: de.clientHeight, w: parseFloat(st.style.width), h: parseFloat(st.style.height), last: s.lastHold, gap: s.gap }; })"""
         hv = lambda: pg7.evaluate(HV)
         shift = lambda px: pg7.evaluate("(px) => { document.getElementById('desk').style.translate = px ? `0 ${px}px` : ''; window.dispatchEvent(new Event('resize')); }", px)
         h0 = hv()
@@ -689,6 +689,43 @@ try:
         shift(48); pg7.wait_for_timeout(120); h5 = hv(); shift(0); pg7.wait_for_timeout(120); h6 = hv()
         check("(f) the same desk move with no pen down: a plain relayout, no hold (holds stays 2), the view clamped as before",
               h5["holds"] == 2 and h6["holds"] == 2 and not h5["held"] and h6["resizes"] == h4["resizes"] + 2 and abs(h6["y"] - h1["y"]) < 0.6, [h4, h5, h6])
+        # (g) pw-v8l: the WINDOW moves on the screen (her tablet's case, 3 Nov 17:51 "still a failure"): the desk's rect inside
+        # the window does not change, so the rect read 0 in pw-v8k; the pen's screen position holds while its client position
+        # jumps by the bar. Played with synthetic pen PointerEvents carrying screenX/Y: the same screen spot comes in 40 px
+        # higher in client terms (screenY - clientY from 100 to 140), later back. Expected: a 'gap' hold of 40, view.y down by
+        # 40, the stroke's points straight, a second hold back, the lift clamps.
+        gp = lambda t, cx, cy, off: pg7.evaluate("""([t, cx, cy, off]) => { document.getElementById('desk').dispatchEvent(new PointerEvent(t, {
+          pointerId: 91, pointerType: 'pen', isPrimary: true, bubbles: true, cancelable: true, pressure: t === 'pointerup' ? 0 : 0.5,
+          button: t === 'pointermove' ? -1 : 0, buttons: t === 'pointerup' ? 0 : 1, clientX: cx, clientY: cy, screenX: cx + 10, screenY: cy + off })); }""", [t, cx, cy, off])
+        h7 = hv()
+        gp("pointerdown", 500, 300, 100); pg7.wait_for_timeout(30)
+        for i in range(1, 7): gp("pointermove", 500 + 8 * i, 300 + i, 100); pg7.wait_for_timeout(16)
+        h8 = hv()
+        check("(g) set-up: a synthetic pen stroke runs (gap read 10, 100), no hold yet", h8["holds"] == 2 and not h8["held"] and h8["gap"] == [10, 100], h8)
+        for i in range(7, 13): gp("pointermove", 500 + 8 * i, 300 + i - 40, 140); pg7.wait_for_timeout(16)
+        h9 = hv()
+        check("(g) the window moves 40 px down the screen mid-stroke: one 'gap' hold of dy 40, view.y down by 40, held, zoom kept",
+              h9["holds"] == 3 and h9["held"] and h9["last"]["src"] == "gap" and abs(h9["last"]["dy"] - 40) < 0.01 and abs((h8["y"] - h9["y"]) - 40) < 0.6 and h9["z"] == h8["z"], [h8, h9])
+        for i in range(13, 19): gp("pointermove", 500 + 8 * i, 300 + i, 100); pg7.wait_for_timeout(16)
+        h10 = hv()
+        check("(g) the window moves back up mid-stroke: a second gap hold (dy -40), view.y back where it was, still held",
+              h10["holds"] == 4 and h10["held"] and abs(h10["last"]["dy"] + 40) < 0.01 and abs(h10["y"] - h8["y"]) < 0.6, [h8, h10])
+        gp("pointerup", 500 + 8 * 18, 318, 100); pg7.wait_for_timeout(250)
+        h11 = hv()
+        Lg = pg7.evaluate("window.__pw.ink.lastStroke()")
+        pg = (Lg or {}).get("points") or []
+        stg = [abs(pg[i + 1][1] - pg[i][1]) for i in range(len(pg) - 1)] if pg and isinstance(pg[0], list) else []
+        check("(g) the stroke's recorded points run straight on through both window moves: no vertical step over 6 page px (the bar would be " + str(round(40 / max(h8["z"], 0.01))) + ")",
+              len(pg) >= 12 and stg and max(stg) < 6, [len(pg), max(stg) if stg else None, pg[:3], pg[-3:]])
+        check("(g) the lift: held off, gap cleared, the normal relayout ran (inside the clamp, zoom and fit count untouched)",
+              not h11["held"] and h11["gap"] is None and inside(h11) and h11["z"] == h8["z"] and h11["fits"] == 1 and abs(h11["y"] - h8["y"]) < 0.6, [h8, h11])
+        # (h) a pen moving fast is never read as a window move: the screen position moves WITH the client position
+        gp("pointerdown", 300, 500, 100); pg7.wait_for_timeout(30)
+        for i in range(1, 6): gp("pointermove", 300 + 30 * i, 500 + 25 * i, 100); pg7.wait_for_timeout(16)
+        gp("pointerup", 450, 625, 100); pg7.wait_for_timeout(200)
+        h12 = hv()
+        check("(h) a fast stroke (25 px down per event, screen and client together): no hold (holds stays 4)", h12["holds"] == 4 and not h12["held"], h12)
+        # (i) ?dbg=1 is not on here; the hold readout is covered by the regex in group (m) above (hold <n> after lock)
         check("no page errors (held under the pen)", not errs7, errs7)
         ctx7.close()
         b.close()

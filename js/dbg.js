@@ -77,6 +77,7 @@ export function startDbg(desk, ink) {
     const s = viewStats();
     vbox.textContent = `scroll ${st} ${sl} | view ${v.x.toFixed(0)} ${v.y.toFixed(0)} z${v.z.toFixed(2)} | drift ${dx.toFixed(0)} ${dy.toFixed(0)}`
       + `\nresize ${s.resizes} | fit ${s.fits} (${s.cause || 'none'}) | lock ${s.lock ? 'on' : 'off'}`
+      + ` | hold ${s.holds}${s.lastHold && s.lastHold.src ? ` ${s.lastHold.src} ${s.lastHold.dx.toFixed(0)} ${s.lastHold.dy.toFixed(0)}` : ''}${s.gap ? ` gap ${s.gap[0].toFixed(0)} ${s.gap[1].toFixed(0)}` : ''}`   // pw-v8l: holds so far, the last one's source and shift, the pen's window-on-screen gap while it writes
       + (ink && ink.OE ? ` | oe ${ink.OE.mincutoff} ${ink.OE.beta}` : '');
   };
   const tick = () => { showView(); paint(); };
