@@ -1,4 +1,4 @@
-# PenWorks U4c checks (pw-v8n): PICTURES on a page (_build/U4C-PICTURES-BRIEF.md). Place, move, resize, turn, lock,
+# PenWorks U4c checks (pw-v8p): PICTURES on a page (_build/U4C-PICTURES-BRIEF.md). Place, move, resize, turn, lock,
 # see-through kept.
 # Run: python tests/test_u4c.py        (local mode only: ?local=1, Supabase is never touched)
 # Seeds one note of 3 grid pages into the localStorage twin, 1280 x 800 (the tablet landscape size), the way tests/test_axes.py
@@ -617,7 +617,7 @@ try:
         ctx2.close()
         check("no page errors (the whole run)", not errs, errs)
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        check("cache is pw-v8n", "pw-v8n" in keys, keys)
+        check("cache is pw-v8p", "pw-v8p" in keys, keys)
 
         ctx.close()
         b.close()

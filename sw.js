@@ -1,5 +1,9 @@
 /* PenWorks service worker.
    Network-first for app code so a deploy lands on the next load, cache-first for icons.
+   pw-v8p (4 Nov): GitHub Pages answers every file with Cache-Control: max-age=600, so a plain fetch() inside the 10 minutes
+   after a load is the tablet's OWN http cache saying "fresh" with the OLD file (her four reopens after pw-v8o still showed
+   the 1000-row bug). App files are now fetched with cache: "no-cache" (revalidated against GitHub's ETag: a 304 when
+   nothing changed) and the install step takes fresh copies (cache: "reload").
    Supabase calls are never cached. The supabase-js library and the fonts are cached network-first.
 
    U4b: a PDF shared to PenWorks (Android's share sheet, WhatsApp's share button) arrives as a POST to ./share-target/
@@ -9,7 +13,7 @@
    update would go with it. Then a 303 to ./?share=1, where the app picks it up (js/pdfin.js sharedFile).
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v8o";
+const CACHE = "pw-v8p";
 const SHARE_DB = "penworks.share";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",
@@ -21,7 +25,7 @@ const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/a
 const CDN = ["cdn.jsdelivr.net", "fonts.googleapis.com", "fonts.gstatic.com"];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: "reload" })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (e) => {
@@ -32,7 +36,10 @@ self.addEventListener("activate", (e) => {
 });
 
 function networkFirst(req, fallback) {
-  return fetch(req).then((res) => {
+  // same-origin (the app's own files, `fallback` true): past the http cache, revalidated with GitHub each time. A navigation
+  // request cannot be re-wrapped (mode "navigate"), so the url is fetched as a plain GET instead.
+  const get = fallback ? fetch(req.url, { cache: "no-cache", credentials: "same-origin" }) : fetch(req);
+  return get.then((res) => {
     if (res.ok || res.type === "opaque") {
       const copy = res.clone();
       caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
