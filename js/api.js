@@ -84,11 +84,21 @@ const liveApi = {
     return data;
   },
 
+  // pw-v8o (4 Nov): every row, read in pages of ROWS rows. One plain select stops at Supabase's 1000 rows; her 1025
+  // page rows hid the most recently written pages (her Sept P2 Q4 and Q5 d) and a paste then renumbered without them.
   async loadAll() {
     const c = await client();
-    const [f, n, p] = await Promise.all(TABLES.map((t) => c.from(t).select(COLS[t])));
-    for (const r of [f, n, p]) if (r.error) throw r.error;
-    return { folders: f.data, notes: n.data, pages: p.data };
+    const all = async (t) => {
+      const out = [];
+      for (let from = 0; ; from += ROWS) {
+        const { data, error } = await c.from(t).select(COLS[t]).order('id').range(from, from + ROWS - 1);
+        if (error) throw error;
+        out.push(...data);
+        if (data.length < ROWS) return out;
+      }
+    };
+    const [folders, notes, pages] = await Promise.all(TABLES.map(all));
+    return { folders, notes, pages };
   },
 
   // the database refuses a third folder level itself (trigger folders_two_levels, migration 0003)
