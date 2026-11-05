@@ -315,6 +315,9 @@ input.rename {
 /* U5a: the tools on the paper (js/tools.js): their own layer over the page's ink, in page px, never clipped (a ruler may
    hang off the page), above the next page too; the pen reaches them through the desk, never through this layer */
 .sheet svg.toolLayer { overflow: visible; pointer-events: none; z-index: 2; }
+/* U5g: the perpendicular square and the parallel chevrons (js/align.js): shown while the snap holds, faded out on the lift */
+.alignMark { opacity: 1; transition: opacity .6s ease-out; pointer-events: none; }
+.alignMark.fade { opacity: 0; }
 .selChips .chip[data-act="delete"] { background: #FFFFFF; color: #B3261E; box-shadow: inset 0 0 0 1.5px #B3261E, 0 2px 8px rgba(20,22,26,.18); }
 #addBelow {
   position: absolute; left: 50%; transform: translateX(-50%); height: 44px; padding: 0 18px; border: 1px dashed var(--desk-dash);
@@ -677,4 +680,5 @@ svg.ink text, svg.thumbInk text { pointer-events: none; user-select: none; -webk
   #pageList { animation: none; }
   #tray .colours.dragging .sw:not(.lift) { transition: none; }
   #plThumbs.dragging .thumbP:not(.lift) { transition: none; }
+  .alignMark { transition: none; }
 }

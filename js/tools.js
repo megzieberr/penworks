@@ -109,8 +109,19 @@
 // - It never turns, never reshapes, never becomes a highlighter. Its axis ends, the axes' crossing, every tick's point on
 //   its axis and every tick's outer end are stick points and its axes are stick curves (stickData, derived from the
 //   record like a compass needle's centre, nothing stored).
+//
+// U5g (pw-v8q): the PERPENDICULAR and PARALLEL snap (her ask 3 Nov 14:13; js/align.js holds the geometry). The ruler's
+// and the protractor's TURN go through snapTurn, now in this order: (1) a stick POINT within TURN_PULL of a stuck edge's
+// line pulls the turn through it (unchanged, it wins); (2) the edge's line from minX to maxX meets a line, an arrow or an
+// axis (within 10 screen px: an end, a crossing, or its end on the edge) at within 2 degrees of 90, or lies within 2
+// degrees of parallel to one it meets or lies alongside (3 cm, overlapping): the turn lands exactly on it; (3) the 45
+// degree step within TURN_SNAP. The pill keeps the plain degrees. The mark (the small square at the corner, or a chevron
+// on each line) is a <g class="alignMark"> in the tool's page layer, over the tools, shown while the hit holds; it fades
+// out over 600 ms when the turn ends or the hit lets go (ink.js drawAlignMark, fadeAlignMark). Never a record. The Select
+// drag of a line's end and the held line are ink.js's (the same helper, the same marks, in the page's ink svg).
 import { CM, view, pagePoint, current } from './page.js';
 import * as ink from './ink.js';
+import { alignDir, segsOf, markOf } from './align.js';
 import { trayState } from './tray.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
@@ -162,6 +173,7 @@ const layers = new Map();   // page id -> its <svg class="toolLayer">
 let gR = null, hi = null, rings = [], degEl = null;      // the ruler's group, knob halos, rings and degree pill
 let gC = null, cRings = [], cmEl = null;                 // the compass's group, rings (needle, pencil tip) and width pill
 let gP = null, pRings = [], pLights = {}, pBuiltR = null, pDegEl = null;  // U5d: the protractor's group, rings (centre, turn target), zone lights, drawn size, degree pill
+let rMark = null, pMark = null;                          // U5g: the ruler's and the protractor's align mark while a turn holds one
 const sizeBtn = {};                                      // U5d: the - and + on the Protractor row
 
 // ---------------------------------------------------------------- geometry
@@ -354,12 +366,21 @@ function snapTurn(raw, pivot, lx, usePoints, z, pageId, minX, maxX) {
       const v = sub(best, pivot);
       let a = Math.atan2(v[1], v[0]);
       if (dot(v, u) < 0) a += PI;
-      return { ang: raw + wrapPi(a - raw), target: best };
+      return { ang: raw + wrapPi(a - raw), target: best, align: null };
+    }
+  }
+  {                                                                // U5g: exactly perpendicular or parallel to a line the edge meets
+    const u = dirOf(raw), A = add(pivot, mul(u, minX - lx)), B = add(pivot, mul(u, maxX - lx));
+    const hit = alignDir(u, segsOf(ink.strokesOf(pageId), ink.axesGeom), { A, P: B, O: pivot }, z, CM);
+    if (hit) {
+      const a = Math.atan2(hit.u2[1], hit.u2[0]), u2 = hit.u2;
+      return { ang: raw + wrapPi(a - raw), target: null,
+               align: { ...hit, A: add(pivot, mul(u2, minX - lx)), P: add(pivot, mul(u2, maxX - lx)) } };
     }
   }
   const step = PI / 4, k = Math.round(raw / step);
-  if (Math.abs(raw - k * step) <= TURN_SNAP) return { ang: k * step, target: null };
-  return { ang: raw, target: null };
+  if (Math.abs(raw - k * step) <= TURN_SNAP) return { ang: k * step, target: null, align: null };
+  return { ang: raw, target: null, align: null };
 }
 // along-the-edge positions to snap a ruler line's ends to: stick points lying on the edge, and where the edge crosses a
 // line or an arc
@@ -561,6 +582,7 @@ function renderRuler() {
   if (gg && gg.k === 'draw') { if (gg.snapA) marks.push(gg.snapA); if (gg.snap) marks.push(gg.snap); }
   else { if (R.stuck) marks.push(R.stuck.p); if (gg && gg.k === 'turn' && gg.target) marks.push(gg.target); }
   rings.forEach((c, i) => putRing(c, marks[i], z));
+  rMark = alignMark(rMark, gg && gg.k === 'turn' ? gg.align : null, R.page, z);
   if (gg && gg.k === 'turn') {                                     // the turn's degrees beside the knob that turns it
     const g = rGeo(R), knob = g.knobs[gg.zone === 'turnL' ? 0 : 1], at = add(knob, mul(g.n, -(KNOB_R + 26 / z)));
     degEl.textContent = (Math.round(normAng(-R.ang) * 180 / PI) % 180) + '°';
@@ -644,6 +666,7 @@ function renderProtractor() {
   for (const k in pLights) pLights[k].setAttribute('display', k === zone ? 'inline' : 'none');
   putRing(pRings[0], P.stuck, z);
   putRing(pRings[1], gg && gg.k === 'pTurn' ? gg.target : null, z);
+  pMark = alignMark(pMark, gg && gg.k === 'pTurn' ? gg.align : null, P.page, z);
   if (gg && gg.k === 'pTurn') {                                    // the turn's degrees just past the horn being turned
     const u = dirOf(P.ang), sx = gg.zone === 'turnR' ? 1 : -1, at = add(P.o, mul(u, sx * (P.r + 30 / z)));
     pDegEl.textContent = (Math.round(normAng(-P.ang) * 180 / PI) % 180) + '°';
@@ -653,6 +676,14 @@ function renderProtractor() {
   } else pDegEl.classList.remove('on');
 }
 function render() { renderRuler(); renderCompass(); renderProtractor(); }
+// U5g: a turn's align mark in its page's tool layer, over every tool, while the hit holds; else it fades and goes
+function alignMark(el, hit, pageId, z) {
+  const layer = hit ? layers.get(pageId) : null;
+  if (!layer) { if (el) ink.fadeAlignMark(el); return null; }
+  const m = ink.drawAlignMark(layer, markOf(hit, hit.A, hit.P, z), z, el);
+  if (m) layer.appendChild(m);
+  return m;
+}
 
 // ---------------------------------------------------------------- out and away
 function paint() {
@@ -675,6 +706,7 @@ function rulerOut() {
 }
 function rulerAway() {
   if (G && G.tool === 'ruler') { if (G.live) G.live.drop(); G = null; }
+  if (rMark) { rMark.remove(); rMark = null; }
   R = null;
   if (hov && hov.tool === 'ruler') hov = null;
   order = order.filter((t) => t !== 'ruler');
@@ -710,6 +742,7 @@ function protractorOut() {
 }
 function protractorAway() {
   if (G && G.tool === 'protractor') G = null;
+  if (pMark) { pMark.remove(); pMark = null; }
   P = null;
   if (hov && hov.tool === 'protractor') hov = null;
   order = order.filter((t) => t !== 'protractor');
@@ -1045,7 +1078,7 @@ function moveProtractor(g, p, z) {
   }
   g.raw += sweep(g.prev, p, P.o); g.prev = p;                      // pTurn: the sweep about the centre, the baseline as the edge
   const s = snapTurn(g.raw, P.o, 0, true, z, P.page, -4 * P.r, 4 * P.r);
-  P.ang = s.ang; g.target = s.target;
+  P.ang = s.ang; g.target = s.target; g.align = s.align;
 }
 function moveTo(g, ev) {
   const z = view().z, p = pagePoint(g.idx, ev.clientX, ev.clientY);
@@ -1055,7 +1088,7 @@ function moveTo(g, ev) {
   if (g.k === 'turn') {
     g.raw += sweep(g.prev, p, g.pivot); g.prev = p;
     const s = snapTurn(g.raw, g.pivot, g.lx, g.stuck, z, R.page, -RULER_PAD, RULER_LEN + RULER_PAD);
-    R.ang = s.ang; g.target = s.target;
+    R.ang = s.ang; g.target = s.target; g.align = s.align;
     const u = dirOf(R.ang), n = [-u[1], u[0]];
     R.o = sub(sub(g.pivot, mul(u, g.lx)), mul(n, g.ly));
     return;
@@ -1132,7 +1165,8 @@ export function attach(sheets) {
 }
 export function rulerState() {                                     // for the checks: a copy, or null when the ruler is away
   return R ? { page: R.page, o: R.o.slice(), ang: R.ang, stuck: R.stuck ? { p: R.stuck.p.slice(), edge: R.stuck.edge } : null,
-               len: RULER_LEN, w: RULER_W, pad: RULER_PAD, knobR: KNOB_R, knobOff: KNOB_OFF, gesture: G && G.tool === 'ruler' ? G.k : null } : null;
+               len: RULER_LEN, w: RULER_W, pad: RULER_PAD, knobR: KNOB_R, knobOff: KNOB_OFF, gesture: G && G.tool === 'ruler' ? G.k : null,
+               align: G && G.tool === 'ruler' && G.align ? JSON.parse(JSON.stringify(G.align)) : null } : null;
 }
 export function compassState() {                                   // for the checks: a copy, or null when the compass is away
   if (!C) return null;
@@ -1148,6 +1182,7 @@ export function protractorState() {                                // U5d, for t
   return { page: P.page, o: P.o.slice(), ang: P.ang, r: P.r, stuck: P.stuck ? P.stuck.slice() : null, saved: proR,
            def: PRO_R, min: PRO_MIN, max: PRO_MAX, step: PRO_STEP, k: K,
            gesture: G && G.tool === 'protractor' ? G.k : null, target: G && G.k === 'pTurn' && G.target ? G.target.slice() : null,
+           align: G && G.k === 'pTurn' && G.align ? JSON.parse(JSON.stringify(G.align)) : null,
            order: order.slice() };
 }
 

@@ -45,7 +45,8 @@ HELP = """async () => {
   T.sheet = (id) => document.querySelector(`#stack .sheet[data-id="${id}"]`);
   T.client = (id, x, y) => { const r = T.sheet(id).getBoundingClientRect(), z = T.z(); return [r.left + x * z, r.top + y * z]; };
   T.ev = (type, id, kind, x, y) => document.getElementById('desk').dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: kind,
-    isPrimary: true, bubbles: true, cancelable: true, button: type === 'pointermove' ? -1 : 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y }));
+    isPrimary: true, bubbles: true, cancelable: true, button: type === 'pointermove' ? -1 : 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y,
+    screenX: x + 10, screenY: y + 80 }));   // pw-v8m: a constant screen-minus-client gap, as a real pen has
   T.R = () => window.__TL.rulerState();
   // a point on the ruler in its own frame (lx along edge A from its 0 mark, ly into the ruler), as page px
   T.local = (lx, ly) => { const s = T.R(), u = [Math.cos(s.ang), Math.sin(s.ang)], n = [-u[1], u[0]];

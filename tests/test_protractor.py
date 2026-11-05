@@ -47,7 +47,8 @@ HELP = """async () => {
   T.client = (id, x, y) => { const r = T.sheet(id).getBoundingClientRect(), z = T.z(); return [r.left + x * z, r.top + y * z]; };
   T.ev = (type, id, kind, x, y, buttons) => document.getElementById('desk').dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: kind,
     isPrimary: true, bubbles: true, cancelable: true, button: type === 'pointermove' ? -1 : 0,
-    buttons: buttons !== undefined ? buttons : type === 'pointerup' ? 0 : 1, clientX: x, clientY: y }));
+    buttons: buttons !== undefined ? buttons : type === 'pointerup' ? 0 : 1, clientX: x, clientY: y,
+    screenX: x + 10, screenY: y + 80 }));   // pw-v8m: a constant screen-minus-client gap, as a real pen has
   T.R = () => window.__TL.rulerState();
   T.P = () => window.__TL.protractorState();
   T.pl = (lx, ly) => { const s = T.P(), u = [Math.cos(s.ang), Math.sin(s.ang)], up = [u[1], -u[0]];   // protractor local (x along, y up) to page
