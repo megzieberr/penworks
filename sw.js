@@ -13,9 +13,10 @@
    update would go with it. Then a 303 to ./?share=1, where the app picks it up (js/pdfin.js sharedFile).
 
    pw-v8r (5 Nov): the parallel half of the U5g snap removed (her tablet verdict); perpendicular only.
+   pw-v8s (5 Nov): calculator.js refreshed from Blipwork 21a3f23, the root sign and the brackets grow with what is inside.
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v8r";
+const CACHE = "pw-v8s";
 const SHARE_DB = "penworks.share";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",

@@ -3059,13 +3059,27 @@ export function mountCalculator(host, opts = {}) {
   }
 
   // ---- render ----
+  /* Tall signs (her screenshot, 5 Nov 2026): the root sign and the brackets
+     are drawn SHAPES that stretch to the height of what is inside, the way
+     the real fx-991ZA draws them, not font glyphs. Each keeps its real
+     character in a visually hidden span (.calc-hid), so the line's
+     textContent and copy/paste still read √ ( ). The √: a small fixed tick
+     at the bottom left and one stretched rising line to the top-right
+     corner, where it meets the body's border-top. A bracket: a CSS curve
+     (css .calc-brk) as tall as its group (.calc-br). */
+  const SVG_LINE = 'fill="none" stroke="currentColor" stroke-width="1.4" vector-effect="non-scaling-stroke"';
+  const RAD_SIGN = '<span class="calc-rad-sign"><span class="calc-hid">√</span>'
+    + `<svg class="calc-rad-tick" viewBox="0 0 25 50" preserveAspectRatio="none" aria-hidden="true"><path d="M1 27 L8 22 L25 50" ${SVG_LINE} stroke-linejoin="round" stroke-linecap="round"/></svg>`
+    + `<svg class="calc-rad-rise" viewBox="0 0 10 10" preserveAspectRatio="none" aria-hidden="true"><path d="M0 10 L10 0" ${SVG_LINE}/></svg></span>`;
+  const BRK_L = '<span class="calc-brk calc-brk-l"><span class="calc-hid">(</span></span>';
+  const BRK_R = '<span class="calc-brk calc-brk-r"><span class="calc-hid">)</span></span>';
   function renderNode(node) {
     switch (node.k) {
       case "d": return escapeHtml(node.v);
       case "c": return ",";
       case "op": return escapeHtml(node.v);
-      case "(": return "(";
-      case ")": return ")";
+      case "(": return BRK_L;   // only reached for a lone opener outside renderBox's pairing (renderBox groups every pair)
+      case ")": return BRK_R;   // a ) with no opener: a right bracket at the line's height
       case "sq": return "²";
       case "cb": return "³";
       case "ans": return "Ans";
@@ -3078,10 +3092,10 @@ export function mountCalculator(host, opts = {}) {
       case "mplus": return "M+";
       case "mminus": return "M−";
       case "stat": return statGlyph(node.v);   // a pasted STAT value (Build 8): x̄ overlined, x̂ ŷ with a hat
-      case "func": return escapeHtml(node.name) + (node.inv ? "⁻¹" : "") + "(";
+      case "func": return escapeHtml(node.name) + (node.inv ? "⁻¹" : "") + BRK_L;   // renderBox puts the bracket part inside the group
       case "frac": return `<span class="calc-frac"><span class="calc-frac-num">${renderBox(node.num)}</span><span class="calc-frac-bar"></span><span class="calc-frac-den">${renderBox(node.den)}</span></span>`;
-      case "rad": return `<span class="calc-rad">${node.deg === 3 ? '<sup class="calc-rad-deg">3</sup>' : ""}<span class="calc-rad-sign">√</span><span class="calc-rad-body">${renderBox(node.body)}</span></span>`;
-      case "xrt": return `<span class="calc-rad calc-xrt"><sup class="calc-rad-deg calc-rad-idx">${renderBox(node.idx)}</sup><span class="calc-rad-sign">√</span><span class="calc-rad-body">${renderBox(node.body)}</span></span>`;
+      case "rad": return `<span class="calc-rad">${node.deg === 3 ? '<sup class="calc-rad-deg">3</sup>' : ""}${RAD_SIGN}<span class="calc-rad-body">${renderBox(node.body)}</span></span>`;
+      case "xrt": return `<span class="calc-rad calc-xrt"><sup class="calc-rad-deg calc-rad-idx">${renderBox(node.idx)}</sup>${RAD_SIGN}<span class="calc-rad-body">${renderBox(node.body)}</span></span>`;
       case "pow": return `<sup class="calc-pow-exp">${renderBox(node.exp)}</sup>`;
       // ---- Build 4 ----
       case "econst": return "e";
@@ -3090,7 +3104,7 @@ export function mountCalculator(host, opts = {}) {
       case "fact": return "!";
       case "pct": return "%";
       case "comb": return `<span class="calc-comb">${node.v}</span>`;   // the special C / P sign of nCr / nPr
-      case "logb": return `<span class="calc-logb">log<span class="calc-logb-base">${renderBox(node.base)}</span>(<span class="calc-logb-body">${renderBox(node.body)}</span>)</span>`;
+      case "logb": return `<span class="calc-logb">log<span class="calc-logb-base">${renderBox(node.base)}</span><span class="calc-br">${BRK_L}<span class="calc-logb-body">${renderBox(node.body)}</span>${BRK_R}</span></span>`;
       case "abs": return `<span class="calc-abs"><span class="calc-abs-body">${renderBox(node.body)}</span></span>`;   // straight bars = the body's left and right borders, so they grow with what is inside
       case "tenpow": return `<span class="calc-tenpow">10<sup class="calc-pow-exp">${renderBox(node.exp)}</sup></span>`;
       case "epow": return `<span class="calc-tenpow">e<sup class="calc-pow-exp">${renderBox(node.exp)}</sup></span>`;
@@ -3103,16 +3117,45 @@ export function mountCalculator(host, opts = {}) {
      place in the number: 30 °'" 15 °'" shows 30°15' (spec §9), a third mark
      shows ". */
   const DMS_MARKS = ["°", "'", "\""];
-  function renderBox(box) {
+  /* Tall brackets (5 Nov 2026): each opener ( or func( is paired with its )
+     in the same box by depth count, and the run from opener to closer goes
+     in one .calc-br group with the left bracket first and the right bracket
+     last, so both brackets stretch to the group's height. An unclosed opener
+     (common while typing) groups to the end of its box and draws the left
+     bracket only. The cursor keeps its places: at the index just after the
+     opener it is inside, after the left bracket; at the closer's index it is
+     inside, before the right bracket; after the closer it is outside. */
+  const isOpener = n => n.k === "(" || n.k === "func";
+  function closerOf(box, i) {
+    let depth = 0;
+    for (let j = i + 1; j < box.length; j++) {
+      if (isOpener(box[j])) depth++;
+      else if (box[j].k === ")") { if (depth === 0) return j; depth--; }
+    }
+    return -1;
+  }
+  function renderRange(box, from, to) {   // nodes from..to-1, and the cursor at any index from..to
     let html = "", dmsN = 0;
-    for (let idx = 0; idx <= box.length; idx++) {
+    for (let idx = from; idx <= to; idx++) {
       if (cursorOn && box === S.cur.box && idx === S.cur.i) html += '<span class="calc-cursor"></span>';
-      if (idx >= box.length) continue;
+      if (idx >= to) continue;
       const node = box[idx];
       if (node.k === "dms") { html += DMS_MARKS[Math.min(dmsN, 2)]; dmsN++; continue; }
       if (node.k !== "d" && node.k !== "c") dmsN = 0;
+      if (isOpener(node)) {
+        const j = closerOf(box, idx), end = j < 0 ? to : Math.min(j, to);
+        const name = node.k === "func" ? escapeHtml(node.name) + (node.inv ? "⁻¹" : "") : "";
+        html += name + '<span class="calc-br">' + BRK_L + renderRange(box, idx + 1, end) + (j >= 0 && j < to ? BRK_R : "") + "</span>";
+        if (j < 0 || j >= to) break;   // the group ran to the end (cursor at the end included)
+        idx = j;                       // the loop's idx++ steps past the closer; the cursor there is outside
+        continue;
+      }
       html += renderNode(node);
     }
+    return html;
+  }
+  function renderBox(box) {
+    let html = renderRange(box, 0, box.length);
     if (box.length === 0 && box.__parent) html += '<span class="calc-slot"></span>';   // empty template box: dotted placeholder
     return html;
   }

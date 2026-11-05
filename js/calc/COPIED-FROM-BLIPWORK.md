@@ -1,16 +1,16 @@
 # js/calc: copied from Blipwork, NEVER edit here
 
-Source: `C:\Users\megzi\Desktop\Claude Code Projects\maths-homework-quest` (Blipwork), git head `afe14af`.
-Copied: 29 Oct 2026 (PenWorks pw-v7d).
+Source: `C:\Users\megzi\Desktop\Claude Code Projects\maths-homework-quest` (Blipwork), git head `21a3f23`.
+Copied: 29 Oct 2026 (PenWorks pw-v7d); last refreshed 5 Nov 2026 (pw-v8s, the tall root sign and brackets).
 
 Blipwork is the master. A fix to the calculator is made in Blipwork and copied out again; if something about the
 copy does not fit PenWorks, change the HOST side (js/calcpanel.js, css/app.css, the css/calc.css script), never this file.
 
-## calculator.js: byte-identical (3314 lines)
+## calculator.js: byte-identical (3357 lines)
 
 ```
-0383ec615a7611798dba82ee2ebfd596 *../maths-homework-quest/js/calculator.js
-0383ec615a7611798dba82ee2ebfd596 *js/calc/calculator.js
+a88708fe95cc36d0b1fc6784687e58a1 *../maths-homework-quest/js/calculator.js
+a88708fe95cc36d0b1fc6784687e58a1 *js/calc/calculator.js
 ```
 
 Check for drift any time: `md5sum ../maths-homework-quest/js/calculator.js js/calc/calculator.js` (run from the penworks folder).
