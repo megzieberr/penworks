@@ -567,9 +567,9 @@ try:
         # ------------------------------------------------------------ 8. cache
         group[0] = "cache"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v8u" not in keys:
+        if "pw-v8v" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v8u", "pw-v8u" in keys, keys)
+        check("cache is pw-v8v", "pw-v8v" in keys, keys)
         sw_src = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("sw.js lists vendor/pdf-lib.min.js (round 5: it replaced jsPDF)", "./vendor/pdf-lib.min.js" in sw_src)
         ctx.close()

@@ -496,6 +496,124 @@ body.trayLeft #counter { right: auto; left: 14px; }
 #calcCard .calcHead:active { cursor: grabbing; }
 #calcCard .calc-close { min-width: 40px; min-height: 32px; }
 
+/* pw-v8v: the face of her fx-991ZA, redrawn in CSS (calculator item 3, her ask 5 Nov: "I actually want to be able to change
+   the colours as well"). The palette is eight colour slots on #calcCard; the values here are the look of her fx-991ZA and
+   must stay in step with FACE in js/calcpanel.js, which puts the ones she changed (pw.calcFace, this device) on the card as
+   inline values. The inks are not slots: calcpanel.js works out --cf-body-ink, --cf-fn-ink, --cf-num-ink and --cf-ac-ink from
+   each colour's lightness (white on a dark face, near-black on a light one), so no pick ever leaves white text on a white key.
+   Every other colour below is a slot or a mix of the slots, so a recolour stays of a piece. css/calc.css is never edited:
+   these rules win over it because they all start with #calcCard. */
+#calcCard {
+  --cf-body: #ecedef; --cf-lcd: #cfd4cc; --cf-lcd-ink: #1e2320; --cf-fn: #f8f8f9;
+  --cf-num: #5b6066; --cf-ac: #9ccc3c; --cf-shift: #e8a21c; --cf-alpha: #d9484a;
+  --cf-edge: color-mix(in srgb, var(--cf-body) 78%, black);                                        /* the body's rim, the LCD frame */
+  --cf-print: color-mix(in srgb, var(--cf-body-ink) 58%, var(--cf-body));                          /* grey print on the body: MODE, ON, the head */
+  --cf-shade: color-mix(in srgb, color-mix(in srgb, var(--cf-body) 20%, black) 30%, transparent);  /* soft shadows */
+  --cf-rule: color-mix(in srgb, var(--cf-lcd-ink) 55%, var(--cf-lcd));                             /* the lines of a table on the LCD */
+}
+#calcCard .calc-wrap {
+  background: var(--cf-body); color: var(--cf-body-ink); border: 1px solid var(--cf-edge); border-radius: 22px;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--cf-body) 40%, white), inset 0 -2px 0 var(--cf-shade), 0 18px 44px var(--cf-shade);
+}
+#calcCard .calc-head, #calcCard .calc-close { color: var(--cf-print); }
+#calcCard .calc-name { font-family: var(--body); font-weight: 700; letter-spacing: .8px; }
+#calcCard .calc { gap: 16px; }
+
+/* the LCD: the pane, its frame and everything drawn on it, a TABLE's lines and dark cells and a menu's boxed numbers included */
+#calcCard .calc-lcd {
+  background: var(--cf-lcd); color: var(--cf-lcd-ink); border-color: var(--cf-edge);
+  box-shadow: inset 0 3px 8px color-mix(in srgb, var(--cf-lcd-ink) 22%, transparent);
+}
+#calcCard .calc-ind { color: color-mix(in srgb, var(--cf-lcd-ink) 85%, var(--cf-lcd)); }
+#calcCard .lcd-lmark { background: var(--cf-lcd); }
+#calcCard .lcd-tab :is(th, td) { border-color: var(--cf-rule); }      /* an EQN grid has no lines (border 0); its brackets stay currentColor */
+#calcCard .lcd-tbl.lcd-eqn td:is(.lcd-eqn-bl, .lcd-eqn-br, .lcd-eqn-t, .lcd-eqn-b) { border-color: currentColor; }
+#calcCard .lcd-tab u { border-bottom-color: var(--cf-lcd-ink); }
+#calcCard .lcd-tbl :is(.lcd-tbl-sel, .lcd-tbl-lit), #calcCard .lcd-mi-n { background: var(--cf-lcd-ink); color: var(--cf-lcd); }
+
+/* the keys: the key's own label fills it, in the app's sans; the small yellow and red words are print on the body ABOVE the
+   key (her picture, 16:14 "I just want it to fill the button... like this"). The tap area is still exactly the key
+   calculator.js built: the words above are not buttons, as on the real calculator. */
+#calcCard .calc-pad { gap: 14px; }
+#calcCard .calc-fngrid { grid-auto-rows: 30px; gap: 14px 5px; }
+#calcCard .calc-numgrid { grid-auto-rows: 42px; gap: 17px 7px; }
+#calcCard .calc-key {
+  --kf: var(--cf-fn); --ki: var(--cf-fn-ink);                       /* this key's face and ink */
+  display: grid; place-items: center; padding: 0; min-height: 0; border-radius: 10px;
+  background: var(--kf); color: var(--ki); border: 1px solid color-mix(in srgb, var(--kf) 78%, black);
+  font-family: var(--body); font-weight: 500; font-size: 14px;
+  box-shadow: 0 2px 0 color-mix(in srgb, var(--kf) 65%, black), 0 3px 4px var(--cf-shade);   /* a darker lip below: raised */
+}
+#calcCard .calc-key:hover { background: color-mix(in srgb, var(--kf) 93%, var(--ki)); }
+#calcCard .calc-numgrid .calc-key { font-size: 24px; border-radius: 12px; }
+#calcCard .calc-key:is(.k-num, .k-op, .k-eq) { --kf: var(--cf-num); --ki: var(--cf-num-ink); }
+#calcCard .calc-key:is(.k-del, .k-ac) { --kf: var(--cf-ac); --ki: var(--cf-ac-ink); font-size: 16px; font-weight: 700; }
+#calcCard .calc-key .kmain { line-height: 1; text-align: center; }
+#calcCard .calc-key :is(.ksh, .kred) {
+  top: -11px; font-family: var(--body); font-size: 7.5px; font-weight: 700; letter-spacing: 0; white-space: nowrap;
+  pointer-events: none;                                              /* print, not part of the key: a tap there is a tap on the body */
+}
+#calcCard .calc-numgrid .calc-key :is(.ksh, .kred) { top: -12px; font-size: 8px; }
+#calcCard .calc-key .ksh { left: 1px; color: var(--cf-shift); }
+#calcCard .calc-key .kred { right: 1px; color: var(--cf-alpha); }
+#calcCard .calc-key:not(:has(.kred)) .ksh { left: 50%; transform: translateX(-50%); }   /* a shift word alone is centred */
+/* the x keys in the italic serif of the real ones; x10 to the x stays plain */
+#calcCard .calc-key:is([data-keyid="x2"], [data-keyid="xinv"], [data-keyid="pow"]) .kmain {
+  font-family: Cambria, "Times New Roman", serif; font-style: italic; font-size: 1.15em;
+}
+/* the top row: SHIFT, ALPHA, MODE and ON are blank pills with their own word printed above them */
+#calcCard .calc-key:is(.k-shift, .k-alpha, [data-keyid="mode"], [data-keyid="on"]) { border-radius: 999px; }
+#calcCard .calc-key:is(.k-shift, .k-alpha, [data-keyid="mode"], [data-keyid="on"]) .kmain {
+  position: absolute; top: -11px; left: 50%; transform: translateX(-50%);
+  font-size: 8px; font-weight: 700; white-space: nowrap; color: var(--cf-print); pointer-events: none;
+}
+#calcCard .calc-key.k-shift .kmain { color: var(--cf-shift); }
+#calcCard .calc-key.k-alpha .kmain { color: var(--cf-alpha); }
+/* MODE and SETUP share one strip: MODE from the key's left edge, SETUP to its right edge, a little smaller so they never touch */
+#calcCard .calc-key[data-keyid="mode"] .kmain { left: -1px; transform: none; font-size: 7px; }
+#calcCard .calc-key[data-keyid="mode"] .ksh { left: auto; right: -1px; transform: none; font-size: 7px; }
+
+/* the arrow pad: a grey disc with a cross on it; the four buttons are the arms, the ring's ::before the square in the middle */
+#calcCard .calc-dpad { display: grid; margin: -8px 0 -2px; }
+#calcCard .calc-dpad-ring {
+  min-height: 0; padding: 6px; background: color-mix(in srgb, var(--cf-body) 86%, black); border: 1px solid var(--cf-edge);
+  box-shadow: inset 0 1px 2px var(--cf-shade);
+}
+#calcCard .calc-dpad-ring::before { content: ""; grid-column: 2; grid-row: 2; background: var(--cf-fn); pointer-events: none; }
+#calcCard .calc-dpad-btn { background: var(--cf-fn); color: var(--cf-fn-ink); font-size: 11px; }
+#calcCard .calc-dpad-btn:hover, #calcCard .calc-dpad-btn:active { color: var(--cf-fn-ink); background: color-mix(in srgb, var(--cf-fn) 90%, var(--cf-fn-ink)); }
+#calcCard .calc-dpad-btn.k-up { border-radius: 8px 8px 0 0; }
+#calcCard .calc-dpad-btn.k-down { border-radius: 0 0 8px 8px; }
+#calcCard .calc-dpad-btn.k-left { border-radius: 8px 0 0 8px; }
+#calcCard .calc-dpad-btn.k-right { border-radius: 0 8px 8px 0; }
+
+/* the colour panel (the palette button in the head): eight slots and the reset, inside the card under the head, so it scales
+   with the card and the card's pointer stop keeps the page's closers away */
+#calcCard .calcHeadBtns { display: flex; align-items: center; gap: 2px; }
+#calcCard .calcFaceBtn {
+  display: inline-grid; place-items: center; min-width: 40px; min-height: 32px; padding: 0; border: 0; border-radius: 8px;
+  background: none; color: var(--cf-print); cursor: pointer;
+}
+#calcCard .calcFaceBtn svg { width: 18px; height: 18px; }
+#calcCard .calcFaceBtn.on { background: color-mix(in srgb, var(--cf-body) 88%, var(--cf-body-ink)); }
+#calcCard .calcFace {
+  margin: 0 0 12px; padding: 6px 10px 10px; border-radius: 10px; border: 1px solid var(--cf-edge);
+  background: color-mix(in srgb, var(--cf-body) 92%, var(--cf-body-ink)); color: var(--cf-body-ink);
+  font: 500 12px/1.2 var(--body); animation: calcFaceIn .16s ease-out;
+}
+#calcCard .calcFace[hidden] { display: none; }
+@keyframes calcFaceIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+#calcCard .calcFaceRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 28px; cursor: pointer; }
+#calcCard .calcFaceRow input {
+  width: 44px; height: 24px; padding: 0; border: 1px solid var(--cf-edge); border-radius: 5px; background: none; cursor: pointer;
+}
+#calcCard .calcFaceRow input::-webkit-color-swatch-wrapper { padding: 2px; }
+#calcCard .calcFaceRow input::-webkit-color-swatch { border: 0; border-radius: 3px; }
+#calcCard .calcFaceReset {
+  display: block; width: 100%; min-height: 32px; margin-top: 8px; border-radius: 7px; border: 1px solid var(--cf-edge);
+  background: var(--cf-fn); color: var(--cf-fn-ink); font: 700 12px var(--body); cursor: pointer;
+}
+
 /* the pen and highlighter panels: a small card to the left of the tray */
 .panel {
   position: fixed; z-index: 40; width: 236px; background: var(--card); color: var(--graphite); border-radius: 10px;

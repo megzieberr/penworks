@@ -24,6 +24,15 @@
 // - The S Pen's button is a `contextmenu` on her tablet: swallowed inside the card so it never opens a menu or flips the tool.
 // - Not role="dialog" on purpose: app.js overlayOpen() treats any visible [role="dialog"] as an overlay and the pen button
 //   (Select <-> pen) does nothing while one is open. The calculator is a tool lying on the desk, not an overlay.
+// - pw-v8v (calculator item 3, her ask 5 Nov "I actually want to be able to change the colours as well"): the face is the
+//   look of her fx-991ZA, redrawn in CSS (css/app.css, every rule under #calcCard; css/calc.css is still never edited). The
+//   head says fx-991ZA (the brand name went, the model stayed). Its colours are eight slots (FACE below, the CSS variables
+//   --cf-*), hers to change: the palette button in the head opens a panel inside the card with a colour swatch per slot
+//   (live while she picks) and one reset button back to the fx-991ZA look. What she changed is kept on this device in
+//   localStorage pw.calcFace (only the changed slots; a missing one is the fx-991ZA value), read before the card first shows
+//   so the old colours never flash. Like the card's place and size it is not in the database. The text on a key is not a
+//   slot: it is worked out here from the key's colour (white on a dark face, near-black on a light one, whichever reads
+//   better), so she can pick any colour without white text on a white key.
 import { mountCalculator } from './calc/calculator.js';
 
 const GAP = 12;          // px between the tray and the card
@@ -33,6 +42,24 @@ const MIN_S = 1, MAX_S = 2.5, START_S = 1.6;   // her calls: 1.0x to 2.5x, 1.6x 
 const KEY = 'pw.calc';   // { scale, left, top } on this device
 let card = null, head = null, grip = null, btn = null, mine = null, drag = null, size = null, wasLeft = false;
 let scale = 1, chosen = null;   // the scale on screen; the one she set with the handle (null: never set, the default applies)
+
+// pw-v8v: the face's colour slots: [key in pw.calcFace, CSS variable, name in the panel, the look of her fx-991ZA]. The values
+// must stay in step with the #calcCard defaults in css/app.css.
+const FACE = [
+  ['body', '--cf-body', 'Body', '#ecedef'],
+  ['lcd', '--cf-lcd', 'Screen', '#cfd4cc'],
+  ['lcdInk', '--cf-lcd-ink', 'Screen ink', '#1e2320'],
+  ['fn', '--cf-fn', 'Keys', '#f8f8f9'],
+  ['num', '--cf-num', 'Number keys', '#5b6066'],
+  ['ac', '--cf-ac', 'DEL and AC', '#9ccc3c'],
+  ['shift', '--cf-shift', 'SHIFT labels', '#e8a21c'],
+  ['alpha', '--cf-alpha', 'ALPHA labels', '#d9484a'],
+];
+const INKS = [['body', '--cf-body-ink'], ['fn', '--cf-fn-ink'], ['num', '--cf-num-ink'], ['ac', '--cf-ac-ink']];   // text on these faces
+const INK_LIGHT = '#ffffff', INK_DARK = '#1b1e22';
+const FACE_KEY = 'pw.calcFace';  // { body, lcd, lcdInk, fn, num, ac, shift, alpha }: only the slots she changed
+const RESET_TEXT = 'fx-991ZA look';
+let face = {}, faceBtn = null, facePanel = null;
 
 function load() {
   let v = null;
@@ -47,18 +74,104 @@ function save() {
   if (mine) { v.left = Math.round(mine.left); v.top = Math.round(mine.top); }
   try { localStorage.setItem(KEY, JSON.stringify(v)); } catch (_) { /* private mode: it just is not remembered */ }
 }
+// ---------------------------------------------------------------- pw-v8v: the face's colours
+const HEX = /^#[0-9a-f]{6}$/;
+function loadFace() {
+  let v = null;
+  try { v = JSON.parse(localStorage.getItem(FACE_KEY) || 'null'); } catch (_) { v = null; }
+  face = {};
+  if (!v || typeof v !== 'object') return;
+  for (const [k, , , def] of FACE) {
+    const c = typeof v[k] === 'string' ? v[k].toLowerCase() : '';
+    if (HEX.test(c) && c !== def) face[k] = c;
+  }
+}
+function saveFace() {
+  try {
+    if (Object.keys(face).length) localStorage.setItem(FACE_KEY, JSON.stringify(face));
+    else localStorage.removeItem(FACE_KEY);                        // all back to the fx-991ZA look: nothing to keep
+  } catch (_) { /* private mode: it just is not remembered */ }
+}
+const slot = (k) => face[k] || FACE.find((f) => f[0] === k)[3];
+// how light a colour is to the eye (the WCAG relative luminance), and how far apart two of those read
+function lum(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = [16, 8, 0].map((sh) => { const c = ((n >> sh) & 255) / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+  return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+}
+const contrast = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+// white or near-black, whichever reads better on this face
+const inkFor = (hex) => (contrast(lum(hex), lum(INK_LIGHT)) >= contrast(lum(hex), lum(INK_DARK)) ? INK_LIGHT : INK_DARK);
+function applyFace() {
+  if (!card) return;
+  for (const [k, prop] of FACE) {                                  // a changed slot goes on the card; the rest are the CSS defaults
+    if (face[k]) card.style.setProperty(prop, face[k]); else card.style.removeProperty(prop);
+  }
+  for (const [k, prop] of INKS) card.style.setProperty(prop, inkFor(slot(k)));
+  if (facePanel) for (const inp of facePanel.querySelectorAll('input[data-slot]')) inp.value = slot(inp.dataset.slot);
+}
+function setSlot(k, value) {
+  const c = String(value).toLowerCase(), def = FACE.find((f) => f[0] === k)[3];
+  if (!HEX.test(c)) return;
+  if (c === def) delete face[k]; else face[k] = c;
+  saveFace();
+  applyFace();
+}
+function buildFacePanel() {
+  facePanel = document.createElement('div');
+  facePanel.className = 'calcFace';
+  facePanel.hidden = true;
+  facePanel.setAttribute('role', 'group');
+  facePanel.setAttribute('aria-label', 'Calculator colours');
+  for (const [k, , name] of FACE) {
+    const row = document.createElement('label');
+    row.className = 'calcFaceRow';
+    const span = document.createElement('span');
+    span.textContent = name;
+    const inp = document.createElement('input');
+    inp.type = 'color';
+    inp.dataset.slot = k;
+    inp.addEventListener('input', () => setSlot(k, inp.value));    // live while she picks
+    inp.addEventListener('change', () => setSlot(k, inp.value));
+    row.append(span, inp);
+    facePanel.append(row);
+  }
+  const reset = document.createElement('button');
+  reset.type = 'button';
+  reset.className = 'calcFaceReset';
+  reset.textContent = RESET_TEXT;
+  reset.addEventListener('click', () => { face = {}; saveFace(); applyFace(); });
+  facePanel.append(reset);
+  return facePanel;
+}
+// the panel's height on screen while it is open (the size and fit sums leave it out: it is only open while she picks)
+function panelH() {
+  if (!facePanel || facePanel.hidden) return 0;
+  return facePanel.getBoundingClientRect().height + 12 * scale;   // + its 12 px bottom margin, zoomed
+}
+function showFace(on) {
+  if (!facePanel) return;
+  facePanel.hidden = !on;
+  faceBtn.classList.toggle('on', on);
+  faceBtn.setAttribute('aria-expanded', on ? 'true' : 'false');
+  if (card.hidden) return;
+  if (on) { const r = card.getBoundingClientRect(); put(r.left, r.top); }   // taller now: slid up as far as needed to stay on screen
+  else if (mine) put(mine.left, mine.top);                         // shut: back where she left it
+  else place();
+}
+
 function setScale(s) {
   scale = s;
   card.style.setProperty('--calc-s', String(s));
 }
 // the card's height at 1.0x, read from what is on screen (the LCD can grow a line, so it is read each time)
-const baseH = () => card.getBoundingClientRect().height / scale;
+const baseH = () => (card.getBoundingClientRect().height - panelH()) / scale;
 // the biggest scale that fits the screen at all
 const fitMax = () => Math.min((innerWidth - 2 * EDGE) / BASE_W, (innerHeight - 2 * EDGE) / baseH());
 // a scale, made smaller if the rounding of the zoomed layout still leaves it a pixel too big
 function fitScale(s) {
   setScale(Math.min(s, fitMax()));
-  const r = card.getBoundingClientRect(), k = Math.min((innerWidth - 2 * EDGE) / r.width, (innerHeight - 2 * EDGE) / r.height);
+  const r = card.getBoundingClientRect(), k = Math.min((innerWidth - 2 * EDGE) / r.width, (innerHeight - 2 * EDGE) / (r.height - panelH()));
   if (k < 1) setScale(scale * k);
 }
 
@@ -76,22 +189,37 @@ function build() {
   head.className = 'calc-head calcHead';
   const name = document.createElement('span');
   name.className = 'calc-name';
-  name.textContent = 'CASIO fx-991ZA Plus II';
+  name.textContent = 'fx-991ZA';                                   // pw-v8v: the model, not the brand
   const close = document.createElement('button');
   close.type = 'button';
   close.className = 'calc-close calcClose';
   close.setAttribute('aria-label', 'Close calculator');
   close.textContent = '✕';
   close.addEventListener('click', closeCalc);
-  head.append(name, close);
+  faceBtn = document.createElement('button');                      // pw-v8v: the colours of the face
+  faceBtn.type = 'button';
+  faceBtn.className = 'calcFaceBtn';
+  faceBtn.setAttribute('aria-label', 'Calculator colours');
+  faceBtn.setAttribute('aria-expanded', 'false');
+  faceBtn.title = 'Colours';
+  faceBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+    + '<path d="M12 3a9 9 0 0 0 0 18c1 0 1.7-.8 1.7-1.7 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-.9.8-1.7 1.7-1.7h2A4.6 4.6 0 0 0 21 10.6C21 6.4 17 3 12 3z"/>'
+    + '<circle cx="7.5" cy="11" r="1.2" fill="currentColor"/><circle cx="10" cy="7" r="1.2" fill="currentColor"/>'
+    + '<circle cx="14.5" cy="7" r="1.2" fill="currentColor"/><circle cx="17.3" cy="10.5" r="1.2" fill="currentColor"/></svg>';
+  faceBtn.addEventListener('click', () => showFace(facePanel.hidden));
+  const btns = document.createElement('span');
+  btns.className = 'calcHeadBtns';
+  btns.append(faceBtn, close);
+  head.append(name, btns);
   const host = document.createElement('div');
   host.className = 'calcHost';
-  wrap.append(head, host);
+  wrap.append(head, buildFacePanel(), host);
   grip = document.createElement('div');                            // pw-v7o: the size handle, outside the zoom
   grip.className = 'calcGrip';
   grip.title = 'Drag to make the calculator bigger or smaller';
   grip.setAttribute('aria-hidden', 'true');
   card.append(wrap, grip);
+  applyFace();                                                     // pw-v8v: her colours before it is ever on screen
   document.body.append(card);
   setScale(chosen != null ? chosen : START_S);
   mountCalculator(host);                                           // once: the LCD state lives in this closure
@@ -150,6 +278,7 @@ export function openCalc() {
 }
 export function closeCalc() {
   if (card && !card.hidden) card.hidden = true;
+  if (facePanel && !facePanel.hidden) showFace(false);             // pw-v8v: it opens again without the colour panel
   if (size) chosen = Math.max(MIN_S, Math.min(MAX_S, scale));
   if (drag || size) save();                                        // put away mid-drag: keep what was reached
   drag = null; size = null;
@@ -217,13 +346,14 @@ export function initCalc({ trayBtn }) {
   if (btn) btn.addEventListener('click', toggleCalc);
   wasLeft = trayLeft();
   load();                                                          // pw-v7o: her size and place on this device
+  loadFace();                                                      // pw-v8v: her colours on this device
   // a press inside the card never reaches the page, the tray's closers or the menu's; the head still drags from here, and
   // the corner handle sizes it
   window.addEventListener('pointerdown', (e) => {
     if (!card || card.hidden || !card.contains(e.target)) return;
     e.stopPropagation();
     if (e.target.closest('.calcGrip')) sizeStart(e);
-    else if (e.target.closest('.calcHead') && !e.target.closest('.calcClose')) dragStart(e);
+    else if (e.target.closest('.calcHead') && !e.target.closest('.calcClose, .calcFaceBtn')) dragStart(e);
   }, true);
   // the tray changed sides: the card goes beside it again (a dragged place is dropped); pw-v7c also fires `resize`
   new MutationObserver(() => {
