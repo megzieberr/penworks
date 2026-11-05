@@ -3126,6 +3126,16 @@ export function mountCalculator(host, opts = {}) {
      opener it is inside, after the left bracket; at the closer's index it is
      inside, before the right bracket; after the closer it is outside. */
   const isOpener = n => n.k === "(" || n.k === "func";
+  /* The exponent after a tall thing (her word 5 Nov, "Fix the ² first"): a
+     ², ³ or ^□ right after a TALL element (a fraction, a root, a mixed
+     number, or a bracket group with one of those inside, so its brackets
+     stretched) sits at that element's top right, like (½+6)² on the real
+     fx-991ZA. renderRange wraps the element and its run of exponents in one
+     .calc-supw (inline-flex, align-items flex-start). After a line-height
+     element nothing changes: (6−5)² keeps the normal superscript. x⁻¹ and !
+     are left as they were (not checked against the device). */
+  const TALL = new Set(["frac", "rad", "xrt", "mixed"]);
+  const POSTFIX_EXP = new Set(["sq", "cb", "pow"]);
   function closerOf(box, i) {
     let depth = 0;
     for (let j = i + 1; j < box.length; j++) {
@@ -3142,15 +3152,26 @@ export function mountCalculator(host, opts = {}) {
       const node = box[idx];
       if (node.k === "dms") { html += DMS_MARKS[Math.min(dmsN, 2)]; dmsN++; continue; }
       if (node.k !== "d" && node.k !== "c") dmsN = 0;
+      let el, last, tall;
       if (isOpener(node)) {
         const j = closerOf(box, idx), end = j < 0 ? to : Math.min(j, to);
         const name = node.k === "func" ? escapeHtml(node.name) + (node.inv ? "⁻¹" : "") : "";
-        html += name + '<span class="calc-br">' + BRK_L + renderRange(box, idx + 1, end) + (j >= 0 && j < to ? BRK_R : "") + "</span>";
-        if (j < 0 || j >= to) break;   // the group ran to the end (cursor at the end included)
-        idx = j;                       // the loop's idx++ steps past the closer; the cursor there is outside
-        continue;
+        const grp = '<span class="calc-br">' + BRK_L + renderRange(box, idx + 1, end) + (j >= 0 && j < to ? BRK_R : "") + "</span>";
+        if (j < 0 || j >= to) { html += name + grp; break; }   // the group ran to the end (cursor at the end included)
+        html += name; el = grp; last = j;                       // the closer's index: the cursor after it is outside
+        tall = box.slice(idx + 1, j).some(n => TALL.has(n.k));  // nested groups share this box, so one scan sees them
+      } else { el = renderNode(node); last = idx; tall = TALL.has(node.k); }
+      let q = last + 1;
+      if (tall && q < to && POSTFIX_EXP.has(box[q].k)) {
+        // the cursor between the element and an exponent is inside the wrap; after the last exponent it is outside
+        let w = '<span class="calc-supw">' + el;
+        for (; q < to && POSTFIX_EXP.has(box[q].k); q++) {
+          if (cursorOn && box === S.cur.box && q === S.cur.i) w += '<span class="calc-cursor"></span>';
+          w += renderNode(box[q]);
+        }
+        html += w + "</span>"; idx = q - 1; continue;
       }
-      html += renderNode(node);
+      html += el; idx = last;
     }
     return html;
   }

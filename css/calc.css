@@ -81,6 +81,8 @@
 .calc-brk::before {content:"";position:absolute;top:0;bottom:0;width:.22em;border:0 solid currentColor}
 .calc-brk-l::before {left:.1em;border-left-width:1.4px;border-radius:.22em 0 0 .22em/.45em 0 0 .45em}
 .calc-brk-r::before {right:.1em;border-right-width:1.4px;border-radius:0 .22em .22em 0/0 .45em .45em 0}
+.calc-supw {display:inline-flex;align-items:flex-start;vertical-align:middle;line-height:1.15}
+.calc-supw>.calc-cursor {align-self:center}
 .calc-pow-exp {font-size:.68em;line-height:1;vertical-align:super;padding:0 1px}
 .calc-slot {display:inline-block;width:.65em;height:.85em;border:1.3px dashed currentColor;border-radius:1px;opacity:.6;vertical-align:middle;margin:0 1px}
 .calc-cursor {display:inline-block;width:0;border-left:1.4px solid currentColor;height:1em;vertical-align:middle;margin:0 -.5px;animation:calc-blink 1s step-end infinite}
