@@ -2503,12 +2503,16 @@ export function mountCalculator(host, opts = {}) {
      END of f; a Syntax ERROR in f or g shows after Step?, like Insufficient
      MEM, and Goto puts the cursor just before the bad token in that line;
      Step 0, or a Start/End/Step that gives no row at all, is Math ERROR;
-     ▶ on the last column and ◀ on X stay put (no wrap); ▼ on the empty row
-     and ▲ on row 1 stay put; MODE, SETUP and CLR work on the f(X)= line and
+     ▶ on the last column and ◀ on X stay put (no wrap); MODE, SETUP and CLR work on the f(X)= line and
      the table, and a menu left with AC (or a SETUP choice) returns there;
      the table does not change X, Ans or the history; a SETUP change made
      while the table is showing does not recompute it; Fix rounds the bottom
-     line but not the cut-off cells. */
+     line but not the cut-off cells.
+     ▲ / ▼ WRAP (measured by her 5 Nov 2026 on her fx-991ZA Plus II; the
+     Build 6 line "▼ on the empty row and ▲ on row 1 stay put" was wrong):
+     ▼ on the bottom row (the empty lit row past the end, the last row the
+     cursor reaches) jumps to row 1, ▲ on row 1 jumps to that bottom row;
+     the column stays and the view follows so the landed row shows. */
   function startTable() {
     resetEntry();
     S.mode = "TABLE"; S.menu = null;
@@ -2601,8 +2605,15 @@ export function mountCalculator(host, opts = {}) {
     if (key === "setup") return setupMenu();
     if (key === "clr") return clrMenu();
     if (key === "ac") return openTblFn("f", "start");   // spec §12: back to f(X)=<function>, cursor at the START
-    if (key === "down" && T.r < T.rows.length) { T.r++; if (T.r > T.top + TBL_VISIBLE - 1) T.top = T.r - TBL_VISIBLE + 1; }
-    else if (key === "up" && T.r > 0) { T.r--; if (T.r < T.top) T.top = T.r; }
+    if (key === "down") {   // ▼ on the bottom row (the empty one, index rows.length) wraps to row 1 (her 5 Nov measurement)
+      T.r = T.r < T.rows.length ? T.r + 1 : 0;
+      if (T.r < T.top) T.top = T.r;
+      if (T.r > T.top + TBL_VISIBLE - 1) T.top = T.r - TBL_VISIBLE + 1;
+    } else if (key === "up") {   // ▲ on row 1 wraps to the bottom row
+      T.r = T.r > 0 ? T.r - 1 : T.rows.length;
+      if (T.r < T.top) T.top = T.r;
+      if (T.r > T.top + TBL_VISIBLE - 1) T.top = T.r - TBL_VISIBLE + 1;
+    }
     else if (key === "right" && T.c < ncol - 1) T.c++;
     else if (key === "left" && T.c > 0) T.c--;
     // every other key: nothing (spec §12: the table is view only)

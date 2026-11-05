@@ -1344,12 +1344,12 @@ trow("device example: ▶ goes to F(X), its heading lights; the F(X) column 5, 0
   ["▼", { sel: "6:F(X)", val: "0" }],
   ["▼", { sel: "7:F(X)", val: "5", tbl: "5|2|−3 / 6|3|0 / 7|4|5" }],
 ]);
-trow("▲ walks back up, the view scrolling back one row at a time", "§12 (▼ scrolls one row; ▲ the mirror)", [
+trow("▲ walks back up, the view scrolling back one row at a time; ▲ on row 1 wraps to the bottom (empty) row", "§12 (▼ scrolls one row; ▲ the mirror); the wrap measured by her 5 Nov 2026", [
   [`${EX} ▶ ${DOWN(6)} ▲ ▲`, { sel: "5:F(X)", val: "−3", tbl: "5|2|−3 / 6|3|0 / 7|4|5" }],
   ["▲", { sel: "4:F(X)", tbl: "4|1|−4 / 5|2|−3 / 6|3|0" }],
   ["▲", { sel: "3:F(X)", tbl: "3|0|−3 / 4|1|−4 / 5|2|−3" }],
   ["▲ ▲", { sel: "1:F(X)", val: "5", tbl: EX_TOP }],
-  ["▲", { sel: "1:F(X)", tbl: EX_TOP }],
+  ["▲", { sel: "8:F(X)", val: "", tbl: "6|3|0 / 7|4|5 / 8||" }],
 ]);
 trow("f and g together: X | F(X) | G(X); ▶ ▶ reaches G(X)", "§12", [
   ["MODE 7 X x² = 2 X + 1 = = = =", { head: "X|F(X)|G(X)", tbl: "1|1|1|3 / 2|2|4|5 / 3|3|9|7", sel: "1:X", lit: "X" }],
@@ -1366,14 +1366,14 @@ trow("AC on the table: f(X)=<function> with the cursor at the START; g is kept",
   ["MODE 7 X x² = 2 X + 1 = = = = AC", { expr: "f(X)=X²", cur: "f(X)=", tbl: "" }],
   ["=", { expr: "g(X)=2X+1", cur: "g(X)=2X+1" }],
 ]);
-trow("▼ past the last row shows an empty lit row; typing there does nothing", "§12", [
+trow("▼ past the last row shows an empty lit row; typing there does nothing; ▼ there wraps to row 1, ▲ on row 1 back to it", "§12; the wrap measured by her 5 Nov 2026", [
   ["MODE 7 X = = = = =", { tbl: "1|1|1 / 2|2|2 / 3|3|3" }],
   [DOWN(4), { sel: "5:X", val: "5", tbl: "3|3|3 / 4|4|4 / 5|5|5" }],
   ["▼", { sel: "6:X", val: "", tbl: "4|4|4 / 5|5|5 / 6||" }],
   ["7 = DEL (−) X 1", { sel: "6:X", val: "", tbl: "4|4|4 / 5|5|5 / 6||" }],
   ["▶", { sel: "6:F(X)", lit: "F(X)", val: "" }],
-  ["▼", { sel: "6:F(X)", tbl: "4|4|4 / 5|5|5 / 6||" }],
-  ["▲", { sel: "5:F(X)", val: "5", tbl: "4|4|4 / 5|5|5 / ||" }],
+  ["▼", { sel: "1:F(X)", val: "1", tbl: "1|1|1 / 2|2|2 / 3|3|3" }],
+  ["▲", { sel: "6:F(X)", val: "", tbl: "4|4|4 / 5|5|5 / 6||" }],
 ]);
 trow("view only: typing, =, DEL and S⇔D on a row change nothing", "§12", [
   [`${EX} 7 + sin ( = DEL S⇔D X SHIFT 7 ▼ 9 DEL`, { tbl: EX_TOP, sel: "2:X", val: "−1", sa: "" }],
