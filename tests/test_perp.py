@@ -1,16 +1,17 @@
-# PenWorks U5g checks (pw-v8q): the PERPENDICULAR and PARALLEL snap with the paper marks (_build/U5G-PERP-SNAP-BRIEF.md).
+# PenWorks U5g checks (pw-v8q, pw-v8r): the PERPENDICULAR snap with the paper's square (_build/U5G-PERP-SNAP-BRIEF.md).
+# pw-v8r (5 Nov, her tablet verdict): the PARALLEL half is GONE. The old parallel cases stay as checks that nothing snaps.
 # Run: python tests/test_perp.py        (local mode only: ?local=1, Supabase is never touched)
 # Seeds one note of 3 grid pages into the localStorage twin, 1280 x 800 (the tablet landscape size), the way
 # tests/test_tools.py does. Pen gestures are PointerEvents (pointerType 'pen') fired on the desk, with a constant
 # screen-minus-client gap (pw-v8m, as tests/test_axes.py). The PDF is read with PyMuPDF.
-# What it proves: A. js/align.js alignDir: 88.5 degrees snaps to 90, 87.5 does not; 1.9 degrees parallel alongside snaps,
-# 2.1 does not; a parallel 4 cm away does not; a far crossing does; the moving record itself and an arc are never
+# What it proves: A. js/align.js alignDir: 88.5 degrees snaps to 90, 87.5 does not; a nearly parallel line (1.9 or 2.1
+# degrees, alongside or 4 cm away) never snaps; a far crossing does; the moving record itself and an arc are never
 # targets. B. the Select tool dragging a line's or an arrow's end: 88 and 92 degrees land exactly 90 (the anchor holds,
-# the end stays under the pen), 85 stays; an arrow's tip; a T from the other side; a crossing. C. parallel at 1.5
-# degrees 2 cm away lands exactly parallel, 3.5 cm away nothing; two chevrons, no square. D. the square: side 9 / z at
+# the end stays under the pen), 85 stays; an arrow's tip; a T from the other side; a crossing. C. nearly parallel at 1.5
+# degrees, 2 cm or 3.5 cm away: nothing snaps, no mark. D. the square: side 9 / z at
 # the crossing, in the ink quadrant, fades after the lift; never a record, never in the thumb or the PDF. E. the ruler's
 # turn: perpendicular against a line it is stuck to, a stick point still wins, the 45 degree step unchanged. F. the
-# protractor's turn, the same. I. held strokes: a held line lands perpendicular or parallel, a held triangle untouched.
+# protractor's turn, the same. I. held strokes: a held line lands perpendicular, a nearly parallel one and a triangle untouched.
 # H. no page errors. Screenshots go to _build/shots-u5g/.
 import sys, subprocess, time, pathlib, math, base64
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -177,8 +178,8 @@ try:
         check("88.5 degrees meeting S snaps to 90 (kind perp, u2 straight up, the corner on S)",
               h and h["kind"] == "perp" and abs(h["u2"][0]) < 1e-12 and abs(h["u2"][1] + 1) < 1e-12 and abs(h["corner"][1] - 500) < 1e-9 and abs(h["corner"][0] - 250) < 1e-9, h)
         check("87.5 degrees does not snap", A["p875"] is None, A["p875"])
-        check("1.9 degrees alongside (1.3 cm off, overlapping) snaps parallel, the sign nearest u", A["q19"] and A["q19"]["kind"] == "par" and A["q19"]["u2"] == [1, 0] and A["q19"]["corner"] is None, A["q19"])
-        check("2.1 degrees does not", A["q21"] is None, A["q21"])
+        check("1.9 degrees alongside (1.3 cm off, overlapping) does NOT snap (pw-v8r: no parallel snap)", A["q19"] is None, A["q19"])
+        check("2.1 degrees does not either", A["q21"] is None, A["q21"])
         check("a parallel 4 cm away does not", A["far"] is None, A["far"])
         check("a far crossing (both ends 200 px off S) snaps perpendicular", A["cross"] and A["cross"]["kind"] == "perp", A["cross"])
         check("the moving record itself is never a target", A["self"] is None, A["self"])
@@ -223,18 +224,17 @@ try:
         ok, info = perp_ok(rec(pg, mid), a0, p0)
         check("a crossing (neither end near S) snaps", ok, info)
 
-        # ------------------------------------------------------------ C: Select drag, parallel
-        group[0] = "C. parallel"
+        # ------------------------------------------------------------ C: Select drag, nearly parallel (pw-v8r: NO snap)
+        group[0] = "C. parallel (none)"
         pg.wait_for_timeout(700)                                    # B's last square has faded (a clean picture)
         mid, a0, p0 = drag_case(-1.5, start=[220.0, 600.0 - 2 * CM], up=False)
         lm = live(pg, INKMARK)
-        check("during the drag: .alignMark holds 2 chevrons, no square", len(lm) == 1 and lm[0]["kind"] == "par"
-              and [q["cls"] for q in lm[0]["paths"]] == ["alignTick", "alignTick"], lm)
+        check("during the drag alongside S at 1.5 degrees: no .alignMark at all (no chevrons, no square)", len(lm) == 0, lm)
         show(pg, [300, 560]); pg.screenshot(path=str(SHOTS / "par.png"))
         pen_up(pg, p0)
         r = rec(pg, mid); d = rdir(r)
-        check("1.5 degrees, 2 cm away: lands exactly parallel (|dot| within 1e-3 of 1, sin under 1e-3), the anchor unchanged",
-              abs(abs(dotv(d, [1, 0])) - 1) < 1e-3 and abs(crsv(d, [1, 0])) < 1e-3 and ends(r)[0] == a0, [d, ends(r)])
+        check("1.5 degrees, 2 cm away: nothing snaps (still 1.5 degrees), the anchor unchanged, the end under the pen",
+              abs(math.degrees(math.asin(abs(crsv(d, [1, 0])))) - 1.5) < 0.1 and ends(r)[0] == a0 and ends(r)[1] == r1p(p0), [d, ends(r)])
         mid, a0, p0 = drag_case(-1.5, start=[220.0, 600.0 - 3.5 * CM])
         r = rec(pg, mid); d = rdir(r)
         check("3.5 cm away nothing snaps (still 1.5 degrees)", abs(math.degrees(math.asin(abs(crsv(d, [1, 0])))) - 1.5) < 0.1 and ends(r)[1] == r1p(p0), [d, ends(r)])
@@ -387,7 +387,7 @@ try:
         b0 = ids()
         al, mk = held(stroke([220, 600 - 1.5 * CM], -1.5, L4))
         r = newest(b0) or {"data": {}}
-        check("a held stroke alongside S at 1.5 degrees lands exactly parallel", r["data"].get("type") == "line" and abs(crsv(rdir(r), [1, 0])) < 1e-3 and al and al["kind"] == "par", [r, al])
+        check("a held stroke alongside S at 1.5 degrees keeps its own angle (pw-v8r: no parallel snap), no hit", r["data"].get("type") == "line" and abs(abs(crsv(rdir(r), [1, 0])) - math.sin(math.radians(1.5))) < 0.01 and al is None, [r, al])
         tri = [[260, 585], [300, 585], [340, 585], [320, 551], [300, 517], [280, 551], [260, 585]]
         def tri_path(t):
             out = []

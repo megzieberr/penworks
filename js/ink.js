@@ -21,7 +21,7 @@
 // on the page grabs it and drags it (after the selection's own turn ring and corners and a move inside the box, pw-v7m below); a grab
 // that moves under 4 px on screen is a tap and selects as any select tap does (that shape when nothing else wins). The pen button (a contextmenu on the desk, page.js)
 // flips between Select and the last ink tool.
-// U5g (pw-v8q): dragging a line's or an arrow's END (and a held stroke that becomes a line, snapNow) aligns it to exactly 90 degrees or exactly parallel to a line it meets or lies alongside, within 2 degrees (js/align.js); a small square or two chevrons show while it holds and fade 600 ms after the lift (never a record).
+// U5g (pw-v8q; pw-v8r dropped the parallel half): dragging a line's or an arrow's END (and a held stroke that becomes a line, snapNow) aligns it to exactly 90 degrees to a line it meets, within 2 degrees (js/align.js); a small square shows at the corner while it holds and fades 600 ms after the lift (never a record).
 // Arc snap (pw-v4f): an open curve held still snaps into a circular arc, data { type: 'arc', x1, y1, xm, ym, x2, y2 }
 // (start, the point half way round, end); its three handles move one point each, the arc is the circle through them.
 // Select turns (pw-v4g): a ring above the selection box turns the selection about the box's centre (snapping to
@@ -1947,7 +1947,7 @@ function snapNow() {
   if (!g || g.kind !== 'draw') return;
   let shape = classify(g.rawPts);                                 // pw-v7e: shapes are read from the pen's own path, not the smoothed ink
   if (!shape) return;                                              // stays freehand
-  const held = shape.type === 'line' ? alignHeld(shape, g.page, g.z, g.rec.id) : null;   // U5g: a held line lands exactly perpendicular or parallel
+  const held = shape.type === 'line' ? alignHeld(shape, g.page, g.z, g.rec.id) : null;   // U5g: a held line lands exactly perpendicular
   if (held) shape = held.shape;
   const hl = g.rec.kind === 'highlighter';
   if (hl && shape.type === 'arrow') shape = { type: 'line', x1: shape.x1, y1: shape.y1, x2: shape.x2, y2: shape.y2 };   // no highlighter arrows
@@ -1969,8 +1969,8 @@ function snapNow() {
   }
 }
 
-// ---------------------------------------------------------------- U5g: the perpendicular and parallel snap (js/align.js)
-// the mark (the square or the two chevrons), an SVG <g class="alignMark"> in a page's ink svg; never a record
+// ---------------------------------------------------------------- U5g: the perpendicular snap (js/align.js)
+// the mark (the small square at the corner), an SVG <g class="alignMark"> in a page's ink svg; never a record
 export function drawAlignMark(host, mk, z, el) {
   const paths = markPaths(mk);
   if (!host || !paths.length) { if (el) el.remove(); return null; }
@@ -2166,7 +2166,7 @@ function move(events) {
       G.far = Math.max(G.far, Math.hypot(qx - G.p0[0], qy - G.p0[1]));
     }
     G.now = dragHandle(G.rec, G.h, x + G.off[0], y + G.off[1]);
-    alignGrab(G, [x + G.off[0], y + G.off[1]]);                    // U5g: exactly 90 degrees or parallel to a line it meets
+    alignGrab(G, [x + G.off[0], y + G.off[1]]);                    // U5g: exactly 90 degrees to a line it meets
     if (G.el) setGeom(G.el, G.now);
     showHandle(ev.clientX + G.off[0] * G.z, ev.clientY + G.off[1] * G.z);
     return;
@@ -2225,7 +2225,7 @@ function up(e, cancelled) {
   }
   if (g.kind === 'grab') {
     hideHandle();
-    if (g.mark) { fadeAlignMark(g.mark); g.mark = null; }          // U5g: the square or the chevrons fade out
+    if (g.mark) { fadeAlignMark(g.mark); g.mark = null; }          // U5g: the square fades out
     const moved = JSON.stringify(g.now.data) !== JSON.stringify(g.rec.data);
     if (e && Number.isFinite(e.clientX)) { const [qx, qy] = pagePoint(g.index, e.clientX, e.clientY); g.far = Math.max(g.far, Math.hypot(qx - g.p0[0], qy - g.p0[1])); }
     if (!cancelled && g.far * g.z < 4) {                           // a tap on a handle (under 4 px on screen): no change, no undo step; it

@@ -12,8 +12,10 @@
    the Cache API: the activate step below deletes every cache but this version's, and a share that landed just before an
    update would go with it. Then a 303 to ./?share=1, where the app picks it up (js/pdfin.js sharedFile).
 
+   pw-v8r (5 Nov): the parallel half of the U5g snap removed (her tablet verdict); perpendicular only.
+
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v8q";
+const CACHE = "pw-v8r";
 const SHARE_DB = "penworks.share";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",

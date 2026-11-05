@@ -110,13 +110,13 @@
 //   its axis and every tick's outer end are stick points and its axes are stick curves (stickData, derived from the
 //   record like a compass needle's centre, nothing stored).
 //
-// U5g (pw-v8q): the PERPENDICULAR and PARALLEL snap (her ask 3 Nov 14:13; js/align.js holds the geometry). The ruler's
-// and the protractor's TURN go through snapTurn, now in this order: (1) a stick POINT within TURN_PULL of a stuck edge's
-// line pulls the turn through it (unchanged, it wins); (2) the edge's line from minX to maxX meets a line, an arrow or an
-// axis (within 10 screen px: an end, a crossing, or its end on the edge) at within 2 degrees of 90, or lies within 2
-// degrees of parallel to one it meets or lies alongside (3 cm, overlapping): the turn lands exactly on it; (3) the 45
-// degree step within TURN_SNAP. The pill keeps the plain degrees. The mark (the small square at the corner, or a chevron
-// on each line) is a <g class="alignMark"> in the tool's page layer, over the tools, shown while the hit holds; it fades
+// U5g (pw-v8q; pw-v8r dropped the parallel half): the PERPENDICULAR snap (her ask 3 Nov 14:13; js/align.js holds the
+// geometry). The ruler's and the protractor's TURN go through snapTurn, now in this order: (1) a stick POINT within
+// TURN_PULL of a stuck edge's line pulls the turn through it (unchanged, it wins); (2) the edge's line from minX to maxX
+// meets a line, an arrow or an axis (within 10 screen px: an end, a crossing, or its end on the edge) at within 2
+// degrees of 90: the turn lands exactly on it; (3) the 45 degree step within TURN_SNAP. The pill keeps the plain
+// degrees. The mark (the small square at the corner) is a <g class="alignMark"> in the tool's page layer, over the
+// tools, shown while the hit holds; it fades
 // out over 600 ms when the turn ends or the hit lets go (ink.js drawAlignMark, fadeAlignMark). Never a record. The Select
 // drag of a line's end and the held line are ink.js's (the same helper, the same marks, in the page's ink svg).
 import { CM, view, pagePoint, current } from './page.js';
@@ -369,7 +369,7 @@ function snapTurn(raw, pivot, lx, usePoints, z, pageId, minX, maxX) {
       return { ang: raw + wrapPi(a - raw), target: best, align: null };
     }
   }
-  {                                                                // U5g: exactly perpendicular or parallel to a line the edge meets
+  {                                                                // U5g: exactly perpendicular to a line the edge meets
     const u = dirOf(raw), A = add(pivot, mul(u, minX - lx)), B = add(pivot, mul(u, maxX - lx));
     const hit = alignDir(u, segsOf(ink.strokesOf(pageId), ink.axesGeom), { A, P: B, O: pivot }, z, CM);
     if (hit) {

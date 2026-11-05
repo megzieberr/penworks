@@ -348,7 +348,7 @@ try:
         pg.mouse.move(5, 5)
         pg.screenshot(path=str(SHOTS / "shapefit.png"), clip={"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0})
         check("screenshot saved", (SHOTS / "shapefit.png").exists(), str(SHOTS / "shapefit.png"))
-        check("cache is pw-v8q", "pw-v8q" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v8r", "pw-v8r" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./sw.js"])
         check("no em-dashes in ink.js or sw.js", chr(0x2014) not in srcs)
         check("no page errors", not errs, errs)
