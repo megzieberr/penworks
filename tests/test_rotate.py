@@ -292,9 +292,9 @@ try:
         check("no Rotate in the bar of a note with no PDF page", pg.locator("#plBar .plAct[data-act='rotate']").count() == 0)
         pg.click("#plDone"); close_list(pg)
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v8s" not in keys:
+        if "pw-v8t" not in keys:
             pg.wait_for_timeout(800); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v8s", "pw-v8s" in keys, keys)
+        check("cache is pw-v8t", "pw-v8t" in keys, keys)
         check("no page errors", not errs, errs)
         b.close()
 finally:

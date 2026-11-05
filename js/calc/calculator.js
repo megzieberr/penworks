@@ -60,8 +60,9 @@ import { mean, stdDev, sortAsc, quartilesExclusive } from "./statlib.js";
    ln, 10^□, e^□, ×10^x, ALPHA ×10^x (e), x⁻¹, x!, nCr, nPr, %, Abs, °'",
    the mixed-fraction template, SHIFT S⇔D and Fix / Norm are live. Still
    doing nothing on purpose (her ruling, not school use): hyp, ENG, ∫,
-   d/dx, Σ, FACT, and on the COMP screen SHIFT + − 7 8 0 , Ans DEL (Pol,
-   Rec, CONST, CONV, Rnd, Ran#, DRG▶, INS).
+   d/dx, Σ, and on the COMP screen SHIFT + − 7 8 0 , Ans DEL (Pol,
+   Rec, CONST, CONV, Rnd, Ran#, DRG▶, INS). FACT (SHIFT °'") was in that
+   list until 5 Nov 2026; her ask that day made it live (see toggleFact).
    Calculator rebuild Build 5 (2026-10-04, spec §10, §11): CALC (X?
    prompts in the order the letters appear, = asks again) and SOLVE (SHIFT
    CALC: `Solve for X`, the three-line X= / L−R= answer, Can't Solve) are
@@ -775,6 +776,28 @@ function formatDMS(v) {
 /* The mixed form (SHIFT S⇔D, spec §7/§8: 7/4 → 1¾, 100/3 → 33⅓): only an
    improper fraction that fits the display has one. */
 const hasMixedForm = v => !!v && v.kind === "rat" && v.d > 1n && (v.n < 0n ? -v.n : v.n) > v.d && exactFits(v);
+/* FACT (SHIFT °'", her ask 5 Nov 2026; not measured, from the Casio
+   manual, her emulator overrules): a shown WHOLE number from 2 up to 10
+   digits as its prime factors, ascending, × between them, a repeated prime
+   once with a raised count (1092 → 2²×3×7×13). Only primes up to 997 are
+   tried (the manual: "prime factors up to three digits"); what is left
+   above 1 goes last in brackets as ONE number (1234567 → 127×(9721), 1009
+   → (1009)). The raised count uses the result line's own raised-digit
+   markup (.calc-x10-exp, as the ×10 power does). */
+const FACT_PRIME_MAX = 997, FACT_LIMIT = 1e10;
+const hasFactForm = v => !!v && v.kind === "rat" && v.d === 1n && v.n >= 2n && v.n < BigInt(FACT_LIMIT);
+function formatFact(v) {
+  let n = Number(v.n);
+  const parts = [];
+  for (let p = 2; p <= FACT_PRIME_MAX && n > 1; p++) {
+    if (n % p) continue;   // only primes divide here: every smaller prime is already out
+    let e = 0;
+    while (n % p === 0) { n /= p; e++; }
+    parts.push(e > 1 ? `${p}<sup class="calc-x10-exp">${e}</sup>` : String(p));
+  }
+  if (n > 1) parts.push(`(${n})`);
+  return parts.join("×");
+}
 function formatMixed(v) {
   const neg = v.n < 0n, n = neg ? -v.n : v.n;
   return `<span class="calc-mixed">${neg ? "−" : ""}<span class="calc-mixed-whole">${n / v.d}</span>${fracHTML(n % v.d, v.d)}</span>`;
@@ -1398,7 +1421,7 @@ export function mountCalculator(host, opts = {}) {
     // ---- calculator rebuild Build 4 (spec §7, §8, §9, §16) ----
     fix: null,             // SETUP Fix: 0–9 decimals, or null = Norm (the FIX tag shows while it is set)
     norm: 2,               // SETUP Norm 1 or 2; factory Norm 2. Norm 1 is accepted and shows like Norm 2 (not measured)
-    form: null,            // how the result is shown: null (exact / decimal, see showDecimal), "mixed" (1¾) or "dms" (30°15'0")
+    form: null,            // how the result is shown: null (exact / decimal, see showDecimal), "mixed" (1¾), "dms" (30°15'0") or "fact" (2²×3×7×13, 5 Nov 2026)
     // ---- calculator rebuild Build 5 (spec §10, §11) ----
     prompt: null,          // the open prompt screen (screen "prompt"): { label, value, box, onAccept, onCancel, err, errAt }
     calcRun: null,         // { letters }: the result on screen came from CALC, so = (or CALC) asks again from the first letter
@@ -2163,6 +2186,7 @@ export function mountCalculator(host, opts = {}) {
   function shownHTML() {
     if (S.form === "dms") return formatDMS(S.exactVal);
     if (S.form === "mixed") return formatMixed(S.exactVal);
+    if (S.form === "fact") return formatFact(S.exactVal);
     return formatValue(S.exactVal, S.showDecimal, S.fix);
   }
   /* redraw the result on screen after a SETUP change (Fix / Norm / CLR Setup) */
@@ -2173,6 +2197,9 @@ export function mountCalculator(host, opts = {}) {
   function toggleSD() {
     // nothing to toggle to: a decimal answer, or a fraction / whole number too long to show exactly (spec §7)
     if (!S.exactVal || isErr(S.exactVal) || !exactFits(S.exactVal)) return;
+    /* FACT (5 Nov 2026, Blipwork choice, not measured): S⇔D on the factor
+       form goes back to the plain answer, decimal state as it was. */
+    if (S.form === "fact") { S.form = null; S.result = shownHTML(); return; }
     /* Build 4: S⇔D on the °'" form does nothing (not measured); from the
        mixed form it goes to the decimal (1¾ → 1,75), and the next S⇔D
        back to the improper fraction, the factory d/c form. */
@@ -2186,7 +2213,7 @@ export function mountCalculator(host, opts = {}) {
      sequence, so from the decimal it goes to the mixed form too. A value
      with no mixed form (⅔, 5, √2, a decimal answer): nothing happens. */
   function toggleMixed() {
-    if (S.result == null || S.err || S.form === "dms" || !hasMixedForm(S.exactVal)) return;
+    if (S.result == null || S.err || S.form === "dms" || S.form === "fact" || !hasMixedForm(S.exactVal)) return;
     S.form = S.form === "mixed" ? null : "mixed";
     S.showDecimal = false;
     S.result = shownHTML();
@@ -2200,6 +2227,21 @@ export function mountCalculator(host, opts = {}) {
     if (S.form === "dms") { S.form = null; S.showDecimal = true; }
     else if (Math.abs(toFloatV(S.exactVal)) < 1e10) S.form = "dms";
     else return;
+    S.result = shownHTML();
+  }
+  /* SHIFT °'" = FACT (her ask 5 Nov 2026; not measured, from the Casio
+     manual): on a shown whole-number result 2 to 10 digits it shows the
+     prime factors (formatFact); pressed again it goes back to the plain
+     answer. 0, 1, negatives, decimals, fractions, π / root forms, more than
+     10 digits, an error, or no result (typing): nothing happens and nothing
+     is typed. S.exactVal never changes, so Ans and chaining are as after
+     the plain answer. S.showDecimal is left alone (the factor form ignores
+     it), so going back shows the same decimal state as before. */
+  function toggleFact() {
+    if (S.result == null || S.err || !S.exactVal || isErr(S.exactVal)) return;
+    if (S.form === "fact") { S.form = null; S.result = shownHTML(); return; }
+    if (!hasFactForm(S.exactVal)) return;
+    S.form = "fact";
     S.result = shownHTML();
   }
   /* Build 8: the "stat" milestone the calcdo questions mark (questions.js
@@ -2783,20 +2825,22 @@ export function mountCalculator(host, opts = {}) {
     return `<div class="lcd-line lcd-pr"><div class="lcd-expr"><span class="lcd-pr-label">${escapeHtml(a.label)}</span></div></div>`
       + `<div class="lcd-res lcd-eqn-val">${answerHTML(a.v, E.dec, S.fix)}</div>`;
   }
-  /* a long answer (a decimal complex root) steps its font down until it fits */
-  function fitAnswer() {
-    const r = main.querySelector(".lcd-eqn-val");
+  /* a long answer (a decimal complex root) steps its font down until it fits;
+     the FACT form on the COMP screen does the same (5 Nov 2026) */
+  function fitAnswer(sel = ".lcd-eqn-val") {
+    const r = main.querySelector(sel);
     if (!r) return;
     for (let f = 22; r.scrollWidth > r.clientWidth + 0.5 && f >= 12; f -= 2) r.style.fontSize = f + "px";
   }
 
   // ---- key dispatch ----
   // SHIFT functions that do nothing: the ones skipped as not school use
-  // (d/dx, Σ, FACT, ←). SHIFT is still consumed, as on the device. (SHIFT
+  // (d/dx, Σ, ←). SHIFT is still consumed, as on the device. (FACT, SHIFT
+  // °'", is live since 5 Nov 2026, her ask, on the COMP screen only. SHIFT
   // x^ = ˣ√ is live since Build 2; SHIFT ×10^x = π since Build 3; Build 4
   // made SHIFT log, ln, x⁻¹, ÷, ×, (, hyp, ▫/▫ and S⇔D live; Build 5 made
   // SHIFT CALC = SOLVE live; Build 10 made SHIFT ) = ";" live.)
-  const NOOP_SHIFT = new Set(["intdx", "logbox", "dms", "eng"]);
+  const NOOP_SHIFT = new Set(["intdx", "logbox", "eng"]);
   /* Build 4, her ruling "not school use, leave those keys doing nothing":
      Pol (SHIFT +), Rec (SHIFT −), CONST (SHIFT 7), CONV (SHIFT 8), Rnd
      (SHIFT 0), Ran# (SHIFT ,), DRG▶ (SHIFT Ans) and INS (SHIFT DEL). Before
@@ -2874,6 +2918,7 @@ export function mountCalculator(host, opts = {}) {
       else if (id === "hyp") key = "abs";       //   SHIFT hyp = Abs
       else if (id === "frac") key = "mixed";    //   SHIFT ▫/▫ = the mixed-number template
       else if (id === "sd") key = "mixtog";     //   SHIFT S⇔D = improper ↔ mixed
+      else if (id === "dms") key = S.screen === "comp" ? "factor" : "noop";   // 5 Nov 2026: SHIFT °'" = FACT, COMP screen only (off it, nothing, as before)
       else if (id === "calc") key = "solve";    // Build 5 (spec §11): SHIFT CALC = SOLVE
       else if (id === "rparen") key = typingScreen() ? "sep" : "noop";   // Build 10 (spec §19.1): SHIFT ) = the ";" of GCD( / LCM(; off the typing screens it does nothing, as before
       else if (NOOP_SHIFT.has(id)) key = "noop";
@@ -2914,7 +2959,7 @@ export function mountCalculator(host, opts = {}) {
   /* Build 5: after a CALC answer, = or CALC asks again from the first
      letter (spec §10). Keys that only change how the answer is shown keep
      that; any other key leaves CALC and then does its usual job. */
-  const CALC_KEEP = new Set(["sd", "mixtog", "dms", "noop"]);
+  const CALC_KEEP = new Set(["sd", "mixtog", "dms", "factor", "noop"]);
   function compKey(key) {
     if (S.calcRun) {
       if ((key === "eq" || key === "calc") && S.result != null && !S.err) return calcAsk(0);
@@ -2929,6 +2974,7 @@ export function mountCalculator(host, opts = {}) {
     if (key === "ac") { resetEntry(); S.afterAC = true; return; }   // AC clears the screen but KEEPS the history (spec §1)
     if (key === "sd") return toggleSD();
     if (key === "mixtog") return toggleMixed();
+    if (key === "factor") return toggleFact();   // 5 Nov 2026: SHIFT °'" = FACT; with no result it does nothing, never types °'"
     if (key === "dms" && S.result != null) return dmsToggle();   // °'" acts ON a result (spec §1, §9); with no result it types the mark (below)
     if (key === "eq") return doEquals();
     if (key === "up") return moveVert(-1);
@@ -3243,6 +3289,7 @@ export function mountCalculator(host, opts = {}) {
       const resHTML = S.result != null ? S.result : (S.held || "");
       main.innerHTML = `<div class="lcd-line"><span class="lcd-lmark" hidden>◀</span><div class="lcd-expr">${exprHTML}</div></div><div class="lcd-res">${resHTML}</div>`;
       keepCursorInView();
+      if (S.form === "fact" && S.result != null) fitAnswer(".lcd-res");   // a long factor form steps its font down to fit
     } else if (S.screen === "menu") {
       const m = S.menu;
       let html = m.title ? `<div class="lcd-title">${m.title}</div>` : "";
