@@ -550,10 +550,10 @@ body.trayLeft #counter { right: auto; left: 14px; }
 #calcCard .calc-key:is(.k-del, .k-ac) { --kf: var(--cf-ac); --ki: var(--cf-ac-ink); font-size: 16px; font-weight: 700; }
 #calcCard .calc-key .kmain { line-height: 1; text-align: center; }
 #calcCard .calc-key :is(.ksh, .kred) {
-  top: -11px; font-family: var(--body); font-size: 7.5px; font-weight: 700; letter-spacing: 0; white-space: nowrap;
+  top: -9px; font-family: var(--body); font-size: 7.5px; font-weight: 700; letter-spacing: 0; white-space: nowrap;
   pointer-events: none;                                              /* print, not part of the key: a tap there is a tap on the body */
-}
-#calcCard .calc-numgrid .calc-key :is(.ksh, .kred) { top: -12px; font-size: 8px; }
+}                                                                    /* pw-v8x: -9 / -10, the words nearly touch their key (her ask 2) */
+#calcCard .calc-numgrid .calc-key :is(.ksh, .kred) { top: -10px; font-size: 8px; }
 #calcCard .calc-key .ksh { left: 1px; color: var(--cf-shift); }
 #calcCard .calc-key .kred { right: 1px; color: var(--cf-alpha); }
 #calcCard .calc-key:not(:has(.kred)) .ksh { left: 50%; transform: translateX(-50%); }   /* a shift word alone is centred */
@@ -564,7 +564,7 @@ body.trayLeft #counter { right: auto; left: 14px; }
 /* the top row: SHIFT, ALPHA, MODE and ON are blank pills with their own word printed above them */
 #calcCard .calc-key:is(.k-shift, .k-alpha, [data-keyid="mode"], [data-keyid="on"]) { border-radius: 999px; }
 #calcCard .calc-key:is(.k-shift, .k-alpha, [data-keyid="mode"], [data-keyid="on"]) .kmain {
-  position: absolute; top: -11px; left: 50%; transform: translateX(-50%);
+  position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
   font-size: 8px; font-weight: 700; white-space: nowrap; color: var(--cf-print); pointer-events: none;
 }
 #calcCard .calc-key.k-shift .kmain { color: var(--cf-shift); }
@@ -573,19 +573,59 @@ body.trayLeft #counter { right: auto; left: 14px; }
 #calcCard .calc-key[data-keyid="mode"] .kmain { left: -1px; transform: none; font-size: 7px; }
 #calcCard .calc-key[data-keyid="mode"] .ksh { left: auto; right: -1px; transform: none; font-size: 7px; }
 
-/* the arrow pad: a grey disc with a cross on it; the four buttons are the arms, the ring's ::before the square in the middle */
+/* the arrow pad (pw-v8x, her ask 5 "like the real casio"): a grey dished disc with FOUR separate raised keys on it, a gap
+   between them and nothing in the middle; the real keys carry no printed arrows, so the ▲▼◀▶ stay in the DOM at size 0 */
 #calcCard .calc-dpad { display: grid; margin: -8px 0 -2px; }
 #calcCard .calc-dpad-ring {
-  min-height: 0; padding: 6px; background: color-mix(in srgb, var(--cf-body) 86%, black); border: 1px solid var(--cf-edge);
-  box-shadow: inset 0 1px 2px var(--cf-shade);
+  width: auto; height: 100%; aspect-ratio: 1 / 1; justify-self: center;         /* a true circle, as the real disc, not the slot's ellipse */
+  min-height: 0; padding: 6px; gap: 3px; grid-template-columns: 1fr .9fr 1fr; grid-template-rows: 1fr .9fr 1fr;
+  background: color-mix(in srgb, var(--cf-body) 86%, black); border: 1px solid var(--cf-edge);
+  box-shadow: inset 0 1px 3px var(--cf-shade);
 }
-#calcCard .calc-dpad-ring::before { content: ""; grid-column: 2; grid-row: 2; background: var(--cf-fn); pointer-events: none; }
-#calcCard .calc-dpad-btn { background: var(--cf-fn); color: var(--cf-fn-ink); font-size: 11px; }
+#calcCard .calc-dpad-btn {
+  background: var(--cf-fn); color: var(--cf-fn-ink); font-size: 0; border-radius: 5px;
+  border: 1px solid color-mix(in srgb, var(--cf-fn) 78%, black);
+  box-shadow: 0 2px 0 color-mix(in srgb, var(--cf-fn) 65%, black), 0 3px 4px var(--cf-shade);
+}
 #calcCard .calc-dpad-btn:hover, #calcCard .calc-dpad-btn:active { color: var(--cf-fn-ink); background: color-mix(in srgb, var(--cf-fn) 90%, var(--cf-fn-ink)); }
-#calcCard .calc-dpad-btn.k-up { border-radius: 8px 8px 0 0; }
-#calcCard .calc-dpad-btn.k-down { border-radius: 0 0 8px 8px; }
-#calcCard .calc-dpad-btn.k-left { border-radius: 8px 0 0 8px; }
-#calcCard .calc-dpad-btn.k-right { border-radius: 0 8px 8px 0; }
+#calcCard .calc-dpad-btn.k-up { border-radius: 10px 10px 5px 5px; }
+#calcCard .calc-dpad-btn.k-down { border-radius: 5px 5px 10px 10px; }
+#calcCard .calc-dpad-btn.k-left { border-radius: 10px 5px 5px 10px; }
+#calcCard .calc-dpad-btn.k-right { border-radius: 5px 10px 10px 5px; }
+
+/* pw-v8x, three labels drawn instead of typed (her asks 1, 3, 4): the key's text stays in the DOM at size 0, the picture is
+   pseudo-elements (or a mask) in the key's own ink, so her colour panel still recolours them */
+/* the °'" key: a small ring, then three bold comma marks at its height (the real key, her picture 2) */
+#calcCard .calc-key[data-keyid="dms"] .kmain { display: flex; align-items: center; gap: 1px; font-size: 0; }
+#calcCard .calc-key[data-keyid="dms"] .kmain::before {
+  content: ""; width: 7px; height: 7px; box-sizing: border-box; border: 1.7px solid currentColor; border-radius: 50%; margin-right: 1px;
+}
+#calcCard .calc-key[data-keyid="dms"] .kmain::after {
+  content: "\2019\2019\2019"; font: 700 15px/1 var(--body); letter-spacing: .6px; height: 8.5px; overflow: visible;
+}
+/* the x^▫ key: the italic x with a small filled square raised at its shoulder, no caret (her picture 4) */
+#calcCard .calc-key[data-keyid="pow"] .kmain { display: inline-flex; align-items: flex-start; font-size: 0; }
+#calcCard .calc-key[data-keyid="pow"] .kmain::before { content: "x"; font-size: 16px; line-height: 1; }
+#calcCard .calc-key[data-keyid="pow"] .kmain::after { content: ""; width: 4.5px; height: 4.5px; margin: 0 0 0 1px; background: currentColor; }
+/* the fraction and root keys (her pictures 16:54): the stacked fraction box-over-box, the root with its bar over a box, and
+   their SHIFT words (a mixed number; a little 3 on a root over a box). Each is an SVG used as a MASK over the element's own
+   ink (background: currentColor or the SHIFT colour), the typed text kept in the DOM at size 0. */
+#calcCard .calc-key:is([data-keyid="frac"], [data-keyid="sqrt"]) .kmain,
+#calcCard .calc-key:is([data-keyid="frac"], [data-keyid="sqrt"]) .ksh {
+  font-size: 0; -webkit-mask: var(--m) center / contain no-repeat; mask: var(--m) center / contain no-repeat;
+}
+#calcCard .calc-key:is([data-keyid="frac"], [data-keyid="sqrt"]) .kmain { background: currentColor; }
+#calcCard .calc-key:is([data-keyid="frac"], [data-keyid="sqrt"]) .ksh { background: var(--cf-shift); height: 11px; top: -12px; }
+#calcCard .calc-key[data-keyid="frac"] .kmain { width: 11px; height: 17px; --m: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cg stroke='black' fill='none' stroke-linejoin='round' stroke-linecap='round'%3E%3Crect x='2.2' y='1.2' width='5.6' height='4.6' stroke-width='1.2'/%3E%3Cpath d='M.6 8h8.8' stroke-width='1.4'/%3E%3Crect x='2.2' y='10.2' width='5.6' height='4.6' stroke-width='1.2'/%3E%3C/g%3E%3C/svg%3E"); }
+#calcCard .calc-key[data-keyid="sqrt"] .kmain { width: 22px; height: 17px; --m: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 16'%3E%3Cg stroke='black' fill='none' stroke-linejoin='round' stroke-linecap='round'%3E%3Cpath d='M1 9.5l3-.6 3 5 4-12.4h8.2' stroke-width='1.6'/%3E%3Crect x='12.8' y='5' width='5.4' height='4.8' stroke-width='1.2'/%3E%3C/g%3E%3C/svg%3E"); }
+#calcCard .calc-key[data-keyid="frac"] .ksh { width: 16px; --m: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 11'%3E%3Cg stroke='black' fill='none' stroke-linejoin='round' stroke-linecap='round'%3E%3Crect x='.6' y='3' width='4.8' height='4.8' stroke-width='1'/%3E%3Crect x='9.2' y='.6' width='4.4' height='3.4' stroke-width='.9'/%3E%3Cpath d='M7.6 5.5h7.8' stroke-width='1'/%3E%3Crect x='9.2' y='6.9' width='4.4' height='3.4' stroke-width='.9'/%3E%3C/g%3E%3C/svg%3E"); }
+#calcCard .calc-key[data-keyid="sqrt"] .ksh { width: 19px; --m: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 19 11'%3E%3Ctext x='0' y='5.2' font-family='Arial,Helvetica,sans-serif' font-weight='700' font-size='5.2' fill='black'%3E3%3C/text%3E%3Cg stroke='black' fill='none' stroke-linejoin='round' stroke-linecap='round'%3E%3Cpath d='M3.6 7.2l1.8-.4 2 3.9 3-9.4h8' stroke-width='1.1'/%3E%3Crect x='12.2' y='3.6' width='4.4' height='3.8' stroke-width='.9'/%3E%3C/g%3E%3C/svg%3E"); }
+/* the word above S⇔D: "a b/c ⇔ d/c" with the fractions STACKED, a mask in the SHIFT colour (her picture 6) */
+#calcCard .calc-key[data-keyid="sd"] .ksh {
+  font-size: 0; width: 36px; height: 12px; top: -12px; background: var(--cf-shift);
+  -webkit-mask: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 33 11'%3E%3Cg font-family='Arial,Helvetica,sans-serif' font-weight='700' fill='black'%3E%3Ctext x='0' y='9.6' font-size='8.6'%3Ea%3C/text%3E%3Ctext x='9.4' y='5' font-size='5.4' text-anchor='middle'%3Eb%3C/text%3E%3Ctext x='9.4' y='11' font-size='5.4' text-anchor='middle'%3Ec%3C/text%3E%3Ctext x='29.3' y='5' font-size='5.4' text-anchor='middle'%3Ed%3C/text%3E%3Ctext x='29.3' y='11' font-size='5.4' text-anchor='middle'%3Ec%3C/text%3E%3C/g%3E%3Cg stroke='black' fill='none' stroke-width='1' stroke-linejoin='round'%3E%3Cpath d='M6.8 6H12M26.7 6h5.3' stroke-width='.9'/%3E%3Cpath d='M16.4 4.9h4.2M16.4 7.4h4.2'/%3E%3Cpath d='M16.4 2.9L13.3 6.15 16.4 9.4M20.6 2.9l3.1 3.25-3.1 3.25'/%3E%3C/g%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 33 11'%3E%3Cg font-family='Arial,Helvetica,sans-serif' font-weight='700' fill='black'%3E%3Ctext x='0' y='9.6' font-size='8.6'%3Ea%3C/text%3E%3Ctext x='9.4' y='5' font-size='5.4' text-anchor='middle'%3Eb%3C/text%3E%3Ctext x='9.4' y='11' font-size='5.4' text-anchor='middle'%3Ec%3C/text%3E%3Ctext x='29.3' y='5' font-size='5.4' text-anchor='middle'%3Ed%3C/text%3E%3Ctext x='29.3' y='11' font-size='5.4' text-anchor='middle'%3Ec%3C/text%3E%3C/g%3E%3Cg stroke='black' fill='none' stroke-width='1' stroke-linejoin='round'%3E%3Cpath d='M6.8 6H12M26.7 6h5.3' stroke-width='.9'/%3E%3Cpath d='M16.4 4.9h4.2M16.4 7.4h4.2'/%3E%3Cpath d='M16.4 2.9L13.3 6.15 16.4 9.4M20.6 2.9l3.1 3.25-3.1 3.25'/%3E%3C/g%3E%3C/svg%3E") center / contain no-repeat;
+}
 
 /* the colour panel (the palette button in the head): eight slots and the reset, inside the card under the head, so it scales
    with the card and the card's pointer stop keeps the page's closers away */

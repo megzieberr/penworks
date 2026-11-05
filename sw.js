@@ -18,9 +18,10 @@
    pw-v8u (5 Nov): calculator.js refreshed from Blipwork ceacd2d, FACT measured: Math ERROR when it cannot factor, S⇔D leaves the list.
    pw-v8v (5 Nov): the calculator's face redrawn as her fx-991ZA (light body, keys filled by their label, the small words above), its colours hers (pw.calcFace).
    pw-v8w (5 Nov): eight soft pastel chips for the calculator's body under the Body row (her ask: the body was very bright).
+   pw-v8x (5 Nov): seven face fixes, CSS only: FACT, x-square, fraction and root keys drawn like the real ones, words closer to their keys, a real four-key arrow pad.
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v8w";
+const CACHE = "pw-v8x";
 const SHARE_DB = "penworks.share";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",
