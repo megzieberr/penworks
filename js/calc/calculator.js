@@ -776,8 +776,8 @@ function formatDMS(v) {
 /* The mixed form (SHIFT S⇔D, spec §7/§8: 7/4 → 1¾, 100/3 → 33⅓): only an
    improper fraction that fits the display has one. */
 const hasMixedForm = v => !!v && v.kind === "rat" && v.d > 1n && (v.n < 0n ? -v.n : v.n) > v.d && exactFits(v);
-/* FACT (SHIFT °'", her ask 5 Nov 2026; not measured, from the Casio
-   manual, her emulator overrules): a shown WHOLE number from 2 up to 10
+/* FACT (SHIFT °'", her ask 5 Nov 2026; from the Casio manual, and 1092,
+   1234567 and 1009 measured on her emulator 5 Nov 2026): a shown WHOLE number from 2 up to 10
    digits as its prime factors, ascending, × between them, a repeated prime
    once with a raised count (1092 → 2²×3×7×13). Only primes up to 997 are
    tried (the manual: "prime factors up to three digits"); what is left
@@ -2197,9 +2197,9 @@ export function mountCalculator(host, opts = {}) {
   function toggleSD() {
     // nothing to toggle to: a decimal answer, or a fraction / whole number too long to show exactly (spec §7)
     if (!S.exactVal || isErr(S.exactVal) || !exactFits(S.exactVal)) return;
-    /* FACT (5 Nov 2026, Blipwork choice, not measured): S⇔D on the factor
-       form goes back to the plain answer, decimal state as it was. */
-    if (S.form === "fact") { S.form = null; S.result = shownHTML(); return; }
+    /* FACT (measured on her emulator 5 Nov 2026): S⇔D on the factor list
+       does nothing, the list stays. */
+    if (S.form === "fact") return;
     /* Build 4: S⇔D on the °'" form does nothing (not measured); from the
        mixed form it goes to the decimal (1¾ → 1,75), and the next S⇔D
        back to the improper fraction, the factory d/c form. */
@@ -2229,18 +2229,27 @@ export function mountCalculator(host, opts = {}) {
     else return;
     S.result = shownHTML();
   }
-  /* SHIFT °'" = FACT (her ask 5 Nov 2026; not measured, from the Casio
-     manual): on a shown whole-number result 2 to 10 digits it shows the
+  /* SHIFT °'" = FACT (her ask 5 Nov 2026; measured on her emulator 5 Nov
+     2026 15:04): on a shown whole-number result 2 to 10 digits it shows the
      prime factors (formatFact); pressed again it goes back to the plain
-     answer. 0, 1, negatives, decimals, fractions, π / root forms, more than
-     10 digits, an error, or no result (typing): nothing happens and nothing
-     is typed. S.exactVal never changes, so Ans and chaining are as after
-     the plain answer. S.showDecimal is left alone (the factor form ignores
-     it), so going back shows the same decimal state as before. */
+     answer. A shown answer it cannot factor (0, 1, negatives, decimals,
+     fractions, π / root forms, more than 10 digits) gives the ordinary
+     three-line Math ERROR screen, built the way a = Math ERROR is (measured
+     for 5/2, 0, 1, −12 and 11 digits); errAt null, so Goto (◀ ▶) lands at
+     the END of the typed line (measured on 2,5). Ans keeps the last answer
+     (Blipwork choice: the error came from FACT, not from the line). With no
+     result (typing) nothing happens and nothing is typed (measured).
+     S.exactVal never changes on the factor list, so Ans and chaining are as
+     after the plain answer. S.showDecimal is left alone (the factor form
+     ignores it), so going back shows the same decimal state as before. */
   function toggleFact() {
     if (S.result == null || S.err || !S.exactVal || isErr(S.exactVal)) return;
     if (S.form === "fact") { S.form = null; S.result = shownHTML(); return; }
-    if (!hasFactForm(S.exactVal)) return;
+    if (!hasFactForm(S.exactVal)) {
+      S.result = "Math ERROR"; S.err = true; S.exactVal = null; S.showDecimal = false; S.form = null;
+      S.errAt = null; S.browsing = false; S.histPos = S.history.length;
+      return;
+    }
     S.form = "fact";
     S.result = shownHTML();
   }
@@ -2974,7 +2983,7 @@ export function mountCalculator(host, opts = {}) {
     if (key === "ac") { resetEntry(); S.afterAC = true; return; }   // AC clears the screen but KEEPS the history (spec §1)
     if (key === "sd") return toggleSD();
     if (key === "mixtog") return toggleMixed();
-    if (key === "factor") return toggleFact();   // 5 Nov 2026: SHIFT °'" = FACT; with no result it does nothing, never types °'"
+    if (key === "factor") return toggleFact();   // 5 Nov 2026: SHIFT °'" = FACT (Math ERROR when it cannot factor); with no result it does nothing, never types °'"
     if (key === "dms" && S.result != null) return dmsToggle();   // °'" acts ON a result (spec §1, §9); with no result it types the mark (below)
     if (key === "eq") return doEquals();
     if (key === "up") return moveVert(-1);

@@ -1,16 +1,16 @@
 # js/calc: copied from Blipwork, NEVER edit here
 
-Source: `C:\Users\megzi\Desktop\Claude Code Projects\maths-homework-quest` (Blipwork), git head `c6a63cc`.
-Copied: 29 Oct 2026 (PenWorks pw-v7d); last refreshed 5 Nov 2026 (pw-v8t, SHIFT °'" = FACT: a whole answer's prime factors; before that pw-v8s, the tall root sign and brackets, the exponent after a tall thing at its top, the TABLE ▲ / ▼ wrap).
+Source: `C:\Users\megzi\Desktop\Claude Code Projects\maths-homework-quest` (Blipwork), git head `ceacd2d`.
+Copied: 29 Oct 2026 (PenWorks pw-v7d); last refreshed 5 Nov 2026 (pw-v8u, FACT measured: Math ERROR when it cannot factor, S⇔D leaves the list; pw-v8t, SHIFT °'" = FACT; before that pw-v8s, the tall root sign and brackets, the exponent after a tall thing at its top, the TABLE ▲ / ▼ wrap).
 
 Blipwork is the master. A fix to the calculator is made in Blipwork and copied out again; if something about the
 copy does not fit PenWorks, change the HOST side (js/calcpanel.js, css/app.css, the css/calc.css script), never this file.
 
-## calculator.js: byte-identical (3436 lines)
+## calculator.js: byte-identical (3445 lines)
 
 ```
-dcb60f2bb36c46671b3226defc69b5c9 *../maths-homework-quest/js/calculator.js
-dcb60f2bb36c46671b3226defc69b5c9 *js/calc/calculator.js
+bd1654dc4459e3c701d2d62167f12842 *../maths-homework-quest/js/calculator.js
+bd1654dc4459e3c701d2d62167f12842 *js/calc/calculator.js
 ```
 
 Check for drift any time: `md5sum ../maths-homework-quest/js/calculator.js js/calc/calculator.js` (run from the penworks folder).

@@ -768,27 +768,31 @@ row("0! = 1; (−3)! and 2,5! are Math ERROR", "Blipwork: x! of whole numbers on
 row("20! = 2,432902008×10¹⁸ (exact, too long to show in full)", "§7 more than 10 digits", [["20 SHIFT x⁻¹ =", { val: "2,432902008×10^18" }]]);
 row("(√2)³ via x³ = 2√2", "§6", [["( √ 2 ▶ ) SHIFT x² =", { val: "2√2" }]]);
 
-section("Build 11 · FACT = SHIFT °'\" (spec §9, from the Casio manual, not measured)");
+section("Build 11 · FACT = SHIFT °'\" (spec §9; measured on her emulator 5 Nov 2026 where marked, else from the Casio manual)");
 
-const MN = "manual, not measured";
-row("1092 = SHIFT °'\" shows 2²×3×7×13; SHIFT °'\" again shows 1092", MN, [["1092 =", { val: "1092" }], ["SHIFT °'\"", { val: "2^2×3×7×13", expr: "1092" }], ["SHIFT °'\"", { val: "1092" }]]);
-row("1234567: the part left after the three-digit primes goes in brackets, 127×(9721)", MN, [["1234567 = SHIFT °'\"", { val: "127×(9721)" }]]);
-row("1009 (a prime above 997) shows (1009)", MN, [["1009 = SHIFT °'\"", { val: "(1009)" }]]);
+const MN = "manual, not measured", MEAS = "measured on her emulator 5 Nov 2026 15:04";
+row("1092 = SHIFT °'\" shows 2²×3×7×13; SHIFT °'\" again shows 1092", MEAS, [["1092 =", { val: "1092" }], ["SHIFT °'\"", { val: "2^2×3×7×13", expr: "1092" }], ["SHIFT °'\"", { val: "1092" }]]);
+row("1234567: the part left after the three-digit primes goes in brackets, 127×(9721)", MEAS, [["1234567 = SHIFT °'\"", { val: "127×(9721)" }]]);
+row("1009 (a prime above 997) shows (1009)", MEAS, [["1009 = SHIFT °'\"", { val: "(1009)" }]]);
 row("1018081 (= 1009²) shows (1018081)", MN, [["1018081 = SHIFT °'\"", { val: "(1018081)" }]]);
 row("1024 shows 2¹⁰; 169 shows 13²", MN, [["1024 = SHIFT °'\"", { val: "2^10" }], ["AC 169 = SHIFT °'\"", { val: "13^2" }]]);
 row("a prime under 1000 shows plain: 7 → 7", MN, [["7 = SHIFT °'\"", { val: "7" }]]);
-row("a decimal-typed answer (2,5 = 5/2) is not a whole number: unchanged", MN, [["2 , 5 =", { val: "5/2" }], ["SHIFT °'\"", { val: "5/2" }]]);
-row("a negative: (−)12 = SHIFT °'\" stays −12", MN, [["(−) 12 = SHIFT °'\"", { val: "−12" }]]);
-row("0 and 1 stay as they are", MN, [["0 = SHIFT °'\"", { val: "0" }], ["AC 1 = SHIFT °'\"", { val: "1" }]]);
-row("more than 10 digits: 12345678901 = SHIFT °'\" unchanged", MN, [["12345678901 =", { val: "1,23456789×10^10" }], ["SHIFT °'\"", { val: "1,23456789×10^10" }]]);
-row("a root answer (√8 = 2√2) is unchanged", MN, [["√ 8 = SHIFT °'\"", { val: "2√2" }]]);
+row("2,5 = (shows 5/2) then SHIFT °'\": the three-line Math ERROR screen", MEAS, [["2 , 5 =", { val: "5/2" }], ["SHIFT °'\"", { res: "Math ERROR", err: ERR("Math ERROR") }]]);
+row("Goto from that error: ▶ shows the typed line 2,5, cursor at the end", MEAS, [["2 , 5 = SHIFT °'\" ▶", { err: "", expr: "2,5", cur: "2,5", res: "" }]]);
+row("0 = SHIFT °'\" → Math ERROR", MEAS, [["0 = SHIFT °'\"", { res: "Math ERROR", err: ERR("Math ERROR") }]]);
+row("1 = SHIFT °'\" → Math ERROR", MEAS, [["1 = SHIFT °'\"", { res: "Math ERROR", err: ERR("Math ERROR") }]]);
+row("a negative: (−)12 = SHIFT °'\" → Math ERROR", MEAS, [["(−) 12 = SHIFT °'\"", { res: "Math ERROR", err: ERR("Math ERROR") }]]);
+row("more than 10 digits: 12345678901 = SHIFT °'\" → Math ERROR", MEAS, [["12345678901 =", { val: "1,23456789×10^10" }], ["SHIFT °'\"", { res: "Math ERROR", err: ERR("Math ERROR") }]]);
+row("a root answer (√8 = 2√2) → Math ERROR", MN, [["√ 8 = SHIFT °'\"", { res: "Math ERROR" }]]);
+row("on the FACT error only AC ◀ ▶ work: 5 and = are ignored", "§3, Blipwork choice", [["0 = SHIFT °'\" 5 =", { res: "Math ERROR", err: ERR("Math ERROR") }]]);
+row("AC after the FACT error clears it; Ans keeps the last answer (5/2)", "Blipwork choice, not measured", [["2 , 5 = SHIFT °'\" AC", { err: "", expr: "", res: "" }], ["Ans =", { val: "5/2" }]]);
 row("2 + 3 = SHIFT °'\" shows 5", MN, [["2 + 3 = SHIFT °'\"", { val: "5" }]]);
-row("S⇔D on the factor form goes back to 1092", "Blipwork choice, not measured", [["1092 = SHIFT °'\" S⇔D", { val: "1092" }]]);
-row("SHIFT S⇔D on the factor form does nothing", "Blipwork choice, not measured", [["1092 = SHIFT °'\" SHIFT S⇔D", { val: "2^2×3×7×13" }]]);
-row("°'\" on the factor form goes to the °'\" form", "§9 °'\" acts on a result; Blipwork choice", [["1092 = SHIFT °'\" °'\"", { val: "1092°0'0\"" }]]);
-row("Ans is untouched: 1092 = SHIFT °'\" + 1 = 1093", MN, [["1092 = SHIFT °'\" +", { expr: "Ans+" }], ["1 =", { val: "1093" }]]);
-row("a digit after the factor form starts a fresh line", MN, [["1092 = SHIFT °'\" 5", { expr: "5", res: "" }]]);
-row("while typing, SHIFT °'\" types nothing: 1 2 SHIFT °'\" stays 12", MN, [["1 2 SHIFT °'\"", { expr: "12", cur: "12", res: "" }], ["=", { val: "12" }]]);
+row("S⇔D on the factor list does nothing, the list stays", MEAS, [["1092 = SHIFT °'\" S⇔D", { val: "2^2×3×7×13" }]]);
+row("SHIFT S⇔D on the factor list does nothing", "Blipwork choice, not measured", [["1092 = SHIFT °'\" SHIFT S⇔D", { val: "2^2×3×7×13" }]]);
+row("°'\" on the factor list goes to the °'\" form", MEAS, [["1092 = SHIFT °'\" °'\"", { val: "1092°0'0\"" }]]);
+row("Ans is untouched: 1092 = SHIFT °'\" + 1 = 1093", MEAS, [["1092 = SHIFT °'\" +", { expr: "Ans+" }], ["1 =", { val: "1093" }]]);
+row("a digit after the factor list starts a fresh line", MN, [["1092 = SHIFT °'\" 5", { expr: "5", res: "" }]]);
+row("while typing, SHIFT °'\" types nothing and gives no error: 1 2 SHIFT °'\" stays 12", MEAS, [["1 2 SHIFT °'\"", { expr: "12", cur: "12", res: "", err: "" }], ["=", { val: "12" }]]);
 row("a browsed history answer: 1092 = 5 = ▲ SHIFT °'\" shows its factors", MN, [["1092 = 5 = ▲", { val: "1092" }], ["SHIFT °'\"", { val: "2^2×3×7×13" }]]);
 row("off the COMP screen: MODE 7 then SHIFT °'\" leaves f(X)= unchanged", MN, [["MODE 7", { expr: "f(X)=", cur: "f(X)=" }], ["SHIFT °'\"", { expr: "f(X)=", cur: "f(X)=", res: "" }]]);
 {
