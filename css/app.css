@@ -609,6 +609,17 @@ body.trayLeft #counter { right: auto; left: 14px; }
 }
 #calcCard .calcFaceRow input::-webkit-color-swatch-wrapper { padding: 2px; }
 #calcCard .calcFaceRow input::-webkit-color-swatch { border: 0; border-radius: 3px; }
+/* pw-v8w: the body's pastel chips under the Body row: a 22 px dot in a tap area as tall as 44 px (eight across fill the row,
+   so each is about 37 px wide at 1.0x); the chip that is the body wears a ring in the body's ink */
+#calcCard .calcChips { display: grid; grid-template-columns: repeat(8, 1fr); margin: 0 -4px 2px; }
+#calcCard .calcChip {
+  display: grid; place-items: center; height: 44px; padding: 0; border: 0; background: none; cursor: pointer;
+}
+#calcCard .calcChip::before {
+  content: ""; width: 22px; height: 22px; box-sizing: border-box; border-radius: 50%; background: var(--chip);
+  border: 1px solid var(--cf-edge); box-shadow: 0 0 0 2px transparent;
+}
+#calcCard .calcChip.on::before { box-shadow: 0 0 0 2px color-mix(in srgb, var(--cf-body) 92%, var(--cf-body-ink)), 0 0 0 4px var(--cf-print); }
 #calcCard .calcFaceReset {
   display: block; width: 100%; min-height: 32px; margin-top: 8px; border-radius: 7px; border: 1px solid var(--cf-edge);
   background: var(--cf-fn); color: var(--cf-fn-ink); font: 700 12px var(--body); cursor: pointer;

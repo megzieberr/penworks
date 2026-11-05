@@ -17,9 +17,10 @@
    pw-v8t (5 Nov): calculator.js refreshed from Blipwork c6a63cc, SHIFT °'" = FACT shows a whole answer's prime factors.
    pw-v8u (5 Nov): calculator.js refreshed from Blipwork ceacd2d, FACT measured: Math ERROR when it cannot factor, S⇔D leaves the list.
    pw-v8v (5 Nov): the calculator's face redrawn as her fx-991ZA (light body, keys filled by their label, the small words above), its colours hers (pw.calcFace).
+   pw-v8w (5 Nov): eight soft pastel chips for the calculator's body under the Body row (her ask: the body was very bright).
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v8v";
+const CACHE = "pw-v8w";
 const SHARE_DB = "penworks.share";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",

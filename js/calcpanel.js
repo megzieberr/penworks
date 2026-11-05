@@ -33,6 +33,10 @@
 //   so the old colours never flash. Like the card's place and size it is not in the database. The text on a key is not a
 //   slot: it is worked out here from the key's colour (white on a dark face, near-black on a light one, whichever reads
 //   better), so she can pick any colour without white text on a white key.
+// - pw-v8w (her ask 5 Nov 16:38, "the colours for the body is VERY bright... I rather want soft pastel colours to choose
+//   from for the body"): a row of eight round chips under the Body row, the fx-991ZA grey first, then seven soft pastels
+//   (BODY_CHIPS). A tap gives the body that colour, kept in pw.calcFace like a picker change; the chip that matches the
+//   body wears a ring. The free picker on the Body row stays. Only the body has chips.
 import { mountCalculator } from './calc/calculator.js';
 
 const GAP = 12;          // px between the tray and the card
@@ -59,6 +63,9 @@ const INKS = [['body', '--cf-body-ink'], ['fn', '--cf-fn-ink'], ['num', '--cf-nu
 const INK_LIGHT = '#ffffff', INK_DARK = '#1b1e22';
 const FACE_KEY = 'pw.calcFace';  // { body, lcd, lcdInk, fn, num, ac, shift, alpha }: only the slots she changed
 const RESET_TEXT = 'fx-991ZA look';
+// pw-v8w: soft body colours to pick with one tap, [name, colour]; the first is the fx-991ZA grey
+const BODY_CHIPS = [['fx-991ZA grey', '#ecedef'], ['Blush', '#f6d9e0'], ['Peach', '#fbe3d0'], ['Butter', '#fbf1c7'],
+  ['Mint', '#d9efe0'], ['Sky', '#d6e6f5'], ['Lilac', '#e4dcf3'], ['Sand', '#efe6d8']];
 let face = {}, faceBtn = null, facePanel = null;
 
 function load() {
@@ -109,6 +116,11 @@ function applyFace() {
   }
   for (const [k, prop] of INKS) card.style.setProperty(prop, inkFor(slot(k)));
   if (facePanel) for (const inp of facePanel.querySelectorAll('input[data-slot]')) inp.value = slot(inp.dataset.slot);
+  if (facePanel) for (const chip of facePanel.querySelectorAll('.calcChip')) {   // pw-v8w: the ring on the chip that is the body
+    const on = chip.dataset.colour === slot('body');
+    chip.classList.toggle('on', on);
+    chip.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
 }
 function setSlot(k, value) {
   const c = String(value).toLowerCase(), def = FACE.find((f) => f[0] === k)[3];
@@ -135,6 +147,7 @@ function buildFacePanel() {
     inp.addEventListener('change', () => setSlot(k, inp.value));
     row.append(span, inp);
     facePanel.append(row);
+    if (k === 'body') facePanel.append(buildChips());               // pw-v8w: the pastels, right under the Body row
   }
   const reset = document.createElement('button');
   reset.type = 'button';
@@ -143,6 +156,25 @@ function buildFacePanel() {
   reset.addEventListener('click', () => { face = {}; saveFace(); applyFace(); });
   facePanel.append(reset);
   return facePanel;
+}
+// pw-v8w: the body's chips: a tap is a picker change to that colour
+function buildChips() {
+  const row = document.createElement('div');
+  row.className = 'calcChips';
+  row.setAttribute('role', 'group');
+  row.setAttribute('aria-label', 'Body colours');
+  for (const [name, colour] of BODY_CHIPS) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'calcChip';
+    chip.dataset.colour = colour;
+    chip.title = name;
+    chip.setAttribute('aria-label', name);
+    chip.style.setProperty('--chip', colour);
+    chip.addEventListener('click', () => setSlot('body', colour));
+    row.append(chip);
+  }
+  return row;
 }
 // the panel's height on screen while it is open (the size and fit sums leave it out: it is only open while she picks)
 function panelH() {

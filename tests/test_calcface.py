@@ -240,6 +240,46 @@ try:
         open_calc(pg)
         check("a broken pw.calcFace is ignored (the fx-991ZA look, no error)", pg.evaluate(BG, "#calcCard .calc-wrap") == hexrgb(DEFAULTS["body"]))
         pg.evaluate("localStorage.removeItem('pw.calcFace')")
+
+        # ------------------------------------------------------------ 3b. pw-v8w: the body's pastel chips
+        group[0] = "body chips (pw-v8w)"
+        CHIPS = [["fx-991ZA grey", "#ecedef"], ["Blush", "#f6d9e0"], ["Peach", "#fbe3d0"], ["Butter", "#fbf1c7"],
+                 ["Mint", "#d9efe0"], ["Sky", "#d6e6f5"], ["Lilac", "#e4dcf3"], ["Sand", "#efe6d8"]]
+        RING = "() => [...document.querySelectorAll('#calcCard .calcChip.on')].map((c) => c.title)"
+        pg.reload(); ready(pg)
+        if not pg.locator("#noteView").is_visible(): open_note(pg)
+        open_calc(pg); pg.click("#calcCard .calcFaceBtn"); pg.wait_for_timeout(150)
+        chips = pg.evaluate("() => [...document.querySelectorAll('#calcCard .calcChip')].map((c) => [c.title, c.dataset.colour])")
+        check("eight chips, the fx-991ZA grey first, then the seven pastels, each with its name as a title", chips == CHIPS, chips)
+        where = pg.evaluate("() => { const r = document.querySelector('#calcCard .calcChips'); return [r.previousElementSibling.querySelector('input').dataset.slot,"
+                            " r.nextElementSibling.querySelector('input').dataset.slot, document.querySelectorAll('#calcCard .calcChips').length]; }")
+        check("they sit right under the Body row, and only there (Screen comes next)", where == ["body", "lcd", 1], where)
+        cs = pg.evaluate("""() => { const c = document.querySelector('#calcCard .calcChip'), d = getComputedStyle(c, '::before'), s = parseFloat(getComputedStyle(document.getElementById('calcCard')).getPropertyValue('--calc-s'));
+            const r = c.getBoundingClientRect(); return [parseFloat(d.width), parseFloat(d.height), r.height / s, r.width / s]; }""")
+        check("each chip: a 22 px dot in a 44 px tall tap area at 1.0x (about 37 px wide, eight across)", abs(cs[0] - 22) < 0.1 and abs(cs[1] - 22) < 0.1 and abs(cs[2] - 44) < 0.5 and cs[3] >= 34, cs)
+        check("the ring sits on the grey chip at first", pg.evaluate(RING) == ["fx-991ZA grey"], pg.evaluate(RING))
+        pg.click('#calcCard .calcChip[title="Mint"]'); pg.wait_for_timeout(80)
+        check("a tap on Mint: --cf-body is #d9efe0 on #calcCard and the body follows",
+              pg.evaluate("document.getElementById('calcCard').style.getPropertyValue('--cf-body')") == "#d9efe0" and pg.evaluate(BG, "#calcCard .calc-wrap") == hexrgb("#d9efe0"),
+              pg.evaluate(BG, "#calcCard .calc-wrap"))
+        check("... the Body swatch shows it, pw.calcFace keeps it, the ring moved to Mint",
+              pg.input_value("#calcCard .calcFace input[data-slot='body']") == "#d9efe0" and json.loads(pg.evaluate(STORED) or "null") == {"body": "#d9efe0"}
+              and pg.evaluate(RING) == ["Mint"], [pg.evaluate(STORED), pg.evaluate(RING)])
+        pg.reload(); ready(pg)
+        if not pg.locator("#noteView").is_visible(): open_note(pg)
+        open_calc(pg); pg.click("#calcCard .calcFaceBtn"); pg.wait_for_timeout(150)
+        check("after a reload: still Mint, the ring on Mint", pg.evaluate(BG, "#calcCard .calc-wrap") == hexrgb("#d9efe0") and pg.evaluate(RING) == ["Mint"], pg.evaluate(RING))
+        low_all = []
+        for name, col in CHIPS:
+            pg.click(f'#calcCard .calcChip[title="{name}"]'); pg.wait_for_timeout(40)
+            low_all += [(name, c) for c in pg.evaluate(CONTRAST_JS) if c[1] < 4.5]
+            if pg.evaluate("getComputedStyle(document.getElementById('calcCard')).getPropertyValue('--cf-body-ink').trim()") != "#1b1e22": low_all.append((name, "body ink"))
+        check("every chip: the key labels still read 4.5:1 or better, the print on the body stays near-black", not low_all, low_all)
+        set_input(pg, "body", "#123456"); pg.wait_for_timeout(40)
+        check("a picker colour that is no chip: no ring", pg.evaluate(RING) == [], pg.evaluate(RING))
+        pg.click("#calcCard .calcFaceReset"); pg.wait_for_timeout(60)
+        check("the reset puts the ring back on the grey chip", pg.evaluate(RING) == ["fx-991ZA grey"] and pg.evaluate(STORED) is None, pg.evaluate(RING))
+        pg.click("#calcCard .calcFaceBtn"); pg.wait_for_timeout(60)
         check("no page errors (1.6x)", not errs, errs)
 
         # ------------------------------------------------------------ 4. the LCD's inner colours: a TABLE and the menus
