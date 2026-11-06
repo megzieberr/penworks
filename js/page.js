@@ -234,7 +234,8 @@ export function showStack(pages) {
 
 // a page's bookmark (pw-v4r), the Samsung Notes way: a ribbon tab hanging from the page's top edge near the right
 // (16 x 26 page px, 12 px in from the right, its bottom notched into a V), above the ink, never in the pen's way.
-// The page list's thumbs use the same tab, smaller (css). Its colour is fixed: the paper is white in both modes.
+// pw-v9a: the page list's thumbs no longer use this tab; each thumb has its own tappable ribbon button (app.js, RIB).
+// This tab is the big page's only, untouchable by the pen; css paints it the ink blue, the paper is white in both modes.
 const RIBBON = '<svg viewBox="0 0 16 26" preserveAspectRatio="none" aria-hidden="true"><path d="M0 0H16V26L8 19L0 26Z" fill="#3A4250"/></svg>';
 export function bookmarkTab() {
   const t = document.createElement('div');

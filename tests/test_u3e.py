@@ -166,7 +166,7 @@ try:
         pg.reload(); ready(pg)                              # pw-v8y: a reload opens on All notes; the note opens from its card
         pg.locator(f"#grid .card[data-id='{nid}']").click(); pg.wait_for_selector("#noteView:not([hidden])"); pg.wait_for_timeout(250)
         check("offline reload: the app opens on the note (the tree snapshot plus the queue)",
-              pg.evaluate("window.__pw.S.openNote") == nid and pg.inner_text("#noteName") == "Offline note", [pg.evaluate("window.__pw.S.openNote"), pg.inner_text("#noteName")])
+              pg.evaluate("window.__pw.S.openNote") == nid and pg.inner_text("#noteName .nn") == "Offline note", [pg.evaluate("window.__pw.S.openNote"), pg.inner_text("#noteName .nn")])
         check("offline reload: 2 pages, 2 strokes on page 2, the bookmark tab on page 2",
               pg.locator("#stack .sheet").count() == 2 and until(pg, lambda: paths(pg, 2) == 2, 2000) and marked(pg, 2),
               [pg.locator("#stack .sheet").count(), paths(pg, 2), marked(pg, 2)])
@@ -321,9 +321,9 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v8y" not in keys:
+        if "pw-v9b" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v8y", "pw-v8y" in keys, keys)
+        check("cache is pw-v9b", "pw-v9b" in keys, keys)
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the shell lists ./js/treeq.js", "./js/treeq.js" in swt)
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in

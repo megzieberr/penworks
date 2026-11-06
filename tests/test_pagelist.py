@@ -272,7 +272,7 @@ try:
         select(); q = ui()
         check("Select: 6 tick boxes, '0 selected', All and Done shown, Select hidden", q["ticks"] == 6 and q["sel"] == "0 selected" and q["selShown"]
               and q["done"] and q["all"] and not q["select"], q)
-        check("the bar: Delete, Copy, Cut, Move, Share, all disabled", pg.evaluate(BAR_JS) == [["Delete", True], ["Copy", True], ["Cut", True], ["Move", True], ["Share", True]], pg.evaluate(BAR_JS))
+        check("the bar: Delete, Copy, Cut, Move, To note (pw-v9b), Share, all disabled", pg.evaluate(BAR_JS) == [["Delete", True], ["Copy", True], ["Cut", True], ["Move", True], ["To note", True], ["Share", True]], pg.evaluate(BAR_JS))
         box = pg.evaluate("""() => { const t = document.querySelector('#plThumbs .thumbP .tick'), b = t.getBoundingClientRect(), s = getComputedStyle(t, '::before');
             return [Math.round(b.width), Math.round(b.height), parseFloat(s.width) + parseFloat(s.borderLeftWidth) + parseFloat(s.borderRightWidth), s.borderRadius]; }""")
         check("a tick box: 28 px round ring, 44 px hit area", box[:3] == [44, 44, 28] and box[3] == "50%", box)
@@ -419,7 +419,7 @@ try:
         ROW_JS = """async (id) => { await window.__pw.idle(); const r = (await window.__pw.api.loadAll()).pages.find(p => p.id === id); return r ? r.bookmark : null; }"""
         nokeys = lambda: pg.evaluate("() => Object.keys(localStorage).filter(k => k.startsWith('pw.bookmark.')).length") == 0
         SHEETS_JS = "() => [...document.querySelectorAll('#stack .sheet')].map(s => !!s.querySelector(':scope > .bookmarkTab'))"
-        THUMBS_JS = "() => [...document.querySelectorAll('#plThumbs .thumbP')].map(t => [+t.dataset.index, !!t.querySelector('.paper > .bookmarkTab')])"
+        THUMBS_JS = "() => [...document.querySelectorAll('#plThumbs .thumbP')].map(t => [+t.dataset.index, !!t.querySelector('.bmBtn[aria-pressed=true]')])"   # pw-v9a: the thumb's ribbon is its .bmBtn
         EMPTY_JS = "() => [...document.querySelectorAll('#plThumbs .plEmpty')].map(e => e.textContent)"
         mk = lambda: pg.evaluate(MK_JS)
         U4 = lambda: pg.evaluate("(window.__pw.S.hist['n4'] || { u: [] }).u.length")
@@ -435,8 +435,9 @@ try:
 
         # 1. page 2's menu: Bookmark, under Page, right after Landscape (pw-v7p); tap it
         items = page_menu(2)
-        check("page 2's menu has 'Bookmark' right after Landscape (pw-v7p), and after Lined 'Tray to the left' (pw-v7c), 'Share note', 'Bin this note'",
-              "Bookmark" in items and items.index("Bookmark") == items.index("Landscape") + 1 and items.index("Tray to the left") == items.index("Lined") + 1
+        check("page 2's menu has 'Bookmark' right after Landscape (pw-v7p), and after Lined 'Move to...', 'Pin to top' (pw-v8z), 'Tray to the left' (pw-v7c), 'Share note', 'Bin this note'",
+              "Bookmark" in items and items.index("Bookmark") == items.index("Landscape") + 1 and items.index("Move to...") == items.index("Lined") + 1
+              and items.index("Pin to top") == items.index("Move to...") + 1 and items.index("Tray to the left") == items.index("Pin to top") + 1
               and items.index("Share note") == items.index("Tray to the left") + 1
               and items.index("Bin this note") == items.index("Share note") + 1
               and "Remove bookmark" not in items, items)
@@ -460,7 +461,8 @@ try:
         pg.evaluate("document.documentElement.setAttribute('data-theme', 'dark')")
         fill_dark = pg.evaluate("getComputedStyle(document.querySelector('#stack .sheet[data-index=\"2\"] .bookmarkTab path')).fill")
         pg.evaluate("document.documentElement.removeAttribute('data-theme')")
-        check("dark mode: the same colour (the paper is white)", fill_dark == "rgb(58, 66, 80)", fill_dark)
+        fill_light = pg.evaluate("getComputedStyle(document.querySelector('#stack .sheet[data-index=\"2\"] .bookmarkTab path')).fill")
+        check("pw-v9a: the ribbon shows in the ink blue (css), light and dark", fill_light == "rgb(47, 75, 184)" and fill_dark == "rgb(147, 166, 242)", [fill_light, fill_dark])
         pg.click("#noteMore"); pg.wait_for_timeout(40); items = menu_items(pg); pg.keyboard.press("Escape"); pg.wait_for_timeout(30)
         check("the menu now says 'Remove bookmark' (no 'Bookmark')", "Remove bookmark" in items and "Bookmark" not in items, items)
 
@@ -473,10 +475,10 @@ try:
 
         # 3. the list: thumb 2 carries the tab; the Bookmarks toggle is off
         open_list(pg)
-        check("the list: thumb 2 carries the tab, the others do not", pg.evaluate(THUMBS_JS) == [[1, False], [2, True], [3, False], [4, False]], pg.evaluate(THUMBS_JS))
-        tt = pg.evaluate("""() => { const t = document.querySelector('#plThumbs .thumbP[data-index="2"] .paper > .bookmarkTab'), b = t.getBoundingClientRect(),
-            p = t.parentElement.getBoundingClientRect(); return [Math.round(b.width), Math.round(b.height), Math.round(b.top - p.top), Math.round(p.right - b.right)]; }""")
-        check("the thumb's tab: about 10 x 16, at the top right", tt[0] == 10 and tt[1] == 16 and abs(tt[2]) <= 1 and 0 <= tt[3] <= 10, tt)
+        check("the list: thumb 2's ribbon is pressed, the others are not", pg.evaluate(THUMBS_JS) == [[1, False], [2, True], [3, False], [4, False]], pg.evaluate(THUMBS_JS))
+        tt = pg.evaluate("""() => { const t = document.querySelector('#plThumbs .thumbP[data-index="2"] .bmBtn svg'), b = t.getBoundingClientRect(),
+            p = t.closest('.thumbP').querySelector('.paper').getBoundingClientRect(); return [Math.round(b.width), Math.round(b.height), Math.round(b.top - p.top), Math.round(p.right - b.right)]; }""")
+        check("the thumb's ribbon (pw-v9a): 12 x 20, at the paper's top right", tt[0] == 12 and tt[1] == 20 and abs(tt[2]) <= 1 and 0 <= tt[3] <= 10, tt)
         check("the Bookmarks toggle: in the header, off (aria-pressed false), labelled", pg.locator("#plMarks").is_visible() and pressed() == "false"
               and pg.get_attribute("#plMarks", "aria-label") == "Show bookmarked pages only", [pressed(), pg.get_attribute("#plMarks", "aria-label")])
 
@@ -567,9 +569,9 @@ try:
         # ------------------------------------------------------------ 8. cache
         group[0] = "cache"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v8y" not in keys:
+        if "pw-v9b" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v8y", "pw-v8y" in keys, keys)
+        check("cache is pw-v9b", "pw-v9b" in keys, keys)
         sw_src = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("sw.js lists vendor/pdf-lib.min.js (round 5: it replaced jsPDF)", "./vendor/pdf-lib.min.js" in sw_src)
         ctx.close()

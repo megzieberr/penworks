@@ -20,9 +20,12 @@
    pw-v8w (5 Nov): eight soft pastel chips for the calculator's body under the Body row (her ask: the body was very bright).
    pw-v8x (5 Nov): seven face fixes, CSS only: FACT, x-square, fraction and root keys drawn like the real ones, words closer to their keys, a real four-key arrow pad.
    pw-v8y (6 Nov): All notes on top of the folder view and the app opens on it every time; the phone grid in two columns, the folders in a drawer.
+   pw-v8z (6 Nov): an open note's bar shows its folder as a small chip (a tap moves it) and a star that pins it to the top; on the phone both sit in the ... menu.
+   pw-v9a (6 Nov): every thumb in the page list has a ribbon button, grey or blue, one tap bookmarks the page; the big page's ribbon is the same blue.
+   pw-v9b (6 Nov): Select on the notes grid ticks notes to move, bin or merge them (Undo for a while after); the page list's Select moves pages to another note.
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v8y";
+const CACHE = "pw-v9b";
 const SHARE_DB = "penworks.share";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",

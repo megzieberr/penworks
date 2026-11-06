@@ -28,13 +28,14 @@ const SHORT = /Not every row was saved/;
 const LOCAL_MARK = 'pw.tree.local';  // local mode only: a cleared localStorage is a fresh twin, so the queue starts fresh
 const TABLES = ['folders', 'notes', 'pages'];
 const INSERTS = { createFolder: 'folders', createNote: 'notes', createPage: 'pages' };
-const PAGE_EDIT = new Set(['createPage', 'deletePage', 'reorderPages', 'setPages']);   // the note counts as edited
+const PAGE_EDIT = new Set(['createPage', 'deletePage', 'reorderPages', 'setPages', 'movePagesTo']);   // the note counts as edited
 // what the toast calls each change, in plain words
 const WHAT = {
   createFolder: 'a new folder', renameFolder: 'a rename', recolourFolder: 'a folder colour', moveFolder: 'moving a folder',
   reorderFolders: 'moving a folder', createNote: 'a new note', renameNote: 'a rename', moveNote: 'moving a note',
   pinNote: 'pinning a note', createPage: 'a new page', reorderPages: 'moving a page', setPages: 'a paper change',
   setBookmark: 'a bookmark', deletePage: 'deleting a page', bin: 'moving to the Bin', restore: 'a restore',
+  movePagesTo: 'moving pages to another note',
 };
 // a row the overlay adds: the database's defaults under what the op carried
 const DEFAULTS = {
@@ -156,7 +157,7 @@ export function pending() { return [...new Set(Q.flatMap(idsOf))]; }
 function idsOf(op) {
   const a = op.args[0];
   if (INSERTS[op.call]) return a && a.id ? [a.id] : [];
-  if (op.call === 'reorderFolders' || op.call === 'reorderPages') return (a || []).map((p) => p[0]);
+  if (op.call === 'reorderFolders' || op.call === 'reorderPages' || op.call === 'movePagesTo') return (a || []).map((p) => p[0]);
   if (op.call === 'setPages') return (a || []).slice();
   if (op.call === 'bin' || op.call === 'restore') return TABLES.flatMap((t) => (a && a[t]) || []);
   return a == null ? [] : [a];
@@ -217,6 +218,7 @@ function apply(d, op) {
     if (op.call === 'createPage') notes = [a.note_id];
     else if (op.call === 'deletePage') notes = [pageNote(a)];
     else if (op.call === 'setPages') notes = a.map(pageNote);
+    else if (op.call === 'movePagesTo') notes = a.flatMap((p) => [pageNote(p[0]), p[1]]);   // pw-v9b: the note it left and the one it joins
     else notes = a.map((p) => pageNote(p[0]));
   }
   switch (op.call) {
@@ -233,6 +235,7 @@ function apply(d, op) {
     case 'moveNote': patch('notes', [a], { folder_id: b }); break;
     case 'pinNote': patch('notes', [a], { pinned: b }); break;
     case 'reorderPages': a.forEach(([id, position]) => patch('pages', [id], { position })); break;
+    case 'movePagesTo': a.forEach(([id, note_id, position]) => patch('pages', [id], { note_id, position })); break;
     case 'setPages': patch('pages', a, b || {}); break;
     case 'setBookmark': patch('pages', [a], { bookmark: !!b }); break;
     case 'deletePage': d.pages = list('pages').filter((r) => r.id !== a); break;

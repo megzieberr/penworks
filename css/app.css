@@ -275,6 +275,23 @@ input.rename {
 }
 #noteName .nn:hover { background: rgba(38,42,48,.05); }
 #noteName input.rename { height: 34px; font-weight: 700; font-size: 16px; max-width: 420px; }
+/* pw-v8z: the folder chip after the note's name (folder glyph, where the note lives, a tiny chevron; a tap = Move to)
+   and the star beside it (Pin to top: outline = not pinned, filled gold = pinned). Both hidden on the phone (below). */
+#noteName { align-items: center; gap: 6px; }
+#noteName .nn { flex: 0 1 auto; }
+#noteName .chip {
+  flex: none; display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 9px 0 7px; border: 0; border-radius: 999px;
+  background: var(--ink-soft); color: var(--graphite); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+  max-width: 200px; white-space: nowrap;
+}
+#noteName .chip:hover { background: var(--hover); }
+#noteName .chip svg { flex: none; width: 15px; height: 15px; }
+#noteName .chip .lbl { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+#noteName .chip .chev { width: 12px; height: 12px; color: var(--muted); }
+#noteName .starBtn { flex: none; width: 34px; height: 34px; }
+#noteName .starBtn svg { width: 20px; height: 20px; }
+#noteName .starBtn[aria-pressed="true"] { color: #D9A400; }
+#noteName .starBtn[aria-pressed="true"] svg path { fill: currentColor; }
 #barCount { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 13px; color: var(--muted); min-width: 40px; text-align: center; }
 #noteBody { flex: 1; position: relative; min-height: 0; }
 /* overflow: clip, NOT hidden: a hidden box is still a scroll container that Chrome scrolls by itself (a focus, a
@@ -416,10 +433,25 @@ body.trayLeft #counter { right: auto; left: 14px; }
 .thumbP.ticked .tick svg { visibility: visible; }
 .thumbP.ticked .paper { outline: 2px solid var(--ink); outline-offset: 2px; }
 /* page bookmarks (pw-v4r): a ribbon tab hanging from the page's top edge near the right (Samsung Notes), on the sheet
-   (16 x 26 page px, 12 px in) and on a thumb (10 x 16); the Bookmarks toggle in the list header shows only those pages */
+   (16 x 26 page px, 12 px in; a thumb's ribbon is its .bmBtn below, pw-v9a); the Bookmarks toggle in the list header
+   shows only those pages */
 .sheet > .bookmarkTab { position: absolute; top: 0; right: 12px; width: 16px; height: 26px; z-index: 1; pointer-events: none; }
-.thumbP .paper > .bookmarkTab { position: absolute; top: 0; right: 6px; width: 10px; height: 16px; z-index: 1; pointer-events: none; }
 .bookmarkTab svg { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+/* pw-v9a (her ask 1, 6 Nov): every thumb in the page list carries its own ribbon, a real button (44 x 44 tap target,
+   the ribbon drawn 12 x 20 at the paper's top right): faint grey when the page is not bookmarked, the ink blue when it
+   is, one tap turns it on or off. The big page's ribbon is the same blue, and the pen still never touches it. */
+.thumbP .bmBtn { position: absolute; top: -6px; right: -4px; width: 44px; height: 44px; padding: 0; border: 0; background: transparent;
+  display: grid; place-items: start end; cursor: pointer; z-index: 2; }
+.thumbP .bmBtn svg { width: 12px; height: 20px; margin: 6px 10px 0 0; display: block; }
+.thumbP .bmBtn svg path { fill: var(--line); stroke: rgba(38,42,48,.22); stroke-width: 1; }
+.thumbP .bmBtn[aria-pressed="true"] svg path { fill: var(--ink); stroke: none; }
+.thumbP .bmBtn:hover svg { transform: translateY(1px); }
+:root[data-theme="dark"] .thumbP .bmBtn:not([aria-pressed="true"]) svg path { fill: #4A5058; }   /* dark --line reads as a dark mark on the white paper */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .thumbP .bmBtn:not([aria-pressed="true"]) svg path { fill: #4A5058; }
+}
+#pageList.ticking .thumbP .bmBtn { pointer-events: none; }   /* tick mode: the tick sits on this corner and wins; the ribbon stays in sight */
+.sheet > .bookmarkTab svg path { fill: var(--ink); }
 #plMarks { flex: none; color: var(--muted); }
 #plMarks.on { color: var(--ink); background: var(--hover); }
 #plMarks.on svg path { fill: currentColor; }
@@ -797,6 +829,9 @@ svg.ink text, svg.thumbInk text { pointer-events: none; user-select: none; -webk
 
 /* ---------- the share dialog (pw-v4t): the menu's card on a veil, centred ---------- */
 #plBar .plAct { flex: 1 1 auto; padding: 0 2px; min-width: 0; }   /* pw-v7p: six words fit the 300 px list, each as wide as it needs */
+/* pw-v9b: To note makes seven words in a note with PDF pages (Rotate shows): a step smaller and no gaps, still one row */
+#plBar.seven { gap: 0; padding: 6px 4px; }
+#plBar.seven .plAct { font-size: 13px; padding: 0 1px; }
 .dlgVeil { position: fixed; inset: 0; z-index: 55; display: grid; place-items: center; padding: 16px; background: rgba(20,22,26,.35); }
 .dlg { width: min(360px, 100%); background: var(--card); color: var(--graphite); border-radius: 8px; padding: 16px 16px 10px;
   box-shadow: 0 6px 30px rgba(20,22,26,.25); display: flex; flex-direction: column; gap: 8px; }
@@ -822,6 +857,37 @@ svg.ink text, svg.thumbInk text { pointer-events: none; user-select: none; -webk
 .shareGrid .card { color: inherit; font: inherit; }
 .shareGrid .card .where { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* ---------- pw-v9b: select, move, merge on the notes grid (the mock _build/selectmerge) ---------- */
+/* the grid bar: Select (a word, like the page list's); in select mode All on the left, "n selected", Done on the right */
+#gridBar .plWord { margin-left: auto; }
+#gridBar .gAll { flex: none; width: 44px; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 2px 0;
+  border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+#gridBar .gAll .box { width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--muted); background: var(--card); box-sizing: content-box; }
+#gridBar .gAll.on .box { background: var(--ink); border-color: var(--ink); }
+/* every note card gets a tick circle at its top right; a ticked card shows its ORDER (1, 2, 3): the first keeps its name in a merge */
+#grid .card { position: relative; }
+.card .gtick { display: none; position: absolute; top: -8px; right: -8px; width: 44px; height: 44px; padding: 0; border: 0; background: transparent;
+  place-items: center; cursor: pointer; z-index: 2; }
+.card .gtick::before { content: ""; grid-area: 1 / 1; width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--muted); background: var(--card);
+  box-sizing: content-box; box-shadow: 0 1px 3px rgba(20,22,26,.25); }
+.card .gtick b { grid-area: 1 / 1; color: var(--card); font-size: 14px; visibility: hidden; }
+body.gsel .card .gtick { display: grid; }
+body.gsel .card.plus { opacity: .35; pointer-events: none; }
+.card.ticked .gtick::before { background: var(--ink); border-color: var(--ink); }
+.card.ticked .gtick b { visibility: visible; }
+.card.ticked .thumb { outline: 2px solid var(--ink); outline-offset: 2px; }
+/* the action bar under the grid: Move to..., Merge, then the Bin on its own at the right (never beside a routine tap) */
+#gridActs { flex: none; display: flex; align-items: center; gap: 4px; padding: 6px 12px; border-top: 1px solid var(--line); background: var(--desk); }
+#gridActs .plAct { flex: 0 1 140px; white-space: nowrap; }
+#gridActs .gap { flex: 1; }
+#gridActs .plAct.bin:not(:disabled) { color: #B23A3A; }
+/* the merge question's one paragraph, the picker's line */
+.dlgText { font-weight: 500; font-size: 13.5px; line-height: 1.4; }
+/* a toast with one word on it (the merge's Undo): it takes taps while it shows */
+#toast.act.show { pointer-events: auto; display: flex; align-items: center; gap: 14px; }
+#toast .toastAct { flex: none; min-height: 32px; padding: 0 6px; border: 0; border-radius: 6px; background: transparent; color: inherit;
+  font: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+
 /* ---------- tablet portrait ---------- */
 @media (max-width: 900px) {
   :root { --side-w: 250px; }
@@ -831,6 +897,8 @@ svg.ink text, svg.thumbInk text { pointer-events: none; user-select: none; -webk
 @media (max-width: 599.98px) {
   #app, body.noteMode #app { grid-template-columns: minmax(0, 1fr); }
   #tray { display: none !important; }
+  /* pw-v8z: the phone's bar has no room, so the chip and the star stay off it (the ... menu has both doors) */
+  #noteName .chip, #noteName .starBtn { display: none; }
   /* pw-v8y: the folder view slides in from the left over the grid (body.drawer), the veil dims the grid behind it.
      Under the menus (40+), the calculator (45), the dialogs (55) and the toast (60). */
   #side {

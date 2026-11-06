@@ -187,7 +187,7 @@ try:
         pg.tap("#gridBack"); pg.wait_for_timeout(SLIDE)
         nrow(pg, "Proef V2").tap(); opened(pg); s = state(pg)
         check("a note row tap in the drawer opens the note (and the drawer is shut)", s["noteOpen"] and not s["drawer"]
-              and pg.inner_text("#noteName") == "Proef V2", s)
+              and pg.inner_text("#noteName .nn") == "Proef V2", s)
         pg.tap("#backBtn"); pg.wait_for_selector("#listView:not([hidden])"); pg.wait_for_timeout(150); s = state(pg)
         check("Back from it: the grid, the drawer still shut", not s["noteOpen"] and not s["drawer"] and s["title"] == "Grade 11", s)
         pg.tap("#gridBack"); pg.wait_for_timeout(SLIDE)

@@ -621,7 +621,7 @@ try:
         ctx2.close()
         check("no page errors (the whole run)", not errs, errs)
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        check("cache is pw-v8y", "pw-v8y" in keys, keys)
+        check("cache is pw-v9b", "pw-v9b" in keys, keys)
 
         ctx.close()
         b.close()

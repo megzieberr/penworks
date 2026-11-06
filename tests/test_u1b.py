@@ -42,6 +42,7 @@ STORED_JS = """async (name) => { const d = await window.__pw.api.loadAll(), n = 
 # or its thumb (#plThumbs) and the page list's Bookmarks toggle (#plMarks). Anything else bookmark- or ribbon-named fails.
 NO_RIBBON_JS = """() => [...document.querySelectorAll('*')].filter(e =>
   !(e.closest('.bookmarkTab') && e.closest('#stack, #plThumbs')) && e.id !== 'plMarks' &&
+  !(e.closest('.bmBtn') && e.closest('#plThumbs')) &&                     // pw-v9a: each thumb's ribbon button, her ask
   /ribbon|bookmark/i.test((typeof e.className === 'string' ? e.className : (e.className && e.className.baseVal) || '') + ' ' + e.id + ' '
     + (e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('title') || ''))).map(e => e.tagName + '#' + e.id)"""
 
@@ -145,7 +146,7 @@ try:
         check("last-edited time shows (today = hh:mm)", len(whens) == 2 and all(re.match(r"^\d\d:\d\d$", w) for w in whens), whens)
         pg.wait_for_timeout(30)
         pg.click("#newNote"); pg.wait_for_selector("#noteView:not([hidden])")
-        check("+ makes Untitled with one page and opens it", pg.inner_text("#noteName") == "Untitled" and len(stack(pg)) == 1, [pg.inner_text("#noteName"), len(stack(pg))])
+        check("+ makes Untitled with one page and opens it", pg.inner_text("#noteName .nn") == "Untitled" and len(stack(pg)) == 1, [pg.inner_text("#noteName .nn"), len(stack(pg))])
         back(pg)
         check("newest first", grid(pg) == ["Untitled", "Geometry", "Algebra"], grid(pg))
         pg.wait_for_timeout(30)
@@ -274,7 +275,7 @@ try:
         check("reload: the All notes grid shows, the note is not reopened", pg.locator("#noteView").is_hidden()
               and pg.inner_text("#gridTitle") == "All notes" and pg.locator(".frow.all.sel").count() == 1, pg.inner_text("#gridTitle"))
         card(pg, "Algebra").click(); pg.wait_for_selector("#noteView:not([hidden])"); pg.wait_for_timeout(150)
-        check("opened from its card: paper and orientation saved", pg.inner_text("#noteName") == "Algebra"
+        check("opened from its card: paper and orientation saved", pg.inner_text("#noteName .nn") == "Algebra"
               and [bg for _, _, bg in stack(pg)] == ["lined"] * 4 and [w for _, w, _ in stack(pg)] == [794, 1123, 794, 794], stack(pg))
 
         # ------------------------------------------------------------ full screen
@@ -400,7 +401,7 @@ try:
             st = pg.evaluate("(u)=>fetch(u).then(r=>r.status+' '+r.headers.get('content-type'))", ic["src"])
             check("icon " + ic["src"], st.startswith("200 image/png"), st)
         check("service worker registers and is active", pg.evaluate("navigator.serviceWorker.ready.then(r=>!!r.active)"))
-        check("cache is pw-v8y (share pages)", pg.evaluate("caches.keys()") == ["pw-v8y"] or "pw-v8y" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v9b (share pages)", pg.evaluate("caches.keys()") == ["pw-v9b"] or "pw-v9b" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
         inst = ctx.new_cdp_session(pg).send("Page.getInstallabilityErrors")
         check("Chrome sees it as installable", not inst.get("installabilityErrors"), inst)
         pg.reload(); ready(pg); pg.wait_for_timeout(500)

@@ -33,8 +33,20 @@
 // The app opens on All notes every time and never reopens the last note (her rule 1 Nov); Back from a note still lands
 // where she opened it from, and a note still opens on the page she was last on. On the phone the grid is the home
 // screen in two columns, and the folder view is a drawer behind the menu button (body.drawer, the #sideVeil behind it).
+// pw-v8z (her ask 2, 6 Nov): an open note's bar shows where the note lives, a small folder chip after its name (a tap
+// opens the Move to list), and a star beside it that pins the note to the top of its grid. On the phone the bar has no
+// room, so the chip and star are hidden there; the same two doors (Move to..., Pin to top) head the Note part of the
+// bar's ... menu at every width. After a move, Back lands in the folder the note now lives in (All notes stays All notes).
+// pw-v9a (her ask 1, 6 Nov): bookmarks the Samsung way. Every thumb in the page list has its own ribbon button at the
+// paper's top right: grey when the page is not bookmarked, the ink blue when it is, one tap turns it on or off (the list
+// stays where it was, the page she is on does not change). The big page's ribbon is the same blue and the pen never
+// touches it. In tick mode the tick owns that corner. The page menu's Bookmark and the Bookmarks filter stay as they were.
+// pw-v9b (her ask 4, 6 Nov): Select on the notes grid (or a long press on a card) ticks notes, each showing the order
+// she tapped it in; then Move to..., Merge, or Put in the Bin. A merge keeps the first note's name, adds the others' pages
+// after its own and bins the emptied notes; the toast's Undo puts it all back for 8 seconds. A laptop right-click on a
+// card still opens its menu. The page list's Select has To note: the ticked pages go to the end of another note.
 import { api } from './api.js';
-import { initPage, showStack, fit, scrollToPage, relayout, current, bookmarkTab, markSheet, bgSvg, pageSize, setLock, locked } from './page.js';
+import { initPage, showStack, fit, scrollToPage, relayout, current, markSheet, bgSvg, pageSize, setLock, locked } from './page.js';
 import * as ink from './ink.js';
 import * as store from './store.js';
 import { initCalc } from './calcpanel.js';
@@ -49,7 +61,7 @@ import { buildPdf } from './pdfout.js';
 
 const $ = (id) => document.getElementById(id);
 const S = { folders: [], notes: [], pages: [], sel: 'loose', openNote: null, cur: 0, fold: {}, renaming: null,
-            listOpen: false, hist: {}, clip: [], tick: null, user: null };
+            listOpen: false, hist: {}, clip: [], tick: null, gsel: null, user: null };
 const PREF = 'penworks.' + api.mode + '.';
 const DAY = 864e5;
 // Samsung's small folder palette
@@ -105,12 +117,25 @@ const SVG_BIN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stro
 const SVG_CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>';
 const SVG_PIN = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M14.5 2.5l7 7-2.2.7-3.6 3.6.6 4.6-1.6 1.6-4.3-4.3L5 21l-1-1 5.3-5.4L5 10.3l1.6-1.6 4.6.6 3.6-3.6z"/></svg>';
 const SVG_PLUS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
+const SVG_STAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M12 3.2l2.7 5.6 6.1.8-4.5 4.3 1.2 6.1L12 17.1 6.5 20l1.2-6.1L3.2 9.6l6.1-.8z"/></svg>';
+const SVG_DOWN = '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
 const SVG_DOC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 15.5h6M9 19h4"/></svg>';
 
 let toastT = null;
-function toast(msg, ms = 2600) {
-  const t = $('toast'); t.textContent = msg; t.classList.add('show');
-  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), ms);
+// pw-v9b: opt = { action: { label, fn } } puts one word on the toast (the merge's Undo); a tap runs fn once and hides it.
+// The word lives only while the toast shows; the next toast replaces it.
+function toast(msg, ms = 2600, opt = null) {
+  const t = $('toast'), act = opt && opt.action;
+  t.textContent = msg; t.classList.toggle('act', !!act);
+  if (act) {
+    let used = false;
+    t.append(h('button', { type: 'button', class: 'toastAct', onclick: () => {
+      if (used) return;
+      used = true; clearTimeout(toastT); t.classList.remove('show', 'act'); act.fn();
+    } }, act.label));
+  }
+  t.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show', 'act'), ms);
 }
 
 // ---------------------------------------------------------------- autosave: one named api call per change, queued
@@ -148,7 +173,7 @@ function rememberFold() {
 
 // ---------------------------------------------------------------- folders
 function select(key) {
-  S.sel = key; S.renaming = null; remember();
+  S.sel = key; S.renaming = null; S.gsel = null; remember();   // pw-v9b: a folder pick ends select mode
   setDrawer(false);                                         // phone: a pick in the drawer closes it
   render();
 }
@@ -280,10 +305,23 @@ function renameNote(id, value) {
   n.name = v; n.updated_at = nowIso();                 // a rename counts as an edit (the database agrees)
   save('renameNote', id, v);
 }
-function moveNote(id, fid) {
+function moveNote(id, fid, quiet) {
   const n = note(id); n.folder_id = fid;               // moving does not count as an edit
   save('moveNote', id, fid);
-  render();
+  // pw-v8z: the open note moved, so Back lands where it now lives (opened from All notes, Back stays on All notes)
+  if (id === S.openNote && S.sel !== 'all') { S.sel = keyOf(fid); remember(); }
+  if (!quiet) render();                                // quiet: the grid's Move to... moves several, then renders once
+}
+// pw-v8z: the open note's two doors, from the bar's chip and star and from the ... menu (one code path, one toast)
+const whereNote = (fid) => (fid ? folderPath(folder(fid)) : 'Loose');
+function moveOpenNote(anchor) {
+  const id = S.openNote, n = note(id);
+  targetMenu(anchor, noteTargets(n), (fid) => { moveNote(id, fid); toast('Moved to ' + whereNote(fid)); });
+}
+function pinOpenNote() {
+  const n = note(S.openNote);
+  pinNote(n.id, !n.pinned);
+  toast(n.pinned ? 'Pinned to top' : 'Unpinned');
 }
 function pinNote(id, on) {
   const n = note(id); n.pinned = on;                    // pinning does not count as an edit
@@ -315,20 +353,25 @@ function setDeleted(ids, value) {
   const all = new Set([...ids.folders, ...ids.notes, ...ids.pages]);
   for (const t of ['folders', 'notes', 'pages']) S[t].forEach((r) => { if (all.has(r.id)) r.deleted_at = value; });
 }
-function binThing(kind, id) {
+// quiet (pw-v9b): no toast and no render, the caller bins or restores several and says it once.
+// A note whose pages all went into a merge bins as the note alone (no page matches) and restores as an empty note;
+// openNote gives an empty note one blank page.
+function binThing(kind, id, quiet) {
   const T = nowIso(), ids = binIds(kind, id, (r) => !r.deleted_at);
   setDeleted(ids, T);
   save('bin', ids, T);
   if (S.openNote && !liveNote(note(S.openNote))) closeNote(true);
   if (!selOk(S.sel)) { S.sel = 'loose'; remember(); }
+  if (quiet) return;
   toast('Moved to the Bin. It stays there for 30 days.');
   render();
 }
-function restoreThing(kind, id) {
+function restoreThing(kind, id, quiet) {
   const r = kind === 'note' ? note(id) : folder(id), T = r.deleted_at;
   const ids = binIds(kind, id, (x) => same(x.deleted_at, T));
   setDeleted(ids, null);
   save('restore', ids);
+  if (quiet) return;
   toast('Restored.');
   render();
 }
@@ -343,6 +386,8 @@ function binItems() {
 let openTok = 0;
 async function openNote(id, index) {                       // no index: the page she was last on (pw-v7p)
   if (!liveNote(note(id))) return;
+  S.gsel = null;                                            // pw-v9b: opening a note ends the grid's select mode
+  if (!pagesOf(id).length) blankPage(id);                   // pw-v9b: an empty note (emptied by a merge, then restored) gets one blank page
   const tok = ++openTok;
   await store.ensure(pagesOf(id).map((p) => p.id));        // the pages' strokes from the device cache before the sheets attach
   if (tok !== openTok || !liveNote(note(id))) return;       // another note was opened meanwhile
@@ -353,6 +398,16 @@ async function openNote(id, index) {                       // no index: the page
   if (!(history.state && history.state.note)) history.pushState({ note: id }, '');
   showLock(false);                                          // pw-v7b: a note always opens unlocked and fitted
   stackKey = ''; render(); fit(index, 'open');
+}
+// one plain page at the end of a note, not an undo step (the empty-note path of openNote)
+function blankPage(nid) {
+  const t = nowIso();
+  const p = { id: uuid(), note_id: nid, position: nextPos(S.pages.filter((x) => x.note_id === nid && !x.deleted_at)), orientation: 'portrait',
+              background: 'grid', bookmark: false, deleted_at: null, created_at: t, updated_at: t };
+  S.pages.push(p);
+  save('createPage', p);
+  touchNote(nid);
+  return p;
 }
 function closeNote(skipHistory) {
   if (document.body.classList.contains('full')) exitFull();
@@ -563,7 +618,7 @@ function setBookmark(id, on) {
   p.bookmark = on;
   save('setBookmark', id, on);                      // U3c: the row; not an edit, the note keeps its place
   markSheet(id, on);
-  if (S.listOpen) renderPageList();
+  if (S.listOpen) { const T = $('plThumbs'), top = T.scrollTop; renderPageList(); T.scrollTop = top; }   // pw-v9a: the list stays where she was
   toast(on ? 'Bookmarked' : 'Bookmark removed');
 }
 
@@ -689,15 +744,21 @@ function paperMenu(anchor) {
     { label: 'Grid, 1 cm squares', on: !pdf && p.background === 'grid', disabled: pdf, keep: true, fn: () => ask('background', 'grid') },
     { label: 'Lined', on: !pdf && p.background === 'lined', disabled: pdf, keep: true, fn: () => ask('background', 'lined') },
     { head: 'Note' },
+    { label: 'Move to...', keep: true, fn: () => moveOpenNote(anchor) },                // pw-v8z: the chip's door, every width
+    note(S.openNote).pinned ? { label: 'Unpin', fn: pinOpenNote } : { label: 'Pin to top', fn: pinOpenNote },
     { label: trayLeft ? 'Tray to the right' : 'Tray to the left', fn: flipTray },   // pw-v7c: names what a tap does
     { label: 'Share note', fn: shareNote },                           // pw-v6b: every page, no ticking
     { label: 'Bin this note', fn: () => binThing('note', S.openNote) }]);   // Bin stays last (Fable: never beside a routine tap)
 }
 
-// long-press on touch, right-click on a laptop
-function pressable(el, open) {
-  let t = null, fired = false, s0 = null;
+// long-press on touch, right-click on a laptop.
+// pw-v9b: `mouse` (optional) is what a right-click with a MOUSE does instead (the grid card: a long press starts select
+// mode, a laptop right-click still opens the note's menu). A touch long press also sends a contextmenu: that one, and
+// any contextmenu after the hold already fired, never opens a second thing.
+function pressable(el, open, mouse) {
+  let t = null, fired = false, s0 = null, kind = 'mouse';
   el.addEventListener('pointerdown', (e) => {
+    kind = e.pointerType || 'mouse';
     if (e.target.closest('button:not(.card), input') || e.button > 0) return;
     fired = false; s0 = [e.clientX, e.clientY];
     t = setTimeout(() => { fired = true; open(); }, 550);
@@ -705,7 +766,12 @@ function pressable(el, open) {
   el.addEventListener('pointermove', (e) => { if (t && s0 && Math.hypot(e.clientX - s0[0], e.clientY - s0[1]) > 8) clearTimeout(t); });
   for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) el.addEventListener(ev, () => clearTimeout(t));
   el.addEventListener('click', (e) => { if (fired) { e.stopPropagation(); e.preventDefault(); fired = false; } }, true);
-  el.addEventListener('contextmenu', (e) => { e.preventDefault(); clearTimeout(t); open(); });
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault(); clearTimeout(t);
+    if (!mouse) { open(); return; }
+    if (fired) return;
+    if (kind === 'mouse') mouse(); else { fired = true; open(); }
+  });
 }
 
 // a name, or the box to rename it in
@@ -788,6 +854,7 @@ function paper(p, extra = '') {
 function renderGrid() {
   const G = $('grid'); G.textContent = '';
   if (S.sel === 'bin') {
+    S.gsel = null; renderGridBar([]);
     $('gridTitle').textContent = 'Bin';
     G.className = 'binList';
     const items = binItems();
@@ -808,17 +875,156 @@ function renderGrid() {
   G.append(h('button', { class: 'card plus', type: 'button', id: 'openPdf', 'aria-label': 'Open PDF', onclick: () => pickPdf({ folderId: fid }) },
     h('div', { class: 'thumb', html: SVG_DOC }), h('span', { class: 'cname' }, 'Open PDF')));
   // pw-v8y: All notes = every live note (a New note or PDF made there goes to Loose: fid is null), each card saying where it lives
-  for (const n of all ? S.notes.filter(liveNote).sort(noteOrder) : notesIn(fid)) {
+  const shown = all ? S.notes.filter(liveNote).sort(noteOrder) : notesIn(fid);
+  if (S.gsel) S.gsel.ids = S.gsel.ids.filter((id) => shown.some((n) => n.id === id));   // a note that left the grid drops its tick
+  for (const n of shown) {
     const thumb = cardThumb(n);
-    const card = h('div', { class: 'card' + (n.pinned ? ' pinned' : ''), 'data-id': n.id, onclick: () => openNote(n.id) },
+    const at = S.gsel ? S.gsel.ids.indexOf(n.id) : -1;
+    const card = h('div', { class: 'card' + (n.pinned ? ' pinned' : '') + (at >= 0 ? ' ticked' : ''), 'data-id': n.id,
+      onclick: () => (S.gsel ? gToggle(n.id) : openNote(n.id)) },
       thumb,
       h('div', { class: 'meta' },
         nameOrInput('note', n.id, n.name, 'card'),
         h('small', { class: 'when' }, edited(n.updated_at)),
-        all ? h('small', { class: 'where' }, n.folder_id ? folderPath(folder(n.folder_id)) : 'Loose') : null));
-    pressable(card, () => noteMenu(n.id, card.querySelector('.thumb'), 'card'));
+        all ? h('small', { class: 'where' }, n.folder_id ? folderPath(folder(n.folder_id)) : 'Loose') : null),
+      h('button', { class: 'gtick', type: 'button', 'aria-label': 'Tick ' + n.name, 'aria-pressed': at >= 0 ? 'true' : 'false',
+        onclick: (e) => { e.stopPropagation(); if (S.gsel) gToggle(n.id); } }, h('b', {}, at >= 0 ? String(at + 1) : '')));
+    // pw-v9b: a long press starts select mode with this card ticked (Samsung's habit); a mouse right-click keeps the menu
+    pressable(card, () => { if (!S.gsel) startGsel(n.id); },
+      () => { if (!S.gsel) noteMenu(n.id, card.querySelector('.thumb'), 'card'); });
     G.append(card);
   }
+  renderGridBar(shown);
+}
+
+// ---------------------------------------------------------------- pw-v9b: select, move, merge on the grid
+// Select (the grid bar's word, or a long press on a card) ticks notes; S.gsel = { ids } keeps them in the order she
+// tapped them, and each ticked card shows its place (1, 2, 3). The bar under the grid: Move to..., Merge (two or more),
+// and Put in the Bin on its own at the right. Done, Escape, a folder pick, opening a note and the Bin end it.
+// Merge: the note ticked first keeps its name; the pages of the others follow its own, in tap order, each note's pages
+// in their own order (they change note_id; their ink hangs on the page and goes with it); the emptied notes go to the
+// Bin. The toast's Undo (8 seconds) puts every page back on its old note at its old place and restores the notes.
+// After that the only way back is the Bin's Restore, which gives the emptied notes back EMPTY (their pages stay in the
+// keeper); an empty note gets one blank page when it opens.
+const UNDO_MS = 8000;
+const WORDS = ['', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+const notesWord = (n) => n + (n === 1 ? ' note' : ' notes');
+function shownNotes() { return S.sel === 'all' ? S.notes.filter(liveNote).sort(noteOrder) : notesIn(selKey()); }
+function startGsel(first) {
+  if (S.sel === 'bin' || S.openNote) return;
+  closeMenu(); S.renaming = null;
+  S.gsel = { ids: first ? [first] : [] };
+  render();
+}
+function endGsel() { if (!S.gsel) return; S.gsel = null; closeMenu(); render(); }
+function gToggle(id) {
+  const I = S.gsel.ids, k = I.indexOf(id);
+  if (k >= 0) I.splice(k, 1); else I.push(id);
+  render();
+}
+function gAll() {
+  const ids = shownNotes().map((n) => n.id), every = ids.length && ids.every((id) => S.gsel.ids.includes(id));
+  S.gsel.ids = every ? [] : [...S.gsel.ids, ...ids.filter((id) => !S.gsel.ids.includes(id))];
+  render();
+}
+// the grid bar's Select, or All + "n selected" + Done; and the action bar under the grid
+function renderGridBar(shown) {
+  const B = $('gridBar'), on = !!S.gsel;
+  document.body.classList.toggle('gsel', on);
+  B.querySelectorAll('.gAll, .plWord').forEach((e) => e.remove());
+  if (on) {
+    const n = S.gsel.ids.length, every = shown.length > 0 && n === shown.length;
+    $('gridTitle').textContent = n + ' selected';
+    $('gridTitle').before(h('button', { class: 'gAll' + (every ? ' on' : ''), type: 'button', id: 'gridAll', 'aria-label': 'Tick every note',
+      'aria-pressed': every ? 'true' : 'false', onclick: gAll }, h('span', { class: 'box' }), h('span', { class: 'lbl' }, 'All')));
+    B.append(h('button', { class: 'plWord', type: 'button', id: 'gridDone', onclick: endGsel }, 'Done'));
+  } else if (S.sel !== 'bin' && shown.length) {
+    B.append(h('button', { class: 'plWord sel', type: 'button', id: 'gridSelect', onclick: () => startGsel(null) }, 'Select'));
+  }
+  const A = $('gridActs'); A.textContent = ''; A.hidden = !on;
+  if (!on) return;
+  const n = S.gsel.ids.length;
+  const mv = h('button', { type: 'button', class: 'plAct', 'data-act': 'move', disabled: !n, onclick: () => gMove(mv) }, 'Move to...');
+  A.append(mv,
+    h('button', { type: 'button', class: 'plAct', 'data-act': 'merge', disabled: n < 2, onclick: askMerge }, 'Merge'),
+    h('span', { class: 'gap' }),
+    h('button', { type: 'button', class: 'plAct bin', 'data-act': 'bin', disabled: !n, onclick: gBin }, 'Put in the Bin'));
+}
+function gMove(anchor) {
+  const ids = S.gsel.ids.slice();
+  const all = [{ label: 'Loose', id: null }];
+  for (const t of topFolders()) { all.push({ label: t.name, id: t.id }); for (const s of subFolders(t.id)) all.push({ label: t.name + ' / ' + s.name, id: s.id }); }
+  const targets = all.filter((t) => !ids.every((id) => (note(id).folder_id || null) === t.id));   // not where EVERY ticked note is
+  targetMenu(anchor, targets, (fid) => {
+    ids.forEach((id) => moveNote(id, fid, true));
+    S.gsel = null; render();
+    toast('Moved ' + notesWord(ids.length) + ' to ' + whereNote(fid));
+  });
+}
+function gBin() {
+  const ids = S.gsel.ids.slice();
+  ids.forEach((id) => binThing('note', id, true));
+  S.gsel = null; render();
+  toast(notesWord(ids.length) + ' put in the Bin');
+}
+let mergeDlg = null;
+function closeMergeDlg() { if (mergeDlg) { mergeDlg.remove(); mergeDlg = null; } }
+function askMerge() {
+  const ids = S.gsel.ids.slice();
+  if (ids.length < 2) return;
+  closeMenu(); closeMergeDlg();
+  const [keep, ...rest] = ids.map(note), left = rest.length;
+  const text = 'Its pages come first, ' + rest.map((n) => 'then ' + n.name).join(', ') + ', in the order you tapped them. '
+    + (left === 1 ? 'The emptied note goes to the Bin.' : 'The ' + (WORDS[left] || left) + ' emptied notes go to the Bin.')
+    + ' Undo stays on the screen for a while after.';
+  const close = () => { if (mergeDlg === veil) closeMergeDlg(); };
+  const ok = h('button', { type: 'button', class: 'dlgBtn main', 'data-merge': 'ok', onclick: () => { close(); doMerge(ids); } }, 'Merge');
+  const box = h('div', { class: 'dlg', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'mergeTitle' },
+    h('p', { class: 'dlgTitle', id: 'mergeTitle' }, 'Merge ' + notesWord(ids.length) + ' into ', h('b', {}, keep.name), '?'),
+    h('p', { class: 'dlgLbl dlgText', id: 'mergeText' }, text),
+    h('div', { class: 'dlgRow' }, ok, h('button', { type: 'button', class: 'dlgBtn', 'data-merge': 'cancel', onclick: close }, 'Cancel')));
+  const veil = mergeDlg = h('div', { class: 'dlgVeil', id: 'mergeDlg' }, box);
+  veil.addEventListener('pointerdown', (e) => { if (e.target === veil) close(); });
+  veil.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') close(); });   // the app's Escape (select mode) waits
+  document.body.append(veil);
+  ok.focus();
+}
+// the pages of ids[1..] go to the end of ids[0]; returns what Undo needs: { before: [[page id, note id, position]], binned }
+function mergeNotes(ids) {
+  const keep = ids[0];
+  let pos = nextPos(pagesOf(keep));                          // the same append as a PDF's pages (addPdfPages)
+  const before = [], rows = [];
+  for (const id of ids.slice(1)) for (const p of pagesOf(id)) {
+    before.push([p.id, p.note_id, p.position]);
+    p.note_id = keep; p.position = pos++;
+    rows.push([p.id, keep, p.position]);
+  }
+  if (rows.length) save('movePagesTo', rows);              // first, so the Bin below finds the emptied notes without pages
+  touchNote(keep);                                          // a merge counts as an edit on the keeper
+  const binned = ids.slice(1).filter((id) => liveNote(note(id)));
+  binned.forEach((id) => { binThing('note', id, true); pics.syncCover(id); });
+  pics.syncCover(keep);
+  return { before, binned };
+}
+function unmerge(m) {
+  m.binned.forEach((id) => { const n = note(id); if (n && n.deleted_at) restoreThing('note', id, true); });
+  const rows = [];
+  for (const [pid, nid, pos] of m.before) {
+    const p = page(pid);
+    if (!p || p.deleted_at || !note(nid)) continue;
+    p.note_id = nid; p.position = pos; rows.push([pid, nid, pos]);
+  }
+  if (rows.length) save('movePagesTo', rows);
+  new Set(m.before.map((b) => b[1])).forEach((nid) => pics.syncCover(nid));
+}
+function doMerge(ids) {
+  const keep = ids[0], keepName = note(keep).name, m = mergeNotes(ids);
+  S.gsel = null; render();
+  toast(notesWord(ids.length) + ' merged into ' + keepName, UNDO_MS, { action: { label: 'Undo', fn: () => {
+    unmerge(m);
+    if (S.openNote === keep) stackKey = '';
+    render(); toast('Merge undone');
+  } } });
 }
 
 // a note card's picture: its first page's paper, the pin, the cover over it (the grid, and U4b's Add to a note)
@@ -900,6 +1106,8 @@ function updateCount() {
 // works on the shown pages; hold-and-drag and tick mode's Move are off while it is on (the shown pages are not
 // side by side in the note, so a place between two of them means nothing).
 let bmOnly = false;
+// pw-v9a: the thumb's ribbon button, the page's ribbon shape with a half-pixel inset so its faint stroke shows (colours: css)
+const RIB = '<svg viewBox="0 0 16 26" preserveAspectRatio="none" aria-hidden="true"><path d="M0.5 0.5H15.5V25L8 18.7L0.5 25Z"/></svg>';
 const shownPages = () => { const all = S.openNote ? pagesOf(S.openNote) : []; return bmOnly ? all.filter((p) => p.bookmark) : all; };
 function toggleBookmarks() {
   bmOnly = !bmOnly;
@@ -922,13 +1130,15 @@ function renderPageList() {
       onpointerdown: thumbDown,
       oncontextmenu: (e) => { e.preventDefault(); if (!pd && !S.tick) thumbMenu(i, t); } },   // right-click; a long press lifts instead
       paper(p, ' ' + p.orientation), h('span', { class: 'num' }, String(i + 1)),
+      h('button', { class: 'bmBtn', type: 'button', 'aria-pressed': p.bookmark ? 'true' : 'false',   // pw-v9a: the thumb's own ribbon, one tap on or off
+        'aria-label': p.bookmark ? 'Remove bookmark' : 'Bookmark page ' + (i + 1), html: RIB,
+        onclick: (e) => { e.stopPropagation(); setBookmark(p.id, !p.bookmark); } }),
       h('button', { class: 'more', type: 'button', 'aria-label': 'Page menu',
         onclick: (e) => { e.stopPropagation(); thumbMenu(i, e.currentTarget); } }, '⋯'),
       h('button', { class: 'tick', type: 'button', 'aria-label': 'Tick page ' + (i + 1), 'aria-pressed': 'false', html: SVG_TICK,
         onclick: (e) => { e.stopPropagation(); if (S.tick && !S.tick.moving) toggleTick(p.id); } }));
     const pp = t.querySelector('.paper');
     if (p.pdf_path) { const sz = pageSize(p); pp.style.aspectRatio = sz.w + ' / ' + sz.h; pdfview.thumbInto(pp, p); }   // U4a: its own shape, the PDF under the ink
-    if (p.bookmark) pp.append(bookmarkTab());           // the same ribbon tab as the page
     pp.append(ink.thumbSvg(p.id, p));                   // the page's ink on the paper
     T.append(t);
   });
@@ -994,6 +1204,78 @@ function tickAction(kind) {
   } else if (kind === 'move') { S.tick.moving = true; renderTick(); }
   else if (kind === 'rotate') rotatePages(ids);                             // pw-v7p: the ticks stay, another tap turns them again
   else if (kind === 'share') openShare(ids);
+  else if (kind === 'tonote') {                                             // pw-v9b: the ticked pages to the end of another note
+    pickNote(['Move ', h('b', {}, pagesWord(n)), ' to'], (to) => pagesToNote(ids, to),
+      { exclude: [S.openNote], line: 'They land at the end of the note you pick.' });
+  }
+}
+// pw-v9b: the ticked pages leave the open note for the END of note `to`, in their order (the merge's note_id op); the
+// open note closes its gaps. Not an undo step of the note: the toast's Undo (8 seconds) puts them back where they were.
+// The open note's undo history is cleared (an old step could name a page that now lives in another note).
+function pagesToNote(ids, to) {
+  const from = S.openNote, old = pagesOf(from), set = new Set(ids);
+  const moving = old.filter((p) => set.has(p.id));
+  if (!moving.length || moving.length === old.length || !liveNote(note(to))) return;
+  const first = old.indexOf(moving[0]), oldIds = old.map((p) => p.id);
+  let pos = nextPos(pagesOf(to));
+  const rows = moving.map((p) => { p.note_id = to; p.position = pos++; return [p.id, to, p.position]; });
+  save('movePagesTo', rows);
+  touchNote(from); touchNote(to);
+  renumber(pagesOf(from));                                  // the open note without gaps (and its cover)
+  pics.syncCover(to);
+  S.hist[from] = { u: [], r: [] };
+  S.tick = null;
+  const left = pagesOf(from).length;
+  shown(Math.min(first, left - 1));
+  toast(pagesWord(moving.length) + ' moved to ' + note(to).name, UNDO_MS, { action: { label: 'Undo', fn: () => {
+    const back = moving.map((p) => page(p.id)).filter((p) => p && !p.deleted_at && liveNote(note(from)));
+    if (!back.length) return;
+    back.forEach((p) => { p.note_id = from; });
+    const order = [...oldIds.filter((id) => page(id) && page(id).note_id === from), ...pagesOf(from).map((p) => p.id).filter((id) => !oldIds.includes(id))];
+    const rows2 = [], pairs = [];
+    order.forEach((id, k) => {
+      const p = page(id);
+      if (back.includes(p)) { p.position = k; rows2.push([id, from, k]); } else if (p.position !== k) { p.position = k; pairs.push([id, k]); }
+    });
+    save('movePagesTo', rows2);
+    if (pairs.length) save('reorderPages', pairs);
+    renumber(pagesOf(to));
+    pics.syncCover(from); pics.syncCover(to);
+    if (S.openNote === from) shown(first); else render();
+    toast('Pages put back');
+  } } });
+}
+// pw-v9b: the note picker (U4b's Add to a note, pulled out): every live note but `exclude`, newest first, each as its card
+// with where it lives. Its own small dialog; or, with `box`, drawn into a dialog that is already open (the share sheet).
+let pickDlg = null;
+function closePick() { if (pickDlg) { pickDlg.remove(); pickDlg = null; } }
+function pickNote(title, onPick, { exclude = [], line = '', box = null, gridId = 'pickGrid', buttons = null } = {}) {
+  const notes = S.notes.filter((n) => liveNote(n) && !exclude.includes(n.id)).sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
+  const grid = h('div', { class: 'shareGrid', id: gridId });
+  let veil = null;
+  const close = () => { if (veil && pickDlg === veil) closePick(); };
+  for (const n of notes) {
+    grid.append(h('button', { type: 'button', class: 'card', 'data-id': n.id, onclick: () => { close(); onPick(n.id); } },
+      cardThumb(n),
+      h('div', { class: 'meta' }, h('span', { class: 'name' }, n.name),
+        h('small', { class: 'where' }, n.folder_id ? folderPath(folder(n.folder_id)) : 'Loose'))));
+  }
+  if (!notes.length) grid.append(h('p', { class: 'empty' }, exclude.length ? 'No other notes yet.' : 'No notes yet.'));
+  const head = h('b', { class: 'dlgTitle', id: box ? 'shareInTitle' : 'pickTitle' }, ...title);
+  if (box) {                                                // drawn into the share sheet: its own buttons
+    box.classList.add('wide'); box.textContent = '';
+    box.append(head, grid, h('div', { class: 'dlgRow end' }, ...buttons));
+    return;
+  }
+  closeMenu(); closePick();
+  const cancel = h('button', { type: 'button', class: 'dlgBtn', 'data-pick': 'cancel', onclick: () => close() }, 'Cancel');
+  const dlg = h('div', { class: 'dlg wide', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'pickTitle' },
+    head, grid, line ? h('p', { class: 'dlgLbl dlgText' }, line) : null, h('div', { class: 'dlgRow end' }, cancel));
+  veil = pickDlg = h('div', { class: 'dlgVeil', id: 'pickNote' }, dlg);
+  veil.addEventListener('pointerdown', (e) => { if (e.target === veil) close(); });
+  veil.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') close(); });   // the app's Escape (tick mode) waits
+  document.body.append(veil);
+  cancel.focus();
 }
 function moveTo(g) {
   const ids = ticked();
@@ -1033,8 +1315,10 @@ function renderTick() {
     return;
   }
   const pdfNote = pagesOf(S.openNote).some((p) => p.pdf_path);              // pw-v7p: Rotate only in a note with PDF pages
-  for (const [act, label] of [['delete', 'Delete'], ['copy', 'Copy'], ['cut', 'Cut'], ['move', 'Move'], ...(pdfNote ? [['rotate', 'Rotate']] : []), ['share', 'Share']]) {
+  B.classList.toggle('seven', pdfNote);                                    // pw-v9b: seven words, a step smaller (css)
+  for (const [act, label] of [['delete', 'Delete'], ['copy', 'Copy'], ['cut', 'Cut'], ['move', 'Move'], ['tonote', 'To note'], ...(pdfNote ? [['rotate', 'Rotate']] : []), ['share', 'Share']]) {
     const off = !n || (act === 'move' && (n === total || bmOnly))           // moving every page changes nothing; no Move in the filter
+      || (act === 'tonote' && n >= pagesOf(S.openNote).length)              // pw-v9b: a note keeps at least one page
       || (act === 'rotate' && !shownPages().some((p) => ids.has(p.id) && p.pdf_path));
     B.append(h('button', { type: 'button', class: 'plAct', 'data-act': act, disabled: off, onclick: () => tickAction(act) }, label));
   }
@@ -1257,19 +1541,10 @@ function openShareIn(file) {
     box.append(title('Open ', ' as'), h('div', { class: 'dlgRow' }, newBtn, addBtn), h('div', { class: 'dlgRow end' }, cancelBtn));
     newBtn.focus();
   };
-  const pick = () => {
-    box.classList.add('wide'); box.textContent = '';
-    const notes = S.notes.filter(liveNote).sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
-    const grid = h('div', { class: 'shareGrid', id: 'shareInGrid' });
-    for (const n of notes) {
-      grid.append(h('button', { type: 'button', class: 'card', 'data-id': n.id, onclick: () => go({ noteId: n.id }) },
-        cardThumb(n),
-        h('div', { class: 'meta' }, h('span', { class: 'name' }, n.name),
-          h('small', { class: 'where' }, n.folder_id ? folderPath(folder(n.folder_id)) : 'Loose'))));
-    }
-    if (!notes.length) grid.append(h('p', { class: 'empty' }, 'No notes yet.'));
+  const pick = () => {                                       // pw-v9b: the same note picker as the page list's To note
     const backBtn = h('button', { type: 'button', class: 'dlgBtn', 'data-share-in': 'back', onclick: first }, 'Back');
-    box.append(title('Add ', ' to'), grid, h('div', { class: 'dlgRow end' }, backBtn, cancelBtn));
+    pickNote(['Add ', h('span', { class: 'dlgFile' }, file.name), ' to'], (id) => go({ noteId: id }),
+      { box, gridId: 'shareInGrid', buttons: [backBtn, cancelBtn] });
     backBtn.focus();
   };
   veil.addEventListener('keydown', (e) => {
@@ -1398,6 +1673,14 @@ function renderNote() {
   if (R && R.kind === 'note' && R.id === n.id && R.where === 'head') N.append(nameOrInput('note', n.id, n.name, 'head'));
   else N.append(h('button', { class: 'nn', type: 'button', title: 'Rename',
     onclick: () => { S.renaming = { kind: 'note', id: n.id, where: 'head' }; renderNote(); } }, n.name));
+  // pw-v8z: where the note lives (a tap = the Move to list) and the Pin to top star; hidden on the phone (css)
+  const f = n.folder_id ? folder(n.folder_id) : null;
+  const chip = h('button', { class: 'chip', type: 'button', 'aria-label': 'Move to another folder',
+    onclick: (e) => { e.stopPropagation(); moveOpenNote(chip); } });
+  chip.innerHTML = (f ? svgFolder(f.colour || '#9AA0A8') : SVG_SHEET) + SVG_DOWN;
+  chip.insertBefore(h('span', { class: 'lbl' }, whereNote(n.folder_id)), chip.lastChild);
+  N.append(chip, h('button', { class: 'ib starBtn', type: 'button', 'aria-pressed': String(!!n.pinned),
+    'aria-label': n.pinned ? 'Unpin' : 'Pin to top', html: SVG_STAR, onclick: (e) => { e.stopPropagation(); pinOpenNote(); } }));
   const list = pagesOf(n.id);
   const key = n.id + '#' + list.map((p) => p.id + p.orientation[0] + p.background[0] + (p.pdf_rot || '')).join(',');
   if (key !== stackKey) { stackKey = key; showStack(list); }
@@ -1414,6 +1697,7 @@ function render() {
   const inNote = !!S.openNote;
   $('noteView').hidden = !inNote; $('listView').hidden = inNote;
   document.body.classList.toggle('noteMode', inNote);
+  if (inNote) document.body.classList.remove('gsel');      // pw-v9b: select mode is the grid's only
   renderSide();
   if (inNote) renderNote(); else renderGrid();
   renderTray();
@@ -1869,6 +2153,7 @@ function wire() {
       if (!$('menu').hidden) closeMenu();
       else if (S.tick && S.tick.moving) { S.tick.moving = false; renderTick(); }      // Escape in Move: back to the ticks
       else if (S.tick) endTick();                                                  // Escape in tick mode: the list stays open
+      else if (S.gsel && !S.openNote) endGsel();                                   // pw-v9b: Escape ends the grid's select mode
       else if (S.listOpen) { S.listOpen = false; renderPageList(); }
       else if (document.body.classList.contains('full') && !document.fullscreenElement) exitFull();
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }

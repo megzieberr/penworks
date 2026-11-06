@@ -346,6 +346,9 @@ export const api = {
   createPage: (r) => base.insert('pages', pick(r, ['id', 'note_id', 'position', 'orientation', 'background', 'bookmark',
     ...(r.pdf_path ? ['pdf_path', 'pdf_page', 'pdf_w', 'pdf_h', 'pdf_rot'] : [])])),
   reorderPages: (pairs) => eachPos('pages', pairs),
+  // pw-v9b: pages that change note (a merge, the page list's To note, an undo of either): rows = [[id, note_id, position], ...].
+  // No new column: pages.note_id and position were always there; the touch trigger marks the note they join as edited.
+  movePagesTo: async (rows) => { for (const [id, note_id, position] of rows) await base.update('pages', [id], { note_id, position }); },
   setPages: (ids, patch) => base.update('pages', ids, pick(patch, ['orientation', 'background', 'pdf_rot'])),
   // the bookmark (U3c, a column since 0004): not an edit, the note's "last edited" stays where it was
   setBookmark: (id, on) => base.update('pages', [id], { bookmark: !!on }),
