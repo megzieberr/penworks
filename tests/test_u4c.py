@@ -562,7 +562,9 @@ try:
         gaps = [round(fr[i] - fr[i - 1], 1) for i in range(2, len(fr))]
         check(f"zoom 3 (got {zz:.2f}): panning a page with three pictures, no frame gap over {FRAME_MS} ms", abs(zz - 3) < 0.05 and gaps and max(gaps) < FRAME_MS, [zz, max(gaps) if gaps else None, sorted(gaps)[-5:]])
         pg.screenshot(path=str(SHOTS / "u4c-zoom3.png"))
-        pg.reload(); ready(pg); pg.wait_for_selector("#noteView:not([hidden])"); pg.wait_for_timeout(300); pg.evaluate(HELP)
+        rnid = pg.evaluate("window.__pw.S.openNote")
+        pg.reload(); ready(pg)                              # pw-v8y: a reload opens on All notes; the note opens from its card
+        pg.locator(f"#grid .card[data-id='{rnid}']").click(); pg.wait_for_selector("#noteView:not([hidden])"); pg.wait_for_timeout(300); pg.evaluate(HELP)
         ies = [pg.evaluate("([s, r]) => window.__T.imgEl(s, r)", ["s0", r["id"]]) for r in imgs(pg)]
         check("after a reload: all three pictures drawn from the device copy (Blob URLs)", len(ies) == 3 and all(e and e["tag"] == "image" and e["href"] == "blob:" for e in ies), ies)
         check("no page errors (tablet)", not errs, errs)
@@ -577,7 +579,9 @@ try:
         check("offline: the picture lands on page 3 and shows (its <image>)", op and (pg.evaluate("([s, r]) => window.__T.imgEl(s, r)", ["s2", off.get("id")]) or {}).get("tag") == "image", off)
         check("offline: its file waits to upload", pg.evaluate("window.__pw.pdf.uploadsPending()") == 1, pg.evaluate("window.__pw.pdf.uploadsPending()"))
         pg.wait_for_timeout(300)
-        pg.reload(); ready(pg); pg.wait_for_selector("#noteView:not([hidden])"); pg.wait_for_timeout(400); pg.evaluate(HELP)
+        rnid = pg.evaluate("window.__pw.S.openNote")
+        pg.reload(); ready(pg)                              # pw-v8y: a reload opens on All notes; the note opens from its card
+        pg.locator(f"#grid .card[data-id='{rnid}']").click(); pg.wait_for_selector("#noteView:not([hidden])"); pg.wait_for_timeout(400); pg.evaluate(HELP)
         ie = pg.evaluate("([s, r]) => window.__T.imgEl(s, r)", ["s2", off.get("id")])
         check("offline reload: the picture is still there and shows (the device copy)", until(pg, lambda: (pg.evaluate("([s, r]) => window.__T.imgEl(s, r)", ["s2", off.get("id")]) or {}).get("tag") == "image", 4000),
               pg.evaluate("([s, r]) => window.__T.imgEl(s, r)", ["s2", off.get("id")]))
@@ -617,7 +621,7 @@ try:
         ctx2.close()
         check("no page errors (the whole run)", not errs, errs)
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        check("cache is pw-v8q", "pw-v8q" in keys, keys)
+        check("cache is pw-v8y", "pw-v8y" in keys, keys)
 
         ctx.close()
         b.close()

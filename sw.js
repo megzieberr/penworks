@@ -19,9 +19,10 @@
    pw-v8v (5 Nov): the calculator's face redrawn as her fx-991ZA (light body, keys filled by their label, the small words above), its colours hers (pw.calcFace).
    pw-v8w (5 Nov): eight soft pastel chips for the calculator's body under the Body row (her ask: the body was very bright).
    pw-v8x (5 Nov): seven face fixes, CSS only: FACT, x-square, fraction and root keys drawn like the real ones, words closer to their keys, a real four-key arrow pad.
+   pw-v8y (6 Nov): All notes on top of the folder view and the app opens on it every time; the phone grid in two columns, the folders in a drawer.
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v8x";
+const CACHE = "pw-v8y";
 const SHARE_DB = "penworks.share";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",

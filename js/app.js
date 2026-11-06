@@ -28,6 +28,11 @@
 // pw-v7b: the zoom lock, the round padlock chip at the bottom-left of an open note (her "thingy that sticks the page and
 // zoom", 27 Oct): locked, the zoom never changes and only two fingers move the page. Every note opens unlocked and
 // fitted; the lock is never saved. Opening a note is the only fit(); resizes and full screen keep her zoom (js/page.js).
+// pw-v8y (her ask 3, 6 Nov): "All notes" sits on top of the folder view (S.sel = 'all'): the grid of every live note,
+// pinned first, then last edited, each card saying where the note lives; a New note or PDF made there goes to Loose.
+// The app opens on All notes every time and never reopens the last note (her rule 1 Nov); Back from a note still lands
+// where she opened it from, and a note still opens on the page she was last on. On the phone the grid is the home
+// screen in two columns, and the folder view is a drawer behind the menu button (body.drawer, the #sideVeil behind it).
 import { api } from './api.js';
 import { initPage, showStack, fit, scrollToPage, relayout, current, bookmarkTab, markSheet, bgSvg, pageSize, setLock, locked } from './page.js';
 import * as ink from './ink.js';
@@ -88,9 +93,12 @@ function edited(iso) {
 }
 const folderPath = (f) => (f.parent_id ? folder(f.parent_id).name + ' / ' : '') + f.name;
 const keyOf = (fid) => fid || 'loose';
-const selKey = () => (S.sel === 'loose' || S.sel === 'bin' ? null : S.sel);
+const selKey = () => (S.sel === 'loose' || S.sel === 'bin' || S.sel === 'all' ? null : S.sel);
+// loose, bin and all always exist; a folder key only while that folder is live
+const selOk = (key) => key === 'loose' || key === 'bin' || key === 'all' || liveFolder(folder(key));
 
-// icons (a folder, a sheet, a bin, a chevron, a pin; nothing bookmark-shaped)
+// icons (four squares for All notes, a folder, a sheet, a bin, a chevron, a pin; nothing bookmark-shaped)
+const SVG_ALL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="1.2"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.2"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.2"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.2"/></svg>';
 const svgFolder = (c) => `<svg viewBox="0 0 24 24"><path d="M3 6.6A1.6 1.6 0 0 1 4.6 5h4.5l2 2.1h8.3A1.6 1.6 0 0 1 21 8.7v8.7a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 17.4z" fill="${c}"/></svg>`;
 const SVG_SHEET = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg>';
 const SVG_BIN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13"/></svg>';
@@ -141,8 +149,13 @@ function rememberFold() {
 // ---------------------------------------------------------------- folders
 function select(key) {
   S.sel = key; S.renaming = null; remember();
-  if (isPhone()) document.body.classList.add('showGrid');
+  setDrawer(false);                                         // phone: a pick in the drawer closes it
   render();
+}
+// pw-v8y: the phone's folder drawer, and the veil behind it (its hidden attribute too: the app's [hidden] rule is !important)
+function setDrawer(on) {
+  document.body.classList.toggle('drawer', on);
+  $('sideVeil').hidden = !on;
 }
 function toggleFold(key) { S.fold[key] = !S.fold[key]; rememberFold(); renderSide(); }
 
@@ -307,7 +320,7 @@ function binThing(kind, id) {
   setDeleted(ids, T);
   save('bin', ids, T);
   if (S.openNote && !liveNote(note(S.openNote))) closeNote(true);
-  if (S.sel !== 'loose' && S.sel !== 'bin' && !liveFolder(folder(S.sel))) { S.sel = 'loose'; remember(); }
+  if (!selOk(S.sel)) { S.sel = 'loose'; remember(); }
   toast('Moved to the Bin. It stays there for 30 days.');
   render();
 }
@@ -335,6 +348,7 @@ async function openNote(id, index) {                       // no index: the page
   if (tok !== openTok || !liveNote(note(id))) return;       // another note was opened meanwhile
   index ??= lastPage(id);
   S.openNote = id; S.cur = index; S.listOpen = false; S.renaming = null; remember();
+  setDrawer(false);
   document.body.classList.add('noteMode');
   if (!(history.state && history.state.note)) history.pushState({ note: id }, '');
   showLock(false);                                          // pw-v7b: a note always opens unlocked and fitted
@@ -748,6 +762,10 @@ function folderBlock(f, depth) {
 }
 function renderSide() {
   const L = $('folderList'), keep = L.scrollTop; L.textContent = '';
+  // pw-v8y: All notes on top, a plain row: nothing folds under it, no menu, the count of every live note
+  L.append(h('div', { class: 'fbox all' }, h('div', { class: 'frow d0 all' + (S.sel === 'all' ? ' sel' : ''), 'data-id': 'all', onclick: () => select('all') },
+    h('span', { class: 'chevGap' }), h('span', { class: 'ico plain', html: SVG_ALL }), h('span', { class: 'name' }, 'All notes'),
+    h('span', { class: 'count' }, String(S.notes.filter(liveNote).length)))));
   const loose = notesIn(null);
   const lbox = h('div', { class: 'fbox loose' });
   lbox.append(h('div', { class: 'frow d0 loose' + (S.sel === 'loose' ? ' sel' : ''), 'data-id': 'loose', onclick: () => select('loose') },
@@ -782,20 +800,22 @@ function renderGrid() {
     }
     return;
   }
-  const fid = selKey(), f = fid ? folder(fid) : null;
-  $('gridTitle').textContent = f ? folderPath(f) : 'Loose';
+  const fid = selKey(), f = fid ? folder(fid) : null, all = S.sel === 'all';
+  $('gridTitle').textContent = all ? 'All notes' : f ? folderPath(f) : 'Loose';
   G.className = 'grid';
   G.append(h('button', { class: 'card plus', type: 'button', id: 'newNote', 'aria-label': 'New note', onclick: () => createNote(fid) },
     h('div', { class: 'thumb', html: SVG_PLUS }), h('span', { class: 'cname' }, 'New note')));
   G.append(h('button', { class: 'card plus', type: 'button', id: 'openPdf', 'aria-label': 'Open PDF', onclick: () => pickPdf({ folderId: fid }) },
     h('div', { class: 'thumb', html: SVG_DOC }), h('span', { class: 'cname' }, 'Open PDF')));
-  for (const n of notesIn(fid)) {
+  // pw-v8y: All notes = every live note (a New note or PDF made there goes to Loose: fid is null), each card saying where it lives
+  for (const n of all ? S.notes.filter(liveNote).sort(noteOrder) : notesIn(fid)) {
     const thumb = cardThumb(n);
     const card = h('div', { class: 'card' + (n.pinned ? ' pinned' : ''), 'data-id': n.id, onclick: () => openNote(n.id) },
       thumb,
       h('div', { class: 'meta' },
         nameOrInput('note', n.id, n.name, 'card'),
-        h('small', { class: 'when' }, edited(n.updated_at))));
+        h('small', { class: 'when' }, edited(n.updated_at)),
+        all ? h('small', { class: 'where' }, n.folder_id ? folderPath(folder(n.folder_id)) : 'Loose') : null));
     pressable(card, () => noteMenu(n.id, card.querySelector('.thumb'), 'card'));
     G.append(card);
   }
@@ -1461,11 +1481,11 @@ async function load() {
   S.pages.forEach((p) => { p.bookmark = p.bookmark === true; });         // U3c: the row's column (0004)
   takeOverBookmarks();
   try { S.fold = JSON.parse(localStorage.getItem(PREF + 'fold') || '{}') || {}; } catch (_) { S.fold = {}; }
-  let saved = {};
-  try { saved = JSON.parse(localStorage.getItem(PREF + 'open') || '{}') || {}; } catch (_) { /* ignore */ }
-  if (saved.sel === 'loose' || saved.sel === 'bin' || liveFolder(folder(saved.sel))) S.sel = saved.sel;
+  // pw-v8y (her rule 1 Nov): the app opens on All notes every time and never reopens the last note. A reload of an
+  // open note leaves its history entry behind; it goes, so the next note she opens pushes a fresh one for Back.
+  S.sel = 'all'; remember();
+  if (history.state && history.state.note) history.replaceState(null, '');
   render();
-  if (saved.note && liveNote(note(saved.note))) await openNote(saved.note);
   trayFrom(await prof);
   document.body.dataset.ready = '1';
 }
@@ -1691,7 +1711,7 @@ async function mergeTree(d) {
   gone.forEach((id) => orphans.add(id));                    // a page gone upstream: its ink goes once no undo step holds it
   tidyInk();
   coverFresh(fresh);
-  if (S.sel !== 'loose' && S.sel !== 'bin' && !liveFolder(folder(S.sel))) { S.sel = 'loose'; remember(); }
+  if (!selOk(S.sel)) { S.sel = 'loose'; remember(); }
   if (S.openNote && !liveNote(note(S.openNote))) {
     closeNote(true);
     toast('This note was moved to the bin on another device');
@@ -1807,7 +1827,9 @@ function wire() {
     await Promise.race([settledBoth(), new Promise((r) => setTimeout(r, 5000))]);   // what can go up goes; the rest stays on the device
     await api.signOut(); location.reload();
   });
-  $('gridBack').addEventListener('click', () => { document.body.classList.remove('showGrid'); });
+  // pw-v8y: the phone's menu button opens and closes the folder drawer; a tap on the dimmed grid behind it closes it
+  $('gridBack').addEventListener('click', () => setDrawer(!document.body.classList.contains('drawer')));
+  $('sideVeil').addEventListener('click', () => setDrawer(false));
   $('backBtn').addEventListener('click', () => { if (history.state && history.state.note) history.back(); else closeNote(); });
   window.addEventListener('popstate', () => { if (S.openNote) closeNote(true); });
   $('addPageBtn').addEventListener('click', (e) => addMenu(e.currentTarget));      // U4a: Page or PDF
@@ -1853,7 +1875,7 @@ function wire() {
     else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
   });
   let wasPhone = isPhone();
-  window.addEventListener('resize', () => { if (isPhone() !== wasPhone) { wasPhone = isPhone(); render(); } });
+  window.addEventListener('resize', () => { if (isPhone() !== wasPhone) { wasPhone = isPhone(); setDrawer(false); render(); } });
 }
 
 // test hook: the checks wait for writes and clean up their rows through this

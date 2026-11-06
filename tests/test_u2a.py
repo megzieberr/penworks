@@ -175,7 +175,7 @@ try:
         pg.keyboard.press("Control+z"); pg.wait_for_timeout(30); a = len(paths(pg, 2))
         pg.keyboard.press("Control+y"); pg.wait_for_timeout(30); c = len(paths(pg, 2))
         check("Ctrl+Z and Ctrl+Y", a == 2 and c == 3, [a, c])
-        pg.reload(); ready(pg); pg.wait_for_timeout(80)
+        pg.reload(); ready(pg); open_note(pg, "Ink test")            # pw-v8y: a reload opens on All notes, never the last note
         check("reload keeps all three", len(paths(pg, 2)) == 3 and len(paths(pg, 1)) == 0 and len(paths(pg, 3)) == 0, len(paths(pg, 2)))
         check("undo is empty after a reload", pg.locator("#undoBtn").is_disabled())
         go_page(pg, 2)
@@ -258,7 +258,7 @@ try:
         pg.click("#noteName"); pg.wait_for_timeout(30)
         check("the panel shows them too; a tap outside closes it", n4 == "5.5" and dash_on and pg.locator("#toolPanel").is_hidden(), [n4, dash_on])
         pg.keyboard.press("Escape")
-        pg.reload(); ready(pg)
+        pg.reload(); ready(pg); open_note(pg, "Panel")               # pw-v8y: a reload opens on All notes
         st = pg.evaluate("window.__pw.tray()")
         check("remembered after a reload", st["pen"] == {"colour": "#FF3636", "width": 5.5, "dash": "dashed"}, st["pen"])
 
@@ -380,7 +380,7 @@ try:
           style: { colour: '#2CB05F', width: 18, dash: 'solid', opacity: 0.3 }, data: { points: [[100, 700], [400, 700]] } }])""")
         L = layer(pg, 1, "p4")
         check("put a highlighter record: it lands in a 0.3 group, first in order", [g[1] for g in L["groups"]] == ["0.3", "0.4", "0.5"] and not L["bad"], L)
-        idle(pg); pg.reload(); ready(pg); pg.wait_for_timeout(80); L = layer(pg, 1, "p4")
+        idle(pg); pg.reload(); ready(pg); open_note(pg, "Erasers"); L = layer(pg, 1, "p4")   # pw-v8y: a reload opens on All notes
         check("reload: the stored strokes open in the same groups", [g[1] for g in L["groups"]] == ["0.3", "0.4", "0.5"] and L["hl"] == 6 and not L["bad"], L)
         check("no page errors (flat highlighter)", not errs, errs)
         ctx.close()
@@ -495,7 +495,7 @@ try:
         check("the eye toggles password to text and back", a == "password" and c == ["text", "Hide password"] and d == "password", [a, c, d])
         check("the eye sits inside the field", eb["x"] >= lb["x"] and eb["x"] + eb["width"] <= lb["x"] + lb["width"] and eb["y"] >= lb["y"] - 1 and eb["y"] + eb["height"] <= lb["y"] + lb["height"] + 1, [eb, lb])
         group[0] = "pwa and house rules"
-        check("cache is pw-v8q", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v8q"] or "pw-v8q" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v8y", pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())") == ["pw-v8y"] or "pw-v8y" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the new files are in the offline shell", all(f in swt for f in ("./js/ink.js", "./js/store.js", "./js/tray.js")))
         pg.evaluate(SEED_JS, False); pg.reload(); ready(pg)

@@ -40,13 +40,15 @@
     <div id="folderList"></div>
     <div class="foot"><button id="logoutBtn" class="logout" type="button">Log out</button><span class="footR"><span id="saveDot" class="saveDot" data-state="saved" title="All saved" role="img" aria-label="All saved"></span><button id="trayBtn" class="ib trayBtn" type="button" aria-label="Move tray to the left"></button><button id="themeBtn" class="ib themeBtn" type="button" aria-label="Dark mode"></button></span></div>
   </aside>
+  <!-- pw-v8y: the phone's drawer veil: dims the grid behind the open folder view; a tap closes the drawer -->
+  <div id="sideVeil" hidden></div>
 
   <main id="main">
     <!-- the grid of notes (or the Bin) for the selected folder -->
     <section id="listView">
       <div id="gridBar" class="bar">
         <button id="gridBack" class="ib phoneOnly" type="button" aria-label="Folders">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
         </button>
         <h2 id="gridTitle"></h2>
       </div>

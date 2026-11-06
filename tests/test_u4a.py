@@ -419,7 +419,10 @@ try:
         check("offline: queued, createNote then 4 createPage, the file waits to upload", [o["call"] for o in pg.evaluate("window.__pw.treeq.queued()")]
               == ["createNote"] + ["createPage"] * 4 and pg.evaluate("window.__pw.pdf.uploadsPending()") == 1, [tlen(pg), pg.evaluate("window.__pw.pdf.uploadsPending()")])
         check("the twin has none of it yet", not [x for x in twin(pg)["notes"] if x["id"] == off_nid] and off_path not in pg.evaluate("window.__pw.api.importsList()"))
-        pg.reload(); ready(pg); pg.wait_for_selector("#noteView:not([hidden])"); pg.wait_for_timeout(300)
+        pg.reload(); ready(pg)                              # pw-v8y: a reload opens on All notes; the note opens from its card
+        check("offline reload: the All notes grid, the new note's card on it", pg.locator("#noteView").is_hidden()
+              and pg.locator(f"#grid .card[data-id='{off_nid}']").count() == 1)
+        pg.locator(f"#grid .card[data-id='{off_nid}']").click(); pg.wait_for_selector("#noteView:not([hidden])"); pg.wait_for_timeout(300)
         check("offline reload: the note opens again with its 4 pages", opened(pg) == off_nid and pg.locator("#stack .sheet").count() == 4)
         check("offline reload: page 1 still shows the PDF (from the device)", until(pg, lambda: dark(pix(pg, 1)), 8000), pix(pg, 1))
         online(pg)
@@ -550,12 +553,12 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v8q" not in keys:
+        if "pw-v8y" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v8q", "pw-v8q" in keys, keys)
+        check("cache is pw-v8y", "pw-v8y" in keys, keys)
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the shell lists pdfin.js, pdfview.js and both pdf.js files", all(x in swt for x in ["./js/pdfin.js", "./js/pdfview.js", "./vendor/pdf.min.mjs", "./vendor/pdf.worker.min.mjs"]))
-        shell = pg.evaluate("""async () => { const c = await caches.open('pw-v8q'); const out = [];
+        shell = pg.evaluate("""async () => { const c = await caches.open('pw-v8y'); const out = [];
           for (const u of ['./vendor/pdf.min.mjs', './vendor/pdf.worker.min.mjs', './js/pdfin.js', './js/pdfview.js']) out.push(!!(await c.match(u))); return out; }""")
         check("... and they are in the cache (PDF pages draw offline)", shell == [True] * 4, shell)
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in

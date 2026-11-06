@@ -200,6 +200,8 @@ input.rename {
   color: var(--muted); font-weight: 700; font-size: 14.5px; padding: 8px 10px; border-radius: 8px; cursor: pointer;
 }
 .addFolder:hover { background: var(--hover); color: var(--graphite); }
+.frow.all .ico svg { width: 20px; height: 20px; }     /* pw-v8y: All notes' four squares */
+#sideVeil { display: none; }                          /* pw-v8y: the phone drawer's veil, never on the tablet */
 .frow.bin { border-top: 1px solid var(--line); border-radius: 0 0 8px 8px; margin-top: 4px; }
 .logout {
   border: 0; background: transparent; color: var(--muted); font-size: 12.5px; padding: 6px 8px; cursor: pointer;
@@ -239,6 +241,8 @@ input.rename {
 .card .name, .cname { font-weight: 700; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cname { color: var(--muted); padding: 0 2px; }
 .card .when { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+/* pw-v8y: in the All notes grid each card also says where the note lives (small, grey, under the date) */
+.card .where { color: var(--faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card input.rename { flex: none; width: 100%; }
 
 /* paper patterns for thumbnails: --sq is one centimetre at the thumbnail's size */
@@ -823,26 +827,32 @@ svg.ink text, svg.thumbInk text { pointer-events: none; user-select: none; -webk
   :root { --side-w: 250px; }
   #grid.grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 18px 14px; padding: 14px 14px 40px; }
 }
-/* ---------- phone: reading only, no pen tray; one screen at a time ---------- */
+/* ---------- phone: reading only, no pen tray; the grid is home, the folder view a drawer (pw-v8y) ---------- */
 @media (max-width: 599.98px) {
   #app, body.noteMode #app { grid-template-columns: minmax(0, 1fr); }
   #tray { display: none !important; }
-  body:not(.noteMode):not(.showGrid) #main { display: none; }
-  body.showGrid:not(.noteMode) #side { display: none; }
+  /* pw-v8y: the folder view slides in from the left over the grid (body.drawer), the veil dims the grid behind it.
+     Under the menus (40+), the calculator (45), the dialogs (55) and the toast (60). */
+  #side {
+    position: fixed; inset: 0 auto 0 0; width: min(82vw, 320px); z-index: 30; transform: translateX(-104%);
+    transition: transform .22s ease; box-shadow: 0 0 24px rgba(20,22,26,0);
+  }
+  body.drawer #side { transform: none; box-shadow: 0 0 24px rgba(20,22,26,.28); }
+  body.drawer:not(.noteMode) #sideVeil { display: block; position: fixed; inset: 0; z-index: 29; background: rgba(38,42,48,.32); }
   .phoneOnly { display: grid !important; }
   #barCount.phoneOnly { display: block !important; }
   #noteBar { padding: 0 2px; gap: 0; }
   #noteBar .ib { width: 34px; }
   #gridBar { padding: 0 4px; }
   #counter { display: none; }
-  #grid.grid { grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 10px 16px 40px; }
-  .shareGrid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
-  .card { flex-direction: row; align-items: center; gap: 14px; }
-  .card .thumb { width: 56px; flex: none; border-radius: 4px; }
-  .card.plus .thumb svg { width: 22px; height: 22px; }
-  .card .meta { flex: 1; }
-  .card .pin { left: 2px; top: 2px; width: 18px; height: 18px; }
-  .card .pin svg { width: 11px; height: 11px; }
+  /* pw-v8y: two columns of thumbnails, the same card look in the grid and in Add to a note */
+  #grid.grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 14px; padding: 12px 16px 40px; }
+  .shareGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 14px; }
+  .card { flex-direction: column; align-items: stretch; gap: 6px; }
+  .card .thumb { width: auto; border-radius: 6px; }
+  .card.plus .thumb svg { width: 30px; height: 30px; }
+  .card .pin { left: 6px; top: 6px; width: 22px; height: 22px; }
+  .card .pin svg { width: 13px; height: 13px; }
 }
 @media (prefers-reduced-motion: reduce) {
   #toast, .chev svg { transition: none; }
@@ -850,4 +860,5 @@ svg.ink text, svg.thumbInk text { pointer-events: none; user-select: none; -webk
   #tray .colours.dragging .sw:not(.lift) { transition: none; }
   #plThumbs.dragging .thumbP:not(.lift) { transition: none; }
   .alignMark { transition: none; }
+  #side { transition: none; }
 }

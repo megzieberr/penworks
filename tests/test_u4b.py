@@ -144,7 +144,7 @@ try:
               and len([p for p in pg.evaluate("JSON.parse(localStorage.getItem('penworks.local.v2')).pages") if p["note_id"] == nid]) == 4)
         pg.reload(); ready(pg); pg.wait_for_timeout(300)
         check("a reload after: no sheet again", pg.locator("#shareIn").count() == 0)
-        pg.click("#backBtn"); pg.wait_for_selector("#listView:not([hidden])")
+        pg.wait_for_selector("#listView:not([hidden])")     # pw-v8y: a reload opens on All notes, no note to go Back from
 
         # ------------------------------------------------------------ (d) Add to a note
         group[0] = "(d) Add to a note"
@@ -234,7 +234,9 @@ try:
         check("the exit button brings the header back", pg.locator("#noteBar").is_visible() and pg.locator("#exitFs").is_hidden())
         try: cdp.send("Emulation.setEmulatedMedia", {"features": []})
         except Exception: pass
-        pg.reload(); ready(pg); pg.wait_for_selector("#noteView:not([hidden])"); pg.wait_for_timeout(100)
+        rnid = pg.evaluate("window.__pw.S.openNote")
+        pg.reload(); ready(pg)                              # pw-v8y: a reload opens on All notes; the note opens from its card
+        pg.locator(f"#grid .card[data-id='{rnid}']").click(); pg.wait_for_selector("#noteView:not([hidden])"); pg.wait_for_timeout(100)
         pg.evaluate(RF_JS)
         check("a browser tab is not display-mode fullscreen", not pg.evaluate("matchMedia('(display-mode: fullscreen)').matches"))
         pg.click("#fsBtn"); pg.wait_for_timeout(150)
@@ -245,9 +247,9 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v8q" not in keys:
+        if "pw-v8y" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v8q", "pw-v8q" in keys, keys)
+        check("cache is pw-v8y", "pw-v8y" in keys, keys)
         check("the only POSTs were the shares, all to the share-target action", posts and all("/share-target/" in u for u in posts), posts)
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in
                        ["./js/app.js", "./js/pdfin.js", "./js/local-backend.js", "./css/app.css", "./sw.js", "./manifest.json", "./tests/test_u4b.py"])

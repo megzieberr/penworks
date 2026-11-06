@@ -156,7 +156,7 @@ try:
         check("pin the oldest: it jumps to the top", grid(pg) == ["Algebra", "Revision", "Geometry"], grid(pg))
         check("pinned card shows the pin mark", card(pg, "Algebra").locator(".pin").count() == 1 and pg.locator("#grid .card .pin").count() == 1)
         check("pinning is not an edit", pg.evaluate("window.__pw.S.notes.find(n => n.name === 'Algebra').updated_at") == before)
-        pg.reload(); ready(pg)
+        pg.reload(); ready(pg); frow(pg, "Term 1").click()                 # pw-v8y: a reload opens on All notes
         check("pin survives a reload", grid(pg) == ["Algebra", "Revision", "Geometry"], grid(pg))
         card(pg, "Algebra").click(button="right"); menu(pg, "Unpin"); idle(pg)
         check("unpin: it drops back", grid(pg) == ["Revision", "Geometry", "Algebra"], grid(pg))
@@ -270,7 +270,11 @@ try:
         pg.click("#redoBtn"); idle(pg)
         xs = paper_lines(pg, 0, 'gv')
         pg.reload(); ready(pg)
-        check("reload: note reopens, paper and orientation saved", pg.inner_text("#noteName") == "Algebra"
+        # pw-v8y (her rule 1 Nov): a reload opens on the All notes grid, never on the last note; the note opens from its card
+        check("reload: the All notes grid shows, the note is not reopened", pg.locator("#noteView").is_hidden()
+              and pg.inner_text("#gridTitle") == "All notes" and pg.locator(".frow.all.sel").count() == 1, pg.inner_text("#gridTitle"))
+        card(pg, "Algebra").click(); pg.wait_for_selector("#noteView:not([hidden])"); pg.wait_for_timeout(150)
+        check("opened from its card: paper and orientation saved", pg.inner_text("#noteName") == "Algebra"
               and [bg for _, _, bg in stack(pg)] == ["lined"] * 4 and [w for _, w, _ in stack(pg)] == [794, 1123, 794, 794], stack(pg))
 
         # ------------------------------------------------------------ full screen
@@ -352,12 +356,18 @@ try:
                     { id: 'n2', folder_id: 'f1', name: 'MATH121 series', pinned: false, deleted_at: null, created_at: t, updated_at: '2026-10-22T10:00:00Z' }],
             pages: [P('p1', 'n1', 0), P('p2', 'n1', 1, 'landscape'), P('p3', 'n1', 2), P('p4', 'n2', 0)] })); }""")
         pg.reload(); ready(pg)
+        # pw-v8y: the phone opens on the All notes grid; the folder view is a drawer behind the menu button
         sd = pg.locator("#side").bounding_box()
-        check("folder view is the whole screen", sd["x"] <= 0.5 and sd["width"] >= 374 and pg.locator("#main").is_hidden(), sd)
+        check("the grid is the home screen, the folder view off screen", pg.locator("#main").is_visible()
+              and sd["x"] + sd["width"] <= 0.5 and pg.inner_text("#gridTitle") == "All notes", sd)
         check("note names show under the folder", side(pg)["folders"]["Uni 2026"]["notes"] == [["MATH121 limits", 3], ["MATH121 series", 1]])
-        frow(pg, "Uni 2026").tap(); pg.wait_for_timeout(150)
+        pg.tap("#gridBack"); pg.wait_for_timeout(350)
+        frow(pg, "Uni 2026").tap(); pg.wait_for_timeout(350)
         xs = pg.evaluate("[...document.querySelectorAll('#grid .card')].map(c => Math.round(c.getBoundingClientRect().x))")
-        check("tap the folder: grid in one column (2 notes, New note, Open PDF)", pg.locator("#side").is_hidden() and len(xs) == 4 and len(set(xs)) == 1, xs)
+        sd = pg.locator("#side").bounding_box()
+        check("tap the folder in the drawer: the drawer closes, grid in two columns (2 notes, New note, Open PDF)",
+              not pg.evaluate("document.body.classList.contains('drawer')") and sd["x"] + sd["width"] <= 0.5
+              and len(xs) == 4 and len(set(xs)) == 2 and pg.inner_text("#gridTitle") == "Uni 2026", [xs, sd])
         check("last edited shows as a date", pg.locator("#grid .card .when").all_inner_texts() == ["23 Oct", "22 Oct"], pg.locator("#grid .card .when").all_inner_texts())
         check("no horizontal scroll (phone grid)", pg.evaluate("document.documentElement.scrollWidth <= innerWidth"))
         card(pg, "MATH121 limits").tap(); pg.wait_for_selector("#noteView:not([hidden])"); pg.wait_for_timeout(150)
@@ -371,8 +381,9 @@ try:
         if SHOTS: pg.screenshot(path=str(SHOTS / "phone-note.png"))
         pg.tap("#backBtn"); pg.wait_for_timeout(150)
         check("back returns to the grid", pg.locator("#grid").is_visible())
-        pg.tap("#gridBack"); pg.wait_for_timeout(100)
-        check("grid back returns to the folder view", pg.locator("#side").is_visible())
+        pg.tap("#gridBack"); pg.wait_for_timeout(350)
+        sd = pg.locator("#side").bounding_box()
+        check("the menu button opens the folder drawer", pg.evaluate("document.body.classList.contains('drawer')") and sd["x"] >= -0.5, sd)
         check("no page errors (phone)", not errs, errs)
         ctx.close()
 
@@ -389,7 +400,7 @@ try:
             st = pg.evaluate("(u)=>fetch(u).then(r=>r.status+' '+r.headers.get('content-type'))", ic["src"])
             check("icon " + ic["src"], st.startswith("200 image/png"), st)
         check("service worker registers and is active", pg.evaluate("navigator.serviceWorker.ready.then(r=>!!r.active)"))
-        check("cache is pw-v8q (share pages)", pg.evaluate("caches.keys()") == ["pw-v8q"] or "pw-v8q" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v8y (share pages)", pg.evaluate("caches.keys()") == ["pw-v8y"] or "pw-v8y" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
         inst = ctx.new_cdp_session(pg).send("Page.getInstallabilityErrors")
         check("Chrome sees it as installable", not inst.get("installabilityErrors"), inst)
         pg.reload(); ready(pg); pg.wait_for_timeout(500)

@@ -135,8 +135,9 @@ try:
             check("left: the hairline moves to the tray's right (1px), none on its left", g["br"] == "1px" and g["bl"] == "0px", [g["bl"], g["br"]])
 
             # reload keeps it, and it never jumps sides
-            pg.reload(); ready(pg); pg.wait_for_selector("#noteView:not([hidden])"); pg.wait_for_timeout(250); g = geo(pg)
-            check("a reload keeps it: the note reopens with the tray on the left", g["left"] and tray_left_of_desk(g) and g["side"] == "left", g["tray"])
+            # pw-v8y: a reload opens on the All notes grid (her rule 1 Nov); the note opens from the folder view again
+            pg.reload(); ready(pg); open_note(pg); pg.wait_for_timeout(50); g = geo(pg)
+            check("a reload keeps it: the note opens with the tray on the left", g["left"] and tray_left_of_desk(g) and g["side"] == "left", g["tray"])
             # the chips mirrored
             check("left: the padlock in the RIGHT half of the note, bottom", cx(g["lock"]) > mid_x(g) and g["body"]["b"] - g["lock"]["b"] < 20, g["lock"])
             check("left: the page counter in the LEFT half, bottom", cx(g["counter"]) < mid_x(g) and g["body"]["b"] - g["counter"]["b"] < 20, g["counter"])
@@ -221,10 +222,11 @@ try:
         pg.goto(LOCAL); ready(pg); pg.evaluate(SEED); pg.reload(); ready(pg)
         for side in ("right", "left"):
             pg.evaluate("(s) => localStorage.setItem('pw.traySide', s)", side); pg.reload(); ready(pg)
-            if pg.locator("#noteView").is_hidden():
-                if pg.locator(".nrow").first.is_hidden(): pg.locator(".frow").first.click(); pg.wait_for_timeout(100)
-                pg.locator(".card:not(.plus)").first.click() if pg.locator(".card:not(.plus)").count() else pg.locator(".nrow").first.click()
-                pg.wait_for_selector("#noteView:not([hidden])")
+            # pw-v8y: the phone opens on the All notes grid (two columns); the note opens from its card there
+            check(f"{side}: a reload shows the All notes grid, no note open", pg.locator("#noteView").is_hidden()
+                  and pg.inner_text("#gridTitle") == "All notes" and pg.locator("#grid .card:not(.plus)").count() == 1)
+            pg.locator("#grid .card:not(.plus)").first.click()
+            pg.wait_for_selector("#noteView:not([hidden])")
             pg.wait_for_timeout(200); g = geo(pg)
             check(f"{side}: no tray, one column, the desk the full width", not g["trayShown"] and g["cols"] == 1 and abs(g["desk"]["w"] - 390) < 1
                   and g["left"] == (side == "left"), g)
