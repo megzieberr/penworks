@@ -30,8 +30,12 @@
 // centre), its u axis along the turned top edge and its v axis up the turned left edge. drawImage itself writes into
 // pdf-lib's own content stream, which cannot sit between the paper and the ink of this one. Bytes not on this device:
 // "The picture is not on this device yet".
+// pw-v9c: sticky notes, her rule: a sticky ON a page goes into that page's PDF as it looks; one in the margin is not there.
+// After the page's ink, each on-page sticky (ink.stickiesOnPage, app.js's overlap rule) in its own saved graphics state:
+// clipped to the page, moved to its top-left, clipped to its rounded square (radius 3), filled in its colour, the strip
+// (30 page px) in the darker shade, then its strokes exactly as a page's (inkOps). No grip bar, no corner mark.
 import * as ink from './ink.js';
-import { pageSize, pdfShape, A4, CM, GRID, GRID_TOP, LINE_GAP, LINE_TOP } from './page.js';
+import { pageSize, pdfShape, A4, CM, GRID, GRID_TOP, LINE_GAP, LINE_TOP, SK_COLOURS, SK_STRIP } from './page.js';
 import * as pdfin from './pdfin.js';
 import * as pdfview from './pdfview.js';
 
@@ -221,11 +225,30 @@ async function axesText(L, doc, page, recs, k, H, fonts) {
 
 // one page's paper and ink as content stream text. gsOf(opacity) = the page's ExtGState name for that opacity;
 // imgOf(path) = the page's XObject name for that picture's file (U4c)
-function pageOps(sz, background, recs, k, H, gsOf, imgOf = () => null) {
+// pw-v9c: `stickies` = the page's on-page stickies, [{ x, y, w, colour, recs }] (stickiesFor below); exported for the checks
+export function pageOps(sz, background, recs, k, H, gsOf, imgOf = () => null, stickies = []) {
   const kk = String(Math.round(k / U * 1e8) / 1e8);               // k / U: the numbers below are quarter page px
   const ops = ['q', kk + ' 0 0 -' + kk + ' 0 ' + String(Math.round(H * 100) / 100) + ' cm', '1 j'];
   const paper = background ? paperD(sz.w, sz.h, background) : '';
   if (paper) ops.push(rgOf(PAPER) + ' ' + n2(1) + ' w 0 J [] 0 d', pdfPath(paper), 'S');
+  inkOps(ops, recs, gsOf, imgOf);
+  for (const s of stickies) {                                      // pw-v9c: on top of the page's ink, clipped to the page
+    const [c1, c2] = SK_COLOURS[s.colour] || SK_COLOURS.yellow, w = s.w, fill = (c) => rgOf(c).replace(/RG$/, 'rg');
+    const round = `M3 0H${f1(w - 3)}A3 3 0 0 1 ${f1(w)} 3V${f1(w - 3)}A3 3 0 0 1 ${f1(w - 3)} ${f1(w)}H3A3 3 0 0 1 0 ${f1(w - 3)}V3A3 3 0 0 1 3 0Z`;
+    ops.push('q', `0 0 ${n2(sz.w)} ${n2(sz.h)} re W n`, `1 0 0 1 ${n2(s.x)} ${n2(s.y)} cm`, pdfPath(round), 'W n',
+             fill(c1), `0 0 ${n2(w)} ${n2(w)} re f`, fill(c2), `0 0 ${n2(w)} ${n2(SK_STRIP)} re f`);
+    inkOps(ops, s.recs || [], gsOf, imgOf);
+    ops.push('Q');
+  }
+  ops.push('Q');
+  return ops.join('\n');
+}
+// pw-v9c: a page's on-page stickies with their strokes (seq order), for pageOps
+export function stickiesFor(p) {
+  return ink.stickiesOnPage(p.id).map((s) => ({ ...s, recs: ink.strokesOf(s.id).slice().sort((a, b) => a.seq - b.seq) }));
+}
+// the ink of one surface (a page, or a sticky inside its own graphics state): pictures, highlighter groups, the pen layer
+function inkOps(ops, recs, gsOf, imgOf) {
   const m3 = (v) => String(Math.round(v * U * 1000) / 1000);
   for (const rec of recs) {                                        // U4c: the pictures, over the paper, under every ink, in seq order
     const name = ink.isImg(rec) && rec.data && imgOf(rec.data.path);
@@ -285,8 +308,6 @@ function pageOps(sz, background, recs, k, H, gsOf, imgOf = () => null) {
     if (nd) { end(); fill(nd, st.colour, op); }                    // U5c: the needle mark, after its arc
   }
   end();
-  ops.push('Q');
-  return ops.join('\n');
 }
 
 // the text as a FlateDecode stream (the browser's own deflate; pdf-lib's when the browser has none)
@@ -389,14 +410,15 @@ export async function buildPdf(pages, name, progress = () => {}, recsOf = (p) =>
       return names.get(op);
     };
     const recs = (recsOf(p) || []).slice().sort((a, b) => a.seq - b.seq);
+    const sks = stickiesFor(p);                                  // pw-v9c: the on-page stickies, over the ink
     const xo = new Map();                                        // U4c: this page's XObject name per picture path
-    for (const r of recs) {
+    for (const r of [...recs, ...sks.flatMap((s) => s.recs)]) {
       const path = ink.isImg(r) && r.data && r.data.path;
       if (!path || xo.has(path)) continue;
       if (!pics.has(path)) pics.set(path, await embedPicture(doc, path));
       xo.set(path, page.node.newXObject('Image', pics.get(path).ref).toString());
     }
-    const text = pageOps(sz, p.pdf_path ? '' : p.background, recs, k, H, gsOf, (path) => xo.get(path) || null);
+    const text = pageOps(sz, p.pdf_path ? '' : p.background, recs, k, H, gsOf, (path) => xo.get(path) || null, sks);
     page.node.addContentStream(doc.context.register(await flate(doc, text)));
     await axesText(L, doc, page, recs, k, H, fonts);              // U5e: after the ink's stream, the stamps' numbers as text
   }

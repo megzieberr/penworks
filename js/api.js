@@ -12,10 +12,11 @@ const TABLES = ['folders', 'notes', 'pages'];
 const COLS = {
   folders: 'id,owner_id,parent_id,name,colour,position,deleted_at,created_at,updated_at',
   notes: 'id,owner_id,folder_id,name,pinned,cover_path,deleted_at,created_at,updated_at',
-  pages: 'id,owner_id,note_id,position,orientation,background,bookmark,pdf_path,pdf_page,pdf_w,pdf_h,pdf_rot,snapshot_path,snapshot_at,flagged,deleted_at,created_at,updated_at',
+  pages: 'id,owner_id,note_id,position,orientation,background,bookmark,pdf_path,pdf_page,pdf_w,pdf_h,pdf_rot,snapshot_path,snapshot_at,flagged,deleted_at,created_at,updated_at,kind,anchor_id,sk_x,sk_y,sk_w,sk_colour',
 };
 // U4a: pdf_w and pdf_h exist from migration 0005 on; until it is applied every loadAll above fails on the live project.
 // pw-v7p: the same for pdf_rot and migration 0006: the migration lands BEFORE the push.
+// pw-v9c: the same for the sticky columns (kind, anchor_id, sk_x, sk_y, sk_w, sk_colour) and migration 0007: 0007 lands BEFORE the push.
 // the signed-in person's own row (U3c): settings.tray = the pen tray's state (js/tray.js), settings.tray_at = when it was
 // saved (newer wins across devices). pen_colours is not used: her 13 colours are code in tray.js, only their order follows her.
 const PROFILE_COLS = 'id,username,display_name,pen_colours,settings';
@@ -317,6 +318,8 @@ const liveApi = {
 };
 
 const base = new URLSearchParams(location.search).has('local') ? localApi : liveApi;
+// pw-v9c: a sticky's own columns; a page row never carries them (pick leaves out the keys a row does not have)
+const STICKY_KEYS = ['kind', 'anchor_id', 'sk_x', 'sk_y', 'sk_w', 'sk_colour'];
 const pick = (r, keys) => Object.fromEntries(keys.filter((k) => k in r).map((k) => [k, r[k]]));
 const eachPos = async (table, pairs) => { for (const [id, position] of pairs) await base.update(table, [id], { position }); };
 
@@ -344,7 +347,7 @@ export const api = {
   // pages: numbered by position inside their note
   // U4a: a page made from a PDF page carries pdf_path, pdf_page (1-based), pdf_w and pdf_h (that page's size in points)
   createPage: (r) => base.insert('pages', pick(r, ['id', 'note_id', 'position', 'orientation', 'background', 'bookmark',
-    ...(r.pdf_path ? ['pdf_path', 'pdf_page', 'pdf_w', 'pdf_h', 'pdf_rot'] : [])])),
+    ...(r.pdf_path ? ['pdf_path', 'pdf_page', 'pdf_w', 'pdf_h', 'pdf_rot'] : []), ...STICKY_KEYS])),
   reorderPages: (pairs) => eachPos('pages', pairs),
   // pw-v9b: pages that change note (a merge, the page list's To note, an undo of either): rows = [[id, note_id, position], ...].
   // No new column: pages.note_id and position were always there; the touch trigger marks the note they join as edited.
@@ -353,6 +356,9 @@ export const api = {
   // the bookmark (U3c, a column since 0004): not an edit, the note's "last edited" stays where it was
   setBookmark: (id, on) => base.update('pages', [id], { bookmark: !!on }),
   deletePage: (id) => base.remove('pages', [id]),             // gone for good; the app's undo puts it back
+  // pw-v9c: a sticky (a pages row, kind 'sticky'): where it sits, its size, its colour, the page it hangs on; one update.
+  // A move or a resize is a note edit like any page update: whatever the touch trigger does, nothing special here.
+  setSticky: (id, patch) => base.update('pages', [id], pick(patch, ['anchor_id', 'sk_x', 'sk_y', 'sk_w', 'sk_colour'])),
 
   // ids = { folders: [...], notes: [...], pages: [...] }
   bin: (ids, at) => setBin(ids, at),

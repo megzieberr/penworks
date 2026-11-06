@@ -45,8 +45,18 @@
 // she tapped it in; then Move to..., Merge, or Put in the Bin. A merge keeps the first note's name, adds the others' pages
 // after its own and bins the emptied notes; the toast's Undo puts it all back for 8 seconds. A laptop right-click on a
 // card still opens its menu. The page list's Select has To note: the ticked pages go to the end of another note.
+// pw-v9c (her design 27 Oct, built 6 Nov): sticky notes. The + menu's Sticky (then one of her four colours) puts a 6 cm
+// square beside the page she is on; she writes on it, drags it by its strip into the margin ("the sidelines", to show in
+// class without scrolling), between pages or onto a page, resizes it by its corner, and a tap on its strip opens its menu
+// (the colours, Bring to front, Put in the Bin). A sticky is a pages row (kind 'sticky', migration 0007), so the queue, the
+// Bin, Realtime and the cascades carry it; pagesOf() is PAGES ONLY, stickiesOf(page) and stickiesIn(note) are the stickies.
+// THE ANCHOR RULE: a sticky goes wherever its anchor page goes: binned, restored, moved to another note (a merge, To note),
+// copied (Copy, Cut, Paste: the clip carries its stickies and their strokes, a paste gives them new ids), deleted (the
+// cascade, and removePage here; undo brings both back). THE EXPORT RULE, her words: a sticky ON a page goes into that page's
+// PDF and pictures as it looks, clipped at the page's edge; a sticky in the margin simply is not there.
 import { api } from './api.js';
-import { initPage, showStack, fit, scrollToPage, relayout, current, markSheet, bgSvg, pageSize, setLock, locked } from './page.js';
+import { initPage, showStack, fit, scrollToPage, relayout, current, markSheet, bgSvg, pageSize, setLock, locked,
+         setStickies, stickyFront, stickySpot, stickyAt, stickyBusy, SK_SIZE, SK_COLOURS } from './page.js';
 import * as ink from './ink.js';
 import * as store from './store.js';
 import { initCalc } from './calcpanel.js';
@@ -94,7 +104,23 @@ const topFolders = () => S.folders.filter((f) => !f.parent_id && liveFolder(f)).
 const subFolders = (id) => S.folders.filter((f) => f.parent_id === id && liveFolder(f)).sort(byPos);
 const notesIn = (fid) => S.notes.filter((n) => (n.folder_id || null) === (fid || null) && liveNote(n)).sort(noteOrder);
 const folderCount = (id) => notesIn(id).length + subFolders(id).reduce((k, s) => k + notesIn(s.id).length, 0);
-const pagesOf = (nid) => S.pages.filter((p) => p.note_id === nid && !p.deleted_at).sort(byPos);
+// pw-v9c: a sticky is a pages row with kind 'sticky' (a row without kind is a page: rows from before 0007)
+const isSticky = (p) => !!p && p.kind === 'sticky';
+const pagesOf = (nid) => S.pages.filter((p) => p.note_id === nid && !p.deleted_at && !isSticky(p)).sort(byPos);
+const stickyRows = (pid) => S.pages.filter((p) => isSticky(p) && p.anchor_id === pid);                 // binned ones too
+const stickiesOf = (pid) => stickyRows(pid).filter((p) => !p.deleted_at);
+const stickiesIn = (nid) => S.pages.filter((p) => isSticky(p) && p.note_id === nid && !p.deleted_at)
+  .filter((p) => { const a = page(p.anchor_id); return !!a && !a.deleted_at; });
+const anchorOf = (id) => { const p = page(id); return isSticky(p) ? p.anchor_id : id; };   // a sticky's ink belongs to its page's pictures
+// "on a page" for the export rule: the sticky's square overlaps its anchor page's rectangle
+function onPage(s) {
+  const a = page(s.anchor_id);
+  if (!a) return false;
+  const { w, h } = pageSize(a);
+  return s.sk_x < w && s.sk_x + s.sk_w > 0 && s.sk_y < h && s.sk_y + s.sk_w > 0;
+}
+const stickiesOnPage = (pid) => stickiesOf(pid).filter(onPage).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
+  .map((s) => ({ id: s.id, x: s.sk_x, y: s.sk_y, w: s.sk_w, colour: s.sk_colour }));
 const nextPos = (rows) => rows.reduce((m, r) => Math.max(m, r.position + 1), 0);
 const same = (a, b) => a && b && Date.parse(a) === Date.parse(b);
 const shortDate = (t) => new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
@@ -294,11 +320,119 @@ async function imgPicked() {
   inp.value = '';
   if (file && pid) await pdfin.importImage(file, pid);
 }
-// the open note's + (the note bar): Page, as before, PDF, or Image (U4c, a picture on the page she is on)
+// the open note's + (the note bar): Page, as before, PDF, or Image (U4c, a picture on the page she is on), or Sticky (pw-v9c:
+// a second menu, her four colours; the colour is picked when it is made)
 function addMenu(anchor) {
   openMenu(anchor, [{ label: 'Page', fn: () => addPageBelow(S.cur) }, { label: 'PDF', fn: () => pickPdf({ noteId: S.openNote }) },
-                    { label: 'Image', fn: pickImage }]);
+                    { label: 'Image', fn: pickImage }, { label: 'Sticky', keep: true, fn: () => stickyColours(anchor, null) }]);
 }
+
+// ---------------------------------------------------------------- pw-v9c: sticky notes (the rules: the head of this file)
+// the four colour swatches under a "Sticky" head; id null = a new sticky in that colour, else that sticky's colour menu
+// with Bring to front and Put in the Bin (red, last)
+function stickyColours(anchor, id) {
+  const s = id ? page(id) : null, m = $('menu');
+  if (id && !s) return;
+  m.textContent = '';
+  m.append(h('div', { class: 'hd' }, 'Sticky'));
+  const row = h('div', { class: 'swatches' });
+  for (const [name, [c]] of Object.entries(SK_COLOURS)) {
+    row.append(h('button', { type: 'button', class: 'sw' + (s && s.sk_colour === name ? ' on' : ''), 'aria-label': name[0].toUpperCase() + name.slice(1),
+      title: name[0].toUpperCase() + name.slice(1), 'data-colour': name, style: `background:${c}`,
+      onclick: (e) => { e.stopPropagation(); closeMenu(); if (id) recolourSticky(id, name); else addSticky(name); } }));
+  }
+  m.append(row);
+  if (id) {
+    m.append(h('button', { type: 'button', role: 'menuitem', onclick: (e) => { e.stopPropagation(); closeMenu(); stickyFront(id); } }, 'Bring to front'),
+             h('button', { type: 'button', role: 'menuitem', class: 'red', onclick: (e) => { e.stopPropagation(); closeMenu(); binSticky(id); } }, 'Put in the Bin'));
+  }
+  placeMenu(anchor);
+}
+// a new sticky on the page she is on, where page.js's stickySpot says (beside it, or hanging off it on a narrow screen);
+// one undo step like Add a page below: undo deletes the row, redo puts it back with the same id
+function addSticky(colour) {
+  const nid = S.openNote, p = pagesOf(nid)[S.cur];
+  if (!p) return;
+  const at = stickySpot(S.cur, SK_SIZE), t = nowIso();
+  const row = { id: uuid(), note_id: nid, position: p.position, orientation: 'portrait', background: 'grid', bookmark: false,
+                kind: 'sticky', anchor_id: p.id, sk_x: at.x, sk_y: at.y, sk_w: SK_SIZE, sk_colour: colour, deleted_at: null, created_at: t, updated_at: t };
+  doOp({ pages: [row.id], redo: () => { putSticky(row, null); render(); stickyFront(row.id); },
+         undo: () => { dropSticky(row.id); render(); } });
+}
+// a sticky row into the tree and the queue. strokes: the records to put on it (a paste, or a restore whose ink this device
+// forgot); null = the ink this device holds for it goes up again (the database cascaded it away with the row)
+function putSticky(row, strokes) {
+  const s = { ...row, deleted_at: null, snapshot_path: null, snapshot_at: null };
+  S.pages.push(s);
+  save('createPage', s);
+  const have = ink.strokesOf(s.id);
+  if (have.length) store.change(s.id, [], have);
+  else if (strokes && strokes.length) ink.put(s.id, strokes);
+  touchNote(s.note_id);
+  stickyChanged(s.anchor_id);
+}
+function dropSticky(id) {
+  const s = page(id);
+  if (!s) return;
+  S.pages = S.pages.filter((x) => x !== s);
+  orphans.add(id);
+  save('deletePage', id);
+  store.unqueue(id);
+  touchNote(s.note_id);
+  stickyChanged(s.anchor_id);
+}
+// a sticky changed: its page's thumb and picture follow (only an on-page sticky shows in them, the job draws what is there)
+function stickyChanged(pid) {
+  if (!pid) return;
+  if (S.listOpen) refreshThumb(pid);
+  pics.changed(pid);
+}
+// page.js: a strip lifted after a drag, or a corner after a resize: { anchor_id, sk_x, sk_y } or { sk_w }. One undo step.
+function moveSticky(id, patch) {
+  const s = page(id);
+  if (!s) return;
+  const before = Object.fromEntries(Object.keys(patch).map((k) => [k, s[k]]));
+  doOp({ redo: () => setStickyRow(id, patch), undo: () => setStickyRow(id, before) });
+}
+function setStickyRow(id, patch) {
+  const s = page(id);
+  if (!s || s.deleted_at || (patch.anchor_id && !page(patch.anchor_id))) { render(); return; }
+  const was = s.anchor_id;
+  Object.assign(s, patch);
+  save('setSticky', id, patch);
+  touchNote(s.note_id);                                   // a move is an edit of the note, as any page update
+  render();
+  stickyChanged(was);
+  if (s.anchor_id !== was) stickyChanged(s.anchor_id);
+}
+// the menu's colours: not an undo step (like a bookmark: the writing on it stays as it was)
+function recolourSticky(id, colour) {
+  const s = page(id);
+  if (!s || s.sk_colour === colour) return;
+  s.sk_colour = colour;
+  save('setSticky', id, { sk_colour: colour });
+  render();
+  stickyChanged(s.anchor_id);
+}
+// Put in the Bin: the ordinary bin (one timestamp), never shown in the Bin view; the toast's Undo (8 s) restores it. After
+// that it is gone for the app, its row stays binned in the database like any binned page
+function binSticky(id) {
+  const s = page(id);
+  if (!s) return;
+  binThing('sticky', id, true);
+  render();
+  stickyChanged(s.anchor_id);
+  toast('Sticky put in the Bin', UNDO_MS, { action: { label: 'Undo', fn: () => {
+    const x = page(id);
+    if (!x || !x.deleted_at) return;
+    restoreThing('sticky', id, true);
+    render();
+    stickyChanged(x.anchor_id);
+  } } });
+}
+// pw-v9c: a page that leaves the stack for good (removePage) keeps its live stickies here, so the undo that brings the page
+// back brings them back too (same ids; the database cascaded their rows and strokes away)
+const goneStickies = new Map();     // page id -> [{ row, strokes }]
 function renameNote(id, value) {
   const n = note(id), v = value.trim().slice(0, 120);
   if (!v || v === n.name) return;
@@ -341,6 +475,7 @@ function noteTargets(n) {
 // ---------------------------------------------------------------- bin and restore (one timestamp per binning)
 function binIds(kind, id, test) {
   const ids = { folders: [], notes: [], pages: [] };
+  if (kind === 'sticky') { ids.pages.push(id); return ids; }        // pw-v9c: a sticky on its own (a note's take its stickies below)
   const addNote = (n) => { ids.notes.push(n.id); S.pages.filter((p) => p.note_id === n.id && test(p)).forEach((p) => ids.pages.push(p.id)); };
   if (kind === 'note') addNote(note(id));
   else {
@@ -367,7 +502,7 @@ function binThing(kind, id, quiet) {
   render();
 }
 function restoreThing(kind, id, quiet) {
-  const r = kind === 'note' ? note(id) : folder(id), T = r.deleted_at;
+  const r = kind === 'note' ? note(id) : kind === 'sticky' ? page(id) : folder(id), T = r.deleted_at;
   const ids = binIds(kind, id, (x) => same(x.deleted_at, T));
   setDeleted(ids, null);
   save('restore', ids);
@@ -389,7 +524,7 @@ async function openNote(id, index) {                       // no index: the page
   S.gsel = null;                                            // pw-v9b: opening a note ends the grid's select mode
   if (!pagesOf(id).length) blankPage(id);                   // pw-v9b: an empty note (emptied by a merge, then restored) gets one blank page
   const tok = ++openTok;
-  await store.ensure(pagesOf(id).map((p) => p.id));        // the pages' strokes from the device cache before the sheets attach
+  await store.ensure([...pagesOf(id), ...stickiesIn(id)].map((p) => p.id));   // the pages' (and stickies', pw-v9c) strokes before the sheets attach
   if (tok !== openTok || !liveNote(note(id))) return;       // another note was opened meanwhile
   index ??= lastPage(id);
   S.openNote = id; S.cur = index; S.listOpen = false; S.renaming = null; remember();
@@ -439,6 +574,7 @@ function tidyInk() {
   if (!orphans.size) return;
   const held = new Set();
   for (const H of Object.values(S.hist)) for (const op of [...H.u, ...H.r]) (op.pages || []).forEach((id) => held.add(id));
+  for (const id of [...held]) (goneStickies.get(id) || []).forEach((g) => held.add(g.row.id));   // pw-v9c: a held page holds its stickies
   for (const id of [...orphans]) if (!held.has(id) && !page(id)) { ink.forget(id); orphans.delete(id); }
 }
 function undo() { if (!S.openNote) return; const H = hist(), op = H.u.pop(); if (!op) return; op.undo(); H.r.push(op); renderTray(); }
@@ -452,8 +588,8 @@ function renumber(list) {
   if (list.length) pics.syncCover(list[0].note_id);          // U3b: the cover follows the first page
 }
 function insertPage(snap, i) {
-  const list = pagesOf(snap.note_id);
-  const p = { ...snap, position: i, deleted_at: null, bookmark: !!snap.bookmark, snapshot_path: null, snapshot_at: null };   // a new row: no picture yet
+  const list = pagesOf(snap.note_id), { stickies: clipSk, ...rest } = snap;
+  const p = { ...rest, position: i, deleted_at: null, bookmark: !!snap.bookmark, snapshot_path: null, snapshot_at: null };   // a new row: no picture yet
   list.splice(i, 0, p);
   const pairs = [];                                         // the pages below it move down one
   list.forEach((x, k) => { if (x !== p && x.position !== k) { x.position = k; pairs.push([x.id, k]); } });
@@ -461,11 +597,22 @@ function insertPage(snap, i) {
   S.pages.push(p);
   save('createPage', p);                          // U3c: the row carries the bookmark (undo of a delete, a paste)
   store.change(p.id, [], ink.strokesOf(p.id));              // U3a: undo of a delete: the database cascaded its strokes, send them again
+  // pw-v9c: its stickies come with it (an undo of a delete: as they were; a paste: the clip's, with new ids)
+  const back = goneStickies.get(p.id) || clipSk || [];
+  goneStickies.delete(p.id);
+  back.forEach((g) => putSticky({ ...g.row, note_id: p.note_id, position: p.position, anchor_id: p.id }, g.strokes));
   touchNote(p.note_id);
   pics.syncCover(p.note_id);                                // U3b: a page at the top takes over the cover
 }
 function removePage(id) {
   const p = page(id), list = pagesOf(p.note_id).filter((x) => x !== p);
+  // pw-v9c: its stickies go with it (the database's cascade); the live ones are kept for the undo that brings it back
+  const sks = stickyRows(id);
+  if (sks.length) {
+    goneStickies.set(id, sks.filter((s) => !s.deleted_at).map((s) => ({ row: { ...s }, strokes: ink.copyStrokes(s.id) })));
+    S.pages = S.pages.filter((x) => !sks.includes(x));
+    sks.forEach((s) => { orphans.add(s.id); store.unqueue(s.id); });
+  }
   S.pages = S.pages.filter((x) => x !== p);                 // the op's snapshot still holds its bookmark, for undo
   orphans.add(id);
   save('deletePage', id);
@@ -504,7 +651,9 @@ function deletePage(i) {
 // U4a: a PDF page carries its PDF (pdf_path, pdf_page, pdf_w, pdf_h); the file in storage is shared, never copied
 const PDF_KEYS = ['pdf_path', 'pdf_page', 'pdf_w', 'pdf_h', 'pdf_rot'];
 const pdfOf = (p) => (p && p.pdf_path ? Object.fromEntries(PDF_KEYS.map((k) => [k, p[k]])) : {});
-const clipEntry = (p) => ({ orientation: p.orientation, background: p.background, bookmark: !!p.bookmark, ...pdfOf(p), strokes: ink.copyStrokes(p.id) });
+// pw-v9c: a page's live stickies ride on its clip entry (where they sit, their size and colour, their strokes)
+const clipEntry = (p) => ({ orientation: p.orientation, background: p.background, bookmark: !!p.bookmark, ...pdfOf(p), strokes: ink.copyStrokes(p.id),
+  stickies: stickiesOf(p.id).map((s) => ({ sk_x: s.sk_x, sk_y: s.sk_y, sk_w: s.sk_w, sk_colour: s.sk_colour, strokes: ink.copyStrokes(s.id) })) });
 function copyPage(i, quiet) {
   const p = pagesOf(S.openNote)[i];
   if (!p) return;
@@ -522,6 +671,12 @@ function pastePage(i) {
   const at = i + 1;
   const adds = clip.map((c) => {
     const snap = { id: uuid(), note_id: nid, orientation: c.orientation, background: c.background, bookmark: !!c.bookmark, ...pdfOf(c), created_at: nowIso() };
+    snap.stickies = (c.stickies || []).map((k) => {                // pw-v9c: new ids for the stickies and their strokes
+      const id = uuid();
+      return { row: { id, orientation: 'portrait', background: 'grid', bookmark: false, kind: 'sticky', sk_x: k.sk_x, sk_y: k.sk_y, sk_w: k.sk_w,
+                      sk_colour: k.sk_colour, created_at: nowIso(), updated_at: nowIso() },
+               strokes: k.strokes.map((r) => ({ ...JSON.parse(JSON.stringify(r)), id: uuid(), page_id: id })) };
+    });
     return { snap, recs: c.strokes.map((r) => ({ ...JSON.parse(JSON.stringify(r)), id: uuid(), page_id: snap.id })) };
   });
   doOp({ pages: adds.map((a) => a.snap.id),
@@ -998,6 +1153,11 @@ function mergeNotes(ids) {
     before.push([p.id, p.note_id, p.position]);
     p.note_id = keep; p.position = pos++;
     rows.push([p.id, keep, p.position]);
+    for (const s of stickyRows(p.id)) {                     // pw-v9c: its stickies go with it
+      before.push([s.id, s.note_id, s.position]);
+      s.note_id = keep; s.position = p.position;
+      rows.push([s.id, keep, s.position]);
+    }
   }
   if (rows.length) save('movePagesTo', rows);              // first, so the Bin below finds the emptied notes without pages
   touchNote(keep);                                          // a merge counts as an edit on the keeper
@@ -1011,7 +1171,7 @@ function unmerge(m) {
   const rows = [];
   for (const [pid, nid, pos] of m.before) {
     const p = page(pid);
-    if (!p || p.deleted_at || !note(nid)) continue;
+    if (!p || (p.deleted_at && !isSticky(p)) || !note(nid)) continue;   // pw-v9c: a binned sticky still follows its page
     p.note_id = nid; p.position = pos; rows.push([pid, nid, pos]);
   }
   if (rows.length) save('movePagesTo', rows);
@@ -1219,6 +1379,8 @@ function pagesToNote(ids, to) {
   const first = old.indexOf(moving[0]), oldIds = old.map((p) => p.id);
   let pos = nextPos(pagesOf(to));
   const rows = moving.map((p) => { p.note_id = to; p.position = pos++; return [p.id, to, p.position]; });
+  const skRows = (list, nid) => list.flatMap((p) => stickyRows(p.id).map((s) => { s.note_id = nid; s.position = p.position; return [s.id, nid, s.position]; }));
+  rows.push(...skRows(moving, to));                         // pw-v9c: the stickies go with their pages
   save('movePagesTo', rows);
   touchNote(from); touchNote(to);
   renumber(pagesOf(from));                                  // the open note without gaps (and its cover)
@@ -1237,6 +1399,7 @@ function pagesToNote(ids, to) {
       const p = page(id);
       if (back.includes(p)) { p.position = k; rows2.push([id, from, k]); } else if (p.position !== k) { p.position = k; pairs.push([id, k]); }
     });
+    rows2.push(...skRows(back, from));                      // pw-v9c: and come back with them
     save('movePagesTo', rows2);
     if (pairs.length) save('reorderPages', pairs);
     renumber(pagesOf(to));
@@ -1683,7 +1846,8 @@ function renderNote() {
     'aria-label': n.pinned ? 'Unpin' : 'Pin to top', html: SVG_STAR, onclick: (e) => { e.stopPropagation(); pinOpenNote(); } }));
   const list = pagesOf(n.id);
   const key = n.id + '#' + list.map((p) => p.id + p.orientation[0] + p.background[0] + (p.pdf_rot || '')).join(',');
-  if (key !== stackKey) { stackKey = key; showStack(list); }
+  if (key !== stackKey) { stackKey = key; showStack(list, stickiesIn(n.id)); }
+  else setStickies(stickiesIn(n.id));                       // pw-v9c: made, moved, recoloured, binned: laid out again (a diff)
   S.cur = Math.max(0, Math.min(current(), list.length - 1));
   renderPageList();
   updateCount();
@@ -1840,10 +2004,12 @@ async function enter(user) {
   if (api.mode === 'local') { $('modeNote').textContent = 'local copy'; $('logoutBtn').hidden = true; }
   // U3e: the tree queue first; the stroke queue waits for it (a new page's row reaches the database before its strokes)
   treeq.init({ mode: api.mode, userId: user.id, api, onState: dotFrom('tree'), onDrop: treeDropped });
-  store.init({ mode: api.mode, userId: user.id, api, idle: () => treeq.gate(), onRemote: ink.replace, onState: dotFrom('ink'), onPushed: pics.pushed });
+  store.init({ mode: api.mode, userId: user.id, api, idle: () => treeq.gate(), onRemote: ink.replace, onState: dotFrom('ink'),
+               onPushed: (id) => pics.pushed(anchorOf(id)) });   // pw-v9c: a sticky's ink is its page's picture
   pdfin.initPdf({ mode: api.mode, userId: user.id, api, toast, makeNote: makePdfNote, addPages: addPdfPages,
                  onBytes: (path) => { pdfview.bytesArrived(); ink.bytesArrived(path); }, placeImage: ink.placeImage });   // U4c: pictures too
-  pics.initSnap({ api, store, ink, owner: () => user.id, pages: () => S.pages, page, note, pagesOf, liveNote, onCover: refreshCard,
+  pics.initSnap({ api, store, ink, owner: () => user.id, pages: () => S.pages.filter((p) => !isSticky(p)),   // pw-v9c: pictures are of pages only
+                  page: (id) => { const p = page(id); return isSticky(p) ? null : p; }, note, pagesOf, liveNote, onCover: refreshCard,
                   render: (p, recs) => renderPage(p, 'image/webp', 0.8, 1, recs), idle: settledBoth });
   await load();
   pics.scan();                                              // U3b rule (b): pages whose picture is older than their ink
@@ -1872,7 +2038,7 @@ function remoteRow(type, row) {
 // after a gap (a dropped channel, the app back at the front): the open note's pages against the database. Round 6b:
 // after a dropped channel the tree may have missed rows too, so it is read again (once, the channel's own catch-up)
 function liveGap(why) {
-  if (S.openNote) store.reconcile(pagesOf(S.openNote).map((p) => p.id));
+  if (S.openNote) store.reconcile([...pagesOf(S.openNote), ...stickiesIn(S.openNote)].map((p) => p.id));   // pw-v9c: and its stickies
   if (why === 'drop') refreshTree();
 }
 
@@ -1888,7 +2054,8 @@ function liveGap(why) {
 const TREE_LIVE_MS = 1000;
 const TREE_KEYS = {
   notes: ['folder_id', 'name', 'pinned', 'cover_path', 'deleted_at'],
-  pages: ['note_id', 'position', 'orientation', 'background', 'bookmark', 'pdf_path', 'pdf_page', 'pdf_rot', 'snapshot_path', 'deleted_at'],
+  pages: ['note_id', 'position', 'orientation', 'background', 'bookmark', 'pdf_path', 'pdf_page', 'pdf_rot', 'snapshot_path', 'deleted_at',
+          'kind', 'anchor_id', 'sk_x', 'sk_y', 'sk_w', 'sk_colour'],   // pw-v9c: a sticky moved on another device is news
 };
 const treeStats = { events: 0, news: 0, reads: 0, covers: 0 };   // for the tests (window.__pw.treeLive)
 let treeEvents = [], treeEvT = 0;
@@ -1898,7 +2065,7 @@ function remoteTree(table, type, row) {
   treeEvents.push([table, type, row]);
   if (!treeEvT) treeEvT = setTimeout(treeWeigh, TREE_LIVE_MS);
 }
-const treeVal = (k, v) => (k === 'bookmark' ? v === true : k === 'pdf_rot' ? v || 0 : v ?? null);
+const treeVal = (k, v) => (k === 'bookmark' ? v === true : k === 'pdf_rot' ? v || 0 : k === 'kind' ? v || 'page' : v ?? null);
 function treeNews(table, type, row) {
   const have = S[table].find((r) => r.id === row.id);
   if (type === 'DELETE') return !!have;
@@ -1931,7 +2098,7 @@ const STAMP = /^\d{4}-\d\d-\d\dT/;
 const sameVal = (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b)
   || (typeof a === 'string' && typeof b === 'string' && STAMP.test(a) && Date.parse(a) === Date.parse(b));
 function treeBlocked() {
-  return ink.busy() || !!pd || !!S.tick || !!S.renaming || !$('menu').hidden || !!document.querySelector('[role="dialog"]:not([hidden])');
+  return ink.busy() || stickyBusy() || !!pd || !!S.tick || !!S.renaming || !$('menu').hidden || !!document.querySelector('[role="dialog"]:not([hidden])');
 }
 function treeLater() { clearTimeout(treeT); treeT = setTimeout(() => { treeT = 0; refreshTree(); }, TREE_RETRY); }
 function maybeRefreshTree() { if (S.user && Date.now() - lastLoad > TREE_AGE) refreshTree(); }
@@ -2002,7 +2169,7 @@ async function mergeTree(d) {
     return;
   }
   if (S.openNote) {
-    const here = new Set(pagesOf(S.openNote).map((p) => p.id)), came = fresh.filter((id) => here.has(id));
+    const here = new Set([...pagesOf(S.openNote), ...stickiesIn(S.openNote)].map((p) => p.id)), came = fresh.filter((id) => here.has(id));
     if (came.length) await store.ensure(came);              // their strokes: the cache, then the database
   }
   render();
@@ -2053,7 +2220,9 @@ function penButton() {
 
 // ink.js onChange: the page list's thumb, the page picture (U3b, not for a change from another device), and for a
 // change from another device while the grid shows, that note's card (U3d)
-function inkChanged(pageId, how) {
+function inkChanged(id, how) {
+  const pageId = anchorOf(id);                                    // pw-v9c: ink on a sticky changes its page's thumb and picture
+  if (pageId !== id) tools.changed(id);
   if (S.listOpen) refreshThumb(pageId);
   pics.changed(pageId, how);
   tools.changed(pageId);                                          // U5a: the ruler's stick points on that page are read again
@@ -2076,7 +2245,7 @@ function wire() {
     $('eyeBtn').setAttribute('aria-label', show ? 'Hide password' : 'Show password');
     $('eyeBtn').classList.toggle('on', show);
   });
-  ink.initInk({ doOp, desk: $('desk'), onChange: inkChanged,
+  ink.initInk({ doOp, desk: $('desk'), onChange: inkChanged, stickiesOn: stickiesOnPage,   // pw-v9c: the on-page stickies for the pictures
                 toast, openMenuAt: (x, y, items) => openMenu({ x, y }, items), selectTool: () => chooseTool('select') });
   // a right mouse press that lands while something is open (the press itself closes it before its contextmenu):
   // remembered here, before the tray's and the menu's own closers run, so that contextmenu does not flip the tool
@@ -2086,14 +2255,24 @@ function wire() {
   tools.initTools({ trayBtn: $('drawToolsBtn'), desk: $('desk') });   // U5a: the Tools panel and the ruler on the paper
   // U5a: the tools get the first look at a pen press; a press they take is theirs until the lift, any other is ink's
   let penOwner = null;
+  // pw-v9c: a pen press on a sticky (its body: page.js has already taken a strip or corner press) is ink's on the sticky's
+  // own layer and never reaches the tools: the ruler, compass and protractor stay on pages
   const deskInk = { ...ink.hook,
-    down: (e) => { penOwner = tools.hook.down(e) ? tools.hook : ink.hook; return penOwner === tools.hook || ink.hook.down(e); },
+    down: (e) => {
+      penOwner = !stickyAt(e.clientX, e.clientY) && tools.hook.down(e) ? tools.hook : ink.hook;
+      return penOwner === tools.hook || ink.hook.down(e);
+    },
     move: (evs) => (penOwner || ink.hook).move(evs),
     up: (e, cancelled) => { const o = penOwner || ink.hook; penOwner = null; o.up(e, cancelled); },
-    hover: (e) => { tools.hook.hover(e); ink.hook.hover(e); } };
+    hover: (e) => { if (!stickyAt(e.clientX, e.clientY)) tools.hook.hover(e); ink.hook.hover(e); } };
   initPage({ desk: $('desk'), stack: $('stack'), addBelow: $('addBelow'),
              onCurrent: (i) => { S.cur = Math.max(0, i); updateCount(); ink.clearSelection(); rememberPage(); },   // a new page: the selection clears
              onSheets: (sheets) => { ink.attach(sheets); pdfview.attach(sheets); tools.attach(sheets); }, onView: pdfview.view,
+             // pw-v9c: the stickies' layers, a live resize, a strip tap (the menu), a finished move or resize (one undo step)
+             onStickies: (els, sized) => { if (els.length) ink.attach(els); sized.forEach(([id, w]) => ink.fitLayer(id, w)); },
+             onStickySize: (id, w) => ink.fitLayer(id, w),
+             onStickyTap: (id, x, y) => stickyColours({ x, y }, id),
+             onStickyChange: moveSticky,
              ink: deskInk, onPenButton: penButton });
   pdfview.initView({ page });
   if (new URLSearchParams(location.search).get('dbg') === '1') import('./dbg.js').then((m) => m.startDbg($('desk'), ink));   // the pen readout, ?dbg=1 only
@@ -2169,6 +2348,7 @@ function wire() {
 async function settledBoth() { await treeq.settled(); await store.settled(); await treeq.settled(); }
 window.__pw = { S, api, idle: settledBoth, failed: () => treeq.dropCount(), current, ink, store, tray: trayState, treeq, mergeTree,
                 snap: pics.snapStats, renderGrid, covers: coverUrl, bookmarksTaken: () => ({ ...tookOver }),
+                sticky: { stickiesIn, stickiesOf, stickiesOnPage, pagesOf, onPage, add: addSticky, menu: (id) => stickyColours({ x: 200, y: 200 }, id) },   // pw-v9c, for the checks
                 trayPending: () => ({ next: !!trayNext, busy: trayBusy, timer: !!trayT }),
                 pageDrag: () => (pd ? { lifted: pd.lifted, from: pd.from, to: pd.to } : null),
                 tick: () => (S.tick ? { ids: ticked(), moving: S.tick.moving } : null),

@@ -338,6 +338,23 @@ input.rename {
 .sheet svg.toolLayer { overflow: visible; pointer-events: none; z-index: 2; }
 /* U5g: the perpendicular square (js/align.js): shown while the snap holds, faded out on the lift */
 .alignMark { opacity: 1; transition: opacity .6s ease-out; pointer-events: none; }
+/* pw-v9c: sticky notes (her design 27 Oct; the look is _build/sticky/sticky-mock.png). A coloured square on the desk in page
+   px, above every page's ink (js/page.js puts it after the sheets in #stack). Four colours, the strip on top a shade
+   darker: the same in dark mode (a sticky is paper, like the page). Its ink layer covers the whole square in sticky px and
+   is clipped to it (a shrink hides writing, never loses it); the strip and the corner mark draw above the ink. The pen and
+   the finger reach it through the desk (stickyAt); the selection chips inside it stay tappable. */
+.sticky { position: absolute; border-radius: 3px; background: var(--sk);
+  box-shadow: 0 1px 2px rgba(38,42,48,.14), 0 8px 22px rgba(38,42,48,.18); }
+.sticky.yellow { --sk: #FFE882; --sk2: #F0D55A; }
+.sticky.blue   { --sk: #BFDDF6; --sk2: #9CC7EC; }
+.sticky.green  { --sk: #C6EBBC; --sk2: #A3D996; }
+.sticky.purple { --sk: #DFCDF3; --sk2: #C7ACE7; }
+.sticky > svg.ink { position: absolute; left: 0; top: 0; display: block; overflow: hidden; border-radius: 3px; }
+.sticky > .strip { position: absolute; left: 0; right: 0; top: 0; height: 30px; z-index: 1; background: var(--sk2);
+  border-radius: 3px 3px 0 0; display: grid; place-items: center; }
+.sticky > .strip i { display: block; width: 28%; height: 3px; border-radius: 2px; background: rgba(38,42,48,.28); }
+.sticky > .corner { position: absolute; right: 4px; bottom: 4px; z-index: 1; width: 12%; height: 12%; max-width: 18px; max-height: 18px;
+  border-right: 2px solid rgba(38,42,48,.38); border-bottom: 2px solid rgba(38,42,48,.38); border-radius: 0 0 2px 0; }
 .alignMark.fade { opacity: 0; }
 .selChips .chip[data-act="delete"] { background: #FFFFFF; color: #B3261E; box-shadow: inset 0 0 0 1.5px #B3261E, 0 2px 8px rgba(20,22,26,.18); }
 #addBelow {
@@ -820,6 +837,9 @@ svg.ink text, svg.thumbInk text { pointer-events: none; user-select: none; -webk
 #menu .swatches { display: grid; grid-template-columns: repeat(4, 34px); gap: 10px; padding: 6px 12px 10px; }
 #menu .sw { width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--card); box-shadow: 0 0 0 1px var(--sw-edge); cursor: pointer; padding: 0; }
 #menu .sw.on { box-shadow: 0 0 0 2px var(--graphite); }
+#menu button.red { color: #C62828; }   /* pw-v9c: the sticky menu's Put in the Bin, last (the mock's red) */
+:root[data-theme="dark"] #menu button.red { color: #FF8A80; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) #menu button.red { color: #FF8A80; } }
 #toast {
   position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 60; background: var(--graphite);
   color: var(--card); padding: 10px 16px; border-radius: 8px; font-weight: 700; font-size: 14px; opacity: 0;

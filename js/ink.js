@@ -136,9 +136,16 @@
 // cannot reach a Blob URL from inside the SVG, so there thumbSvg is handed data URLs (imageHrefs, FileReader on the device
 // copy, once per path per render), and it throws "The picture is not on this device yet" when the bytes are not here,
 // exactly as a missing PDF does. The PDF export (js/pdfout.js) embeds each file once and draws it under the ink.
+// Sticky notes (pw-v9c; the anchor rule and the export rule: js/page.js's head). A sticky is a pages row with its own ink
+// layer here, keyed by its row id like a page's, its strokes in sticky px from its top-left; the layer is the whole square
+// (the strip is part of it and drawn above the ink). Every tool works on it as on a page: the pen's press is read by
+// surfaceAt / surfacePoint (page.js), which put a sticky ahead of the page under it, so a stroke, an erase, a box or a
+// hold lands on the sticky's own layer and the page's ink is never touched; the undo stack takes it like a page's.
+// thumbSvg draws a page's ON-PAGE stickies over its ink (cfg stickiesOn, from app.js), clipped to the page: the rounded
+// square in its colour, the strip a shade darker, its strokes; no grip bar, no corner mark. A sticky in the margin: nothing.
 
 import * as store from './store.js';
-import { pageAt, pagePoint, view, pageSize, CM } from './page.js';
+import { pageAt, pagePoint, view, pageSize, CM, surfaceAt, surfacePoint, SK_COLOURS, SK_STRIP } from './page.js';
 import { bytesOf } from './pdfin.js';
 import { alignDir, segsOf, markOf, markPaths, roundAlong, lineCross, distToSeg as segGap, segCross, MEET, FADE_MS } from './align.js';
 
@@ -184,6 +191,7 @@ let ring = null, hring = null, deskEl = null, deskBox = null;
 let SEL = null;                  // the selection: { page, ids, g, chips, deg, z }
 let CLIP = null;                 // the selection clipboard: { recs (deep copies, by seq), box (their selBox) }
 let toast = null, openMenuAt = null, selectTool = null;   // optional, from app.js: a toast, the menu at a point, the tray's select tool
+let stickiesOn = () => [];       // pw-v9c, from app.js: a page id -> its on-page stickies [{ id, x, y, w, colour }] (thumbSvg, pdfout)
 // the chips' four icons (the same drawing style as SVG_BIN in js/app.js)
 const ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">';
 const SVG_COPY = ICON + '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>';
@@ -203,6 +211,7 @@ export function initInk(o) {
   if (o.toast) toast = o.toast;
   if (o.openMenuAt) openMenuAt = o.openMenuAt;
   if (o.selectTool) selectTool = o.selectTool;
+  if (o.stickiesOn) stickiesOn = o.stickiesOn;
   deskEl = o.desk || document.getElementById('desk');
   deskEl.addEventListener('pointerleave', hideHandle);
   // the selection's handles and chips keep their size on screen: redraw them when the zoom changes
@@ -739,9 +748,17 @@ export function attach(sheets) {
   for (const el of sheets) {
     const d = data(el.dataset.id), w = parseFloat(el.style.width), h = parseFloat(el.style.height);
     if (!d.svg) buildLayer(d, w, h); else sizeLayer(d, w, h);
-    el.appendChild(d.svg);
+    if (el.classList.contains('sticky')) el.insertBefore(d.svg, el.querySelector('.corner'));   // pw-v9c: under the corner mark
+    else el.appendChild(d.svg);
   }
 }
+// pw-v9c: a sticky resized: its layer's room changes, the writing keeps its place and size (a shrink clips it, nothing goes)
+export function fitLayer(id, w, h = w) {
+  const d = P.get(id);
+  if (d && d.svg) { sizeLayer(d, w, h); if (SEL && SEL.page === id) renderSel(); }
+}
+// pw-v9c: the on-page stickies of a page (app.js's rule: the sticky's square overlaps the page's), for js/pdfout.js too
+export function stickiesOnPage(pageId) { try { return stickiesOn(pageId) || []; } catch (_) { return []; } }
 
 // the page list (pw-v4i): a page's ink as its own small <svg>, built from the records with the same builders as the
 // page (makeEl + groupFor, in seq order, highlighter groups below the pen group), so a thumb shows what the page
@@ -765,7 +782,37 @@ export function thumbSvg(pageId, page = 'portrait', recs = null, hrefs = null) {
   const hrefOf = hrefs ? (path) => hrefs.get(path) || null : null;
   for (const rec of d.strokes) groupFor(t, rec).appendChild(makeEl(rec, hrefOf));
   svg.append(t.img, t.hl, t.pen);
+  const sk = stickiesOnPage(pageId);
+  if (sk.length) svg.append(stickyGroup(sk, sz, hrefOf));                 // pw-v9c: on top of the page's ink
   return svg;
+}
+// pw-v9c: a page's on-page stickies as one <g>, clipped to the page; each a rounded square (radius 3) in its colour, the
+// strip in the darker shade, then its strokes moved by its x, y, all clipped to the square. The ids are unique per call.
+let skN = 0;
+function stickyGroup(list, sz, hrefOf) {
+  const el = (tag, at) => { const e = document.createElementNS(SVGNS, tag); for (const k in at) e.setAttribute(k, at[k]); return e; };
+  const n = ++skN, defs = el('defs', {}), all = el('g', { class: 'stickies', 'clip-path': `url(#pwskp${n})` });
+  const pc = el('clipPath', { id: `pwskp${n}` });
+  pc.append(el('rect', { x: 0, y: 0, width: sz.w, height: sz.h }));
+  defs.append(pc);
+  list.forEach((s, j) => {
+    const [c1, c2] = SK_COLOURS[s.colour] || SK_COLOURS.yellow, id = `pwsk${n}-${j}`;
+    const cp = el('clipPath', { id });
+    cp.append(el('rect', { x: 0, y: 0, width: s.w, height: s.w, rx: 3, ry: 3 }));
+    defs.append(cp);
+    const g = el('g', { class: 'sticky', 'data-id': s.id, transform: `translate(${r1(s.x)} ${r1(s.y)})` });
+    const body = el('g', { 'clip-path': `url(#${id})` });
+    body.append(el('rect', { class: 'skPaper', x: 0, y: 0, width: s.w, height: s.w, fill: c1 }),
+                el('rect', { class: 'skStrip', x: 0, y: 0, width: s.w, height: SK_STRIP, fill: c2 }));
+    const t = { img: el('g', { class: 'img' }), hl: el('g', { class: 'hl' }), pen: el('g', { class: 'pen' }), hlo: new Map() };
+    for (const rec of data(s.id).strokes) groupFor(t, rec).appendChild(makeEl(rec, hrefOf));
+    body.append(t.img, t.hl, t.pen);
+    g.append(body);
+    all.append(g);
+  });
+  const out = el('g', {});
+  out.append(defs, all);
+  return out;
 }
 
 // ---------------------------------------------------------------- changes (every one is saved)
@@ -1449,7 +1496,7 @@ function selGrip(at, z) {
 // selection box (pw-v7m: a touch there moves), no ring. The pen tool shows nothing: it only draws
 function hover(e) {
   if (T.tool !== 'select' || G) { hideHandle(); return; }
-  const at = pageAt(e.clientX, e.clientY), z = view().z;
+  const at = surfaceAt(e.clientX, e.clientY), z = view().z;
   const h = at && selGrip(at, z) === null && !inSel(at) && handleAt(at.id, at.x, at.y, HANDLE_REACH / z);
   if (!h) { hideHandle(); return; }
   showHandle(e.clientX + (h.at[0] - at.x) * z, e.clientY + (h.at[1] - at.y) * z);
@@ -1709,7 +1756,7 @@ export function selectAll(pageId) {
 // and Paste (disabled with nothing copied)
 function holdMenu(cx, cy) {
   if (G || !openMenuAt) return;
-  const at = pageAt(cx, cy);
+  const at = surfaceAt(cx, cy);
   if (!at) return;                                 // off every page: nothing opens
   const pageId = at.id, x = at.x, y = at.y;
   openMenuAt(cx, cy, [data(pageId).strokes.some((r) => !isLocked(r)) ? { label: 'Select all', fn: () => selectAll(pageId) }   // U4c: a locked picture alone is nothing to select
@@ -1777,7 +1824,7 @@ function topAt(id, x, y, reach) {
 // a finger tap (page.js: a touch that lifted within 6 px of where it landed): outside the selection's box it clears
 function fingerTap(cx, cy) {
   if (!SEL || G) return;
-  const at = pageAt(cx, cy), b = SEL.box;
+  const at = surfaceAt(cx, cy), b = SEL.box;
   if (at && b && at.id === SEL.page && at.x >= b[0] && at.x <= b[2] && at.y >= b[1] && at.y <= b[3]) return;   // inside: the pen moves it
   clearSelection();
 }
@@ -1831,7 +1878,7 @@ function note(page, removed, added) {
   for (const r of added) c.added.set(r.id, r);
 }
 function eraseHere(cx, cy) {
-  const at = pageAt(cx, cy);
+  const at = surfaceAt(cx, cy);
   if (!at) return;
   const d = data(at.id);
   if (G.kind === 'eraser') {
@@ -2051,7 +2098,7 @@ export function liveShape(pageId, rec) {
 function down(e) {
   if (e.button === 2) return false;                               // the right button / pen button press: never a gesture (page.js flips the tool on its contextmenu)
   if (T.tool === 'pen' && barrel(e)) return false;                 // the pen tip down with the button held: a harmless miss, as before
-  const at = pageAt(e.clientX, e.clientY);
+  const at = surfaceAt(e.clientX, e.clientY);
   if (!at) { if (T.tool === 'select') clearSelection(); return false; }
   const d = data(at.id);
   if (!d.svg) return false;
@@ -2147,7 +2194,7 @@ function move(events) {
   if (G.kind === 'draw') {
     const pts = G.rec.data.points, step = Math.max(MIN_STEP, 1 / G.z);   // pw-v7e: one screen px, never under the floor
     for (const e of events) {
-      const [x, y] = pagePoint(G.index, e.clientX, e.clientY), l = pts[pts.length - 1];
+      const [x, y] = surfacePoint(G.index, e.clientX, e.clientY), l = pts[pts.length - 1];
       G.lastRaw = [x, y];
       const lr = G.rawPts[G.rawPts.length - 1];                    // pw-v7e: the raw path, kept exactly as before, for classify
       if (Math.hypot(x - lr[0], y - lr[1]) >= MIN_STEP) G.rawPts.push([r1(x), r1(y)]);
@@ -2160,9 +2207,9 @@ function move(events) {
   }
   if (G.kind === 'snapped' || G.kind === 'still') return;         // a snapped shape stays put until the pen lifts (U4c: 'still', a locked picture)
   if (G.kind === 'grab') {
-    const [x, y] = pagePoint(G.index, ev.clientX, ev.clientY);
+    const [x, y] = surfacePoint(G.index, ev.clientX, ev.clientY);
     for (const e of events) {                                      // how far the pen ever got from where it landed (the tap rule)
-      const [qx, qy] = pagePoint(G.index, e.clientX, e.clientY);
+      const [qx, qy] = surfacePoint(G.index, e.clientX, e.clientY);
       G.far = Math.max(G.far, Math.hypot(qx - G.p0[0], qy - G.p0[1]));
     }
     G.now = dragHandle(G.rec, G.h, x + G.off[0], y + G.off[1]);
@@ -2172,19 +2219,19 @@ function move(events) {
     return;
   }
   if (G.kind === 'box') {
-    const [x, y] = pagePoint(G.index, ev.clientX, ev.clientY);
+    const [x, y] = surfacePoint(G.index, ev.clientX, ev.clientY);
     G.p1 = [x, y];
     setAttrs(G.band, { x: Math.min(G.p0[0], x), y: Math.min(G.p0[1], y), width: Math.abs(x - G.p0[0]), height: Math.abs(y - G.p0[1]) });
     return;
   }
   if (G.kind === 'smove') {
-    const [x, y] = pagePoint(G.index, ev.clientX, ev.clientY);
+    const [x, y] = surfacePoint(G.index, ev.clientX, ev.clientY);
     G.dx = x - G.p0[0]; G.dy = y - G.p0[1];
     liveSel(G);
     return;
   }
   if (G.kind === 'srotate') {                                      // the pen's angle about the centre, less where it started
-    const [x, y] = pagePoint(G.index, ev.clientX, ev.clientY), c = G.c;
+    const [x, y] = surfacePoint(G.index, ev.clientX, ev.clientY), c = G.c;
     let a = nrmDeg((Math.atan2(y - c[1], x - c[0]) - G.a0) * 180 / Math.PI);
     const n = Math.round(a / 15) * 15;
     if (Math.abs(a - n) <= 2.5) a = n;                             // near a multiple of 15: exactly that
@@ -2193,7 +2240,7 @@ function move(events) {
     return;
   }
   if (G.kind === 'sresize') {
-    const [px, py] = pagePoint(G.index, ev.clientX, ev.clientY), { o, c } = G, x = px + G.off[0], y = py + G.off[1];   // pw-v7m: the pen's offset kept
+    const [px, py] = surfacePoint(G.index, ev.clientX, ev.clientY), { o, c } = G, x = px + G.off[0], y = py + G.off[1];   // pw-v7m: the pen's offset kept
     const vx = c[0] - o[0], vy = c[1] - o[1], L2 = vx * vx + vy * vy || 1;
     G.s = Math.max(0.05, ((x - o[0]) * vx + (y - o[1]) * vy) / L2);   // along the diagonal, so the aspect holds
     liveSel(G);
@@ -2227,7 +2274,7 @@ function up(e, cancelled) {
     hideHandle();
     if (g.mark) { fadeAlignMark(g.mark); g.mark = null; }          // U5g: the square fades out
     const moved = JSON.stringify(g.now.data) !== JSON.stringify(g.rec.data);
-    if (e && Number.isFinite(e.clientX)) { const [qx, qy] = pagePoint(g.index, e.clientX, e.clientY); g.far = Math.max(g.far, Math.hypot(qx - g.p0[0], qy - g.p0[1])); }
+    if (e && Number.isFinite(e.clientX)) { const [qx, qy] = surfacePoint(g.index, e.clientX, e.clientY); g.far = Math.max(g.far, Math.hypot(qx - g.p0[0], qy - g.p0[1])); }
     if (!cancelled && g.far * g.z < 4) {                           // a tap on a handle (under 4 px on screen): no change, no undo step; it
       if (g.el) setGeom(g.el, g.rec);                              // selects as any select tap does (topAt, so the pw-v4m tie-break holds),
       makeSel(g.page, [topAt(g.page, g.p0[0], g.p0[1], GRAB / g.z) || g.rec.id]);   // else the shape whose handle it was

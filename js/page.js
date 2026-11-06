@@ -17,6 +17,20 @@
 // padlock chip app.js owns; Samsung Notes' "fix zoom"): while locked the zoom never changes, ONE finger only taps
 // (clears the selection) and holds (Paste), never pans or glides, and TWO fingers move the stack by their midpoint.
 // The S Pen and the jumps to a page work as always. viewStats() counts resizes and fits for ?dbg=1.
+// pw-v9c: sticky notes on the desk (her design 27 Oct, built 6 Nov). A sticky is a small coloured square she writes on and
+// drags by its top strip, with the pen or a finger: into the margin beside a page ("the sidelines": things to show quickly
+// in class without scrolling), between pages, or onto a page. THE ANCHOR RULE: every sticky belongs with one page (its
+// anchor) and sits at sk_x, sk_y page px from that page's top-left, so it goes wherever its page goes; dropped with its
+// centre over ANOTHER page it re-anchors to that page, dropped over no page it keeps its anchor. THE EXPORT RULE, her
+// words: a sticky on a page goes into that page's PDF and pictures as it looks (clipped at the page's edge); a sticky in
+// the margin simply is not there (js/ink.js thumbSvg, js/pdfout.js). Here: each sticky is a div.sticky.<colour> in #stack
+// AFTER the sheets (above every page's ink), its own ink layer inside (js/ink.js attach). The pages' lists (L.ids, L.tops,
+// L.sizes), the current page, pageAt and pagePoint stay PAGES ONLY; the stickies have their own list L.sk (z-order: last
+// = on top). The clamp uses the box of the pages AND the stickies (L.box), so a margin sticky can always be panned into
+// view; with no sticky the box is exactly the pages' box (0, 0, L.w, L.h) and the layout is as before, number for number.
+// A press on a sticky wins over the page under it (stickyAt, topmost first): the strip drags it (a lift within 8 screen
+// px = a tap = the sticky menu), the corner handle resizes it (square, 113 to 454 page px, top-left fixed), the body
+// takes the pen's tool on its own layer (surfaceAt / surfacePoint, js/ink.js) or a finger's pan, as a page does.
 
 export const CM = 96 / 2.54;                 // 1 cm at 96 px per inch
 export const A4 = { w: 794, h: 1123 };       // 21 x 29.7 cm at zoom 1
@@ -31,9 +45,17 @@ const HINT_MS = 250;        // pw-v8i: ms of a still stack before the will-chang
 const HINT_BACK_MS = 1000;  // pw-v8i: ms after that before the hint goes back on (the stack composited before her next finger lands)
 
 let desk, stack, addBelow, onCurrent = () => {}, onSheets = () => {}, onPenButton = () => {}, onView = () => {}, ink = null;
+// pw-v9c: app.js's sticky callbacks: new elements to attach and sizes that changed (onStickies), a live resize
+// (onStickySize), a strip tap (onStickyTap), a finished move or resize (onStickyChange)
+let onStickies = () => {}, onStickySize = () => {}, onStickyTap = () => {}, onStickyChange = () => {};
 let viewKey = '';     // U4a: the pages on screen and the zoom, as last told to onView
 const V = { x: 0, y: 0, z: 1 };
-const L = { tops: [], sizes: [], ids: [], w: A4.w, h: 0 };
+const L = { tops: [], sizes: [], ids: [], w: A4.w, h: 0, sk: [], box: [0, 0, A4.w, 0] };   // pw-v9c: sk = the stickies, box = the pan box
+// pw-v9c: the sticky's numbers (page px) and her four colours (the paper and the strip a shade darker; the same in dark mode)
+export const SK_SIZE = 227, SK_MIN = 113, SK_MAX = 454, SK_STRIP = 30;
+export const SK_COLOURS = { yellow: ['#FFE882', '#F0D55A'], blue: ['#BFDDF6', '#9CC7EC'], green: ['#C6EBBC', '#A3D996'], purple: ['#DFCDF3', '#C7ACE7'] };
+const SK_TAP = 8;          // screen px: a strip press that moves less than this is a tap (the menu)
+const SK_CORNER = 24;      // screen px around the corner mark that grab the resize
 let R = null;        // the desk's place on screen, refreshed at every pen-down and resize
 let cur = -1;
 let pinned = null;   // a page asked for by number (arrows, page list) stays current while any of it shows
@@ -192,17 +214,20 @@ function settle() {
   if (raf) { cancelAnimationFrame(raf); raf = 0; clampView(); apply(); }
 }
 
+// pw-v9c: the box is the pages' and the stickies' together (L.box = [x0, y0, x1, y1] in stack px); with no sticky it is
+// [0, 0, L.w, L.h] and every line below works out exactly as it did
 function clampView() {
-  const dw = desk.clientWidth, dh = desk.clientHeight;
-  const w = L.w * V.z, h = L.h * V.z;
-  if (w <= dw - 2 * MARGIN) V.x = (dw - w) / 2;
-  else V.x = Math.min(MARGIN, Math.max(dw - w - MARGIN, V.x));
-  if (h <= dh - 2 * MARGIN) V.y = MARGIN;
-  else V.y = Math.min(MARGIN, Math.max(dh - h - MARGIN, V.y));
+  const dw = desk.clientWidth, dh = desk.clientHeight, [x0, y0, x1, y1] = L.box;
+  const w = (x1 - x0) * V.z, h = (y1 - y0) * V.z;
+  if (w <= dw - 2 * MARGIN) V.x = (dw - w) / 2 - x0 * V.z;
+  else V.x = Math.min(MARGIN - x0 * V.z, Math.max(dw - MARGIN - x1 * V.z, V.x));
+  if (h <= dh - 2 * MARGIN) V.y = MARGIN - y0 * V.z;
+  else V.y = Math.min(MARGIN - y0 * V.z, Math.max(dh - MARGIN - y1 * V.z, V.y));
 }
 
-// draws every page of the note, in order; keeps the view where it was
-export function showStack(pages) {
+// draws every page of the note, in order; keeps the view where it was. pw-v9c: `stickies` (the second argument) = the
+// note's live sticky rows; they are laid out after the sheets (setStickies)
+export function showStack(pages, stickies = []) {
   stack.querySelectorAll('.sheet').forEach((e) => e.remove());
   L.tops = []; L.sizes = []; L.ids = []; L.w = 0;
   pages.forEach((p) => { const s = pageSize(p); L.sizes.push(s); L.w = Math.max(L.w, s.w); });
@@ -225,11 +250,181 @@ export function showStack(pages) {
   });
   addBelow.style.top = Math.max(0, y - GAP) + 22 + 'px';
   L.h = Math.max(0, y - GAP) + BELOW;
+  L.box = [0, 0, L.w, L.h];
   stack.style.width = L.w + 'px'; stack.style.height = L.h + 'px';
   cur = -1; viewKey = '';
   if (pinned !== null && pinned >= L.tops.length) pinned = L.tops.length - 1;
   stopGlide(); settle(); clampView(); apply();
   onSheets([...stack.querySelectorAll('.sheet')]);
+  setStickies(stickies);
+}
+
+// ---------------------------------------------------------------- pw-v9c: the stickies on the desk
+// a page's top-left x in stack px (by its index in the stack)
+const pageLeft = (i) => (L.w - L.sizes[i].w) / 2;
+// the stickies as they are now, laid out: elements made for new rows (handed to onStickies, so js/ink.js attaches their
+// layers), moved, resized and recoloured for known ones, removed for rows that left. A sticky whose anchor is not in the
+// stack is not shown. The z-order of the stickies already shown is kept (most recently touched on top); new ones go on top.
+export function setStickies(rows) {
+  const want = new Map();
+  for (const r of rows) if (L.ids.includes(r.anchor_id)) want.set(r.id, r);
+  if (SG && !want.has(SG.id)) SG = null;                                   // the sticky under a gesture went (another device)
+  L.sk = L.sk.filter((k) => { if (want.has(k.id)) return true; k.el.remove(); return false; });
+  const made = [], resized = [];
+  for (const [id, r] of want) {
+    let k = L.sk.find((x) => x.id === id);
+    if (!k) {
+      const el = document.createElement('div');
+      el.dataset.id = id;
+      el.innerHTML = '<div class="strip"><i></i></div><span class="corner"></span>';
+      k = { id, el };
+      L.sk.push(k); made.push(el);
+    } else if (k.w !== r.sk_w) resized.push(k);
+    Object.assign(k, { anchor: r.anchor_id, x: r.sk_x, y: r.sk_y, w: r.sk_w, colour: r.sk_colour });
+  }
+  for (const k of L.sk) { if (SG && SG.k === k) continue; placeSticky(k); if (!k.el.parentNode) stack.appendChild(k.el); }
+  stickyBox();
+  if (made.length || resized.length) onStickies(made, resized.map((k) => [k.id, k.w]));
+}
+// one sticky's element where its row says
+function placeSticky(k) {
+  const i = L.ids.indexOf(k.anchor), el = k.el;
+  el.className = 'sticky ' + (SK_COLOURS[k.colour] ? k.colour : 'yellow');
+  el.dataset.anchor = k.anchor;
+  el.style.left = (pageLeft(i) + k.x) + 'px'; el.style.top = (L.tops[i] + k.y) + 'px';
+  el.style.width = el.style.height = k.w + 'px';
+  el.style.transform = '';
+}
+// the pan box grows to cover every sticky; the stack's own size covers the positive side of it. Right after she drops or
+// resizes a sticky (keepOnce) the box also covers what the desk shows now, so a box that shrank (a far-margin sticky
+// dragged back in) never makes the clamp jump the stack, and the sticky stays exactly where she let go; the next layout
+// measures the box plainly again.
+let keepOnce = false;
+function stickyBox() {
+  let [x0, y0, x1, y1] = [0, 0, L.w, L.h];
+  for (const k of L.sk) {
+    const i = L.ids.indexOf(k.anchor), l = pageLeft(i) + k.x, t = L.tops[i] + k.y;
+    x0 = Math.min(x0, l); y0 = Math.min(y0, t); x1 = Math.max(x1, l + k.w); y1 = Math.max(y1, t + k.w);
+  }
+  if (keepOnce && L.sk.length) {
+    if (raf) { cancelAnimationFrame(raf); raf = 0; }
+    const dw = desk.clientWidth, dh = desk.clientHeight;
+    x0 = Math.min(x0, (MARGIN - V.x) / V.z); x1 = Math.max(x1, (dw - MARGIN - V.x) / V.z);
+    y0 = Math.min(y0, (MARGIN - V.y) / V.z); y1 = Math.max(y1, (dh - MARGIN - V.y) / V.z);
+  }
+  keepOnce = false;
+  L.box = [x0, y0, x1, y1];
+  stack.style.width = x1 + 'px'; stack.style.height = y1 + 'px';
+  stopGlide(); settle(); clampView(); apply();
+}
+// a sticky to the top of the pile (Bring to front, and every strip press): last in L.sk and in the DOM. Nothing is saved.
+export function stickyFront(id) {
+  const k = L.sk.find((x) => x.id === id);
+  if (!k) return;
+  L.sk = [...L.sk.filter((x) => x !== k), k];
+  if (stack.lastElementChild !== k.el) stack.appendChild(k.el);
+}
+export function stickyOrder() { return L.sk.map((k) => k.id); }
+// the corner mark's centre along the diagonal (css: 4 px in, 12% of the side, at most 18 px)
+const cornerAt = (w) => w - 4 - Math.min(0.12 * w, 18) / 2;
+// the sticky under a client point, topmost first: { id, x, y (sticky px), w, part: 'strip' | 'corner' | 'body' } or null.
+// The corner reaches SK_CORNER screen px around its mark (a little past the square).
+export function stickyAt(cx, cy) {
+  if (!L.sk.length) return null;
+  const [sx, sy] = deskPoint(cx, cy), reach = SK_CORNER / V.z;
+  for (let j = L.sk.length - 1; j >= 0; j--) {
+    const k = L.sk[j], i = L.ids.indexOf(k.anchor);
+    if (i < 0) continue;
+    const x = sx - pageLeft(i) - k.x, y = sy - L.tops[i] - k.y, m = cornerAt(k.w);
+    if (Math.hypot(x - m, y - m) <= reach) return { id: k.id, x, y, w: k.w, part: 'corner' };
+    if (x >= 0 && x <= k.w && y >= 0 && y <= k.w) return { id: k.id, x, y, w: k.w, part: y <= SK_STRIP ? 'strip' : 'body' };
+  }
+  return null;
+}
+// pw-v9c, for js/ink.js: the surface (a sticky first, then a page) under a client point, in that surface's own px. A
+// sticky's index is 'sk:<id>' (a string), a page's its number, exactly as pageAt gives it.
+export function surfaceAt(cx, cy) {
+  const k = stickyAt(cx, cy);
+  if (k && k.x >= 0 && k.y >= 0 && k.x <= k.w && k.y <= k.w) return { index: 'sk:' + k.id, id: k.id, x: k.x, y: k.y, w: k.w, h: k.w, sticky: true };
+  return pageAt(cx, cy);
+}
+export function surfacePoint(index, cx, cy) {
+  if (typeof index !== 'string') return pagePoint(index, cx, cy);
+  const k = L.sk.find((x) => 'sk:' + x.id === index), i = k ? L.ids.indexOf(k.anchor) : -1;
+  if (i < 0) return [NaN, NaN];
+  const [sx, sy] = deskPoint(cx, cy);
+  return [sx - pageLeft(i) - k.x, sy - L.tops[i] - k.y];
+}
+// where a new sticky of side w lands on page `index` (her design): beside the page on the right, 24 px out, 24 px below
+// the top of what she sees of that page (kept within the page's height); when the page's right edge is within 0.6 of the
+// sticky's width of the desk's right edge on screen (portrait on the tablet): its left third on the page, the rest
+// hanging off
+export function stickySpot(index, w = SK_SIZE) {
+  const s = L.sizes[index];
+  if (!s) return { x: 0, y: 0 };
+  if (raf) clampView();
+  const dw = desk.clientWidth, right = V.x + (pageLeft(index) + s.w) * V.z;
+  const top = -V.y / V.z - L.tops[index];
+  const y = Math.max(0, Math.min(s.h - w, Math.max(0, top) + 24));
+  const x = dw - right < w * V.z * 0.6 ? s.w - w / 3 : s.w + 24;
+  return { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 };
+}
+// the page a stack point lies on (its index), or -1
+function pageAtStack(sx, sy) {
+  for (let i = 0; i < L.tops.length; i++) {
+    const s = L.sizes[i], x = sx - pageLeft(i), y = sy - L.tops[i];
+    if (x >= 0 && x <= s.w && y >= 0 && y <= s.h) return i;
+  }
+  return -1;
+}
+// a sticky being dragged (strip) or resized (corner): { id, k, pid, kind, c0, c, dx, dy, w, far, touch }
+let SG = null;
+let cancelHoldOuter = () => {};
+export function stickyBusy() { return !!SG; }
+function stickyStart(e, hit, touch) {
+  const k = L.sk.find((x) => x.id === hit.id);
+  if (!k) return false;
+  stickyFront(k.id);
+  SG = { id: k.id, k, pid: e.pointerId, kind: hit.part === 'corner' ? 'resize' : 'move', c0: [e.clientX, e.clientY], c: [e.clientX, e.clientY],
+         dx: 0, dy: 0, w: k.w, far: 0, touch };
+  stopGlide(); cancelHoldOuter();
+  try { desk.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+  e.preventDefault();
+  return true;
+}
+function stickyMove(e) {
+  const g = SG;
+  g.c = [e.clientX, e.clientY];
+  const ex = e.clientX - g.c0[0], ey = e.clientY - g.c0[1];
+  g.far = Math.max(g.far, Math.hypot(ex, ey));
+  g.dx = ex / V.z; g.dy = ey / V.z;
+  if (g.kind === 'move') { g.k.el.style.transform = `translate(${g.dx}px, ${g.dy}px)`; return; }   // live, a transform only
+  g.w = Math.round(Math.max(SK_MIN, Math.min(SK_MAX, g.k.w + (g.dx + g.dy) / 2)) * 10) / 10;       // along the diagonal: square, top-left fixed
+  g.k.el.style.width = g.k.el.style.height = g.w + 'px';
+  onStickySize(g.id, g.w);
+}
+// the lift: a tap (the menu), or the move / resize handed to app.js as the row's new numbers (it saves them, lays out)
+function stickyEnd(e, cancelled) {
+  const g = SG;
+  SG = null;
+  try { desk.releasePointerCapture(g.pid); } catch (_) { /* ignore */ }
+  if (!cancelled && e && Number.isFinite(e.clientX)) { SG = g; stickyMove(e); SG = null; }
+  const k = g.k;
+  if (cancelled || (g.kind === 'move' && g.far < SK_TAP) || (g.kind === 'resize' && g.w === k.w)) {
+    placeSticky(k);
+    if (g.kind === 'resize') onStickySize(g.id, k.w);
+    if (!cancelled && g.kind === 'move') onStickyTap(g.id, g.c[0], g.c[1]);
+    return;
+  }
+  keepOnce = true;
+  if (g.kind === 'resize') { onStickyChange(g.id, { sk_w: g.w }); keepOnce = false; return; }
+  // the centre over another page: that page becomes its anchor; over no page: the anchor stays
+  const i0 = L.ids.indexOf(k.anchor), l = pageLeft(i0) + k.x + g.dx, t = L.tops[i0] + k.y + g.dy;
+  let i = pageAtStack(l + k.w / 2, t + k.w / 2);
+  if (i < 0) i = i0;
+  const r = (v) => Math.round(v * 10) / 10;
+  onStickyChange(g.id, { anchor_id: L.ids[i], sk_x: r(l - pageLeft(i)), sk_y: r(t - L.tops[i]) });
+  keepOnce = false;
 }
 
 // a page's bookmark (pw-v4r), the Samsung Notes way: a ribbon tab hanging from the page's top edge near the right
@@ -372,6 +567,10 @@ export function initPage(els) {
   if (els.ink) ink = els.ink;                       // { down(e), move(events), up(e, cancelled), hover(e), fingerTap(cx, cy), holdMenu(cx, cy) }
   if (els.onPenButton) onPenButton = els.onPenButton;   // the pen button's contextmenu on the desk (pw-v4v): app.js flips the tool
   if (els.onView) onView = els.onView;                  // U4a: (first, last, zoom) of the pages on screen, for the PDF layer
+  if (els.onStickies) onStickies = els.onStickies;      // pw-v9c
+  if (els.onStickySize) onStickySize = els.onStickySize;
+  if (els.onStickyTap) onStickyTap = els.onStickyTap;
+  if (els.onStickyChange) onStickyChange = els.onStickyChange;
   const touches = new Map();
   let pinch = null, drag = null, penSeen = -1e9, inkId = null, chord = false, holdT = 0;
   const now = () => performance.now();
@@ -384,6 +583,7 @@ export function initPage(els) {
   const TAP_PX = 6;                                 // a finger that lifts within 6 px of where it landed is a tap (the selection clears)
   const FINGER_HOLD = 500;                          // ms a finger stays still (within TAP_PX) before the hold menu opens
   function cancelHold() { clearTimeout(holdT); holdT = 0; }
+  cancelHoldOuter = cancelHold;
   // one finger down: when it is still there and still 500 ms later, its pan stops and the hold menu opens
   function armHold(id) {
     cancelHold();
@@ -440,11 +640,25 @@ export function initPage(els) {
     e.preventDefault();
     return true;
   }
+  // pw-v9c: a press on a sticky's strip or corner (pen, mouse or ONE finger) drags or resizes it, before anything else
+  const stickyGrip = (e) => {
+    if (SG || inkId !== null || e.button > 0 || e.target.closest('button, #pageList')) return false;
+    const hit = stickyAt(e.clientX, e.clientY);
+    return !!hit && hit.part !== 'body' && stickyStart(e, hit, e.pointerType === 'touch');
+  };
   desk.addEventListener('pointerdown', (e) => {
     stopGlide(); settle(); unscroll();                                     // any touch, pen or click holds the stack where it is
+    if (SG && e.pointerType === 'touch' && SG.touch && e.pointerId !== SG.pid) {   // pw-v9c: a second finger: the drag lets go, the pinch takes both
+      const first = { id: SG.pid, c: SG.c };
+      stickyEnd(null, true);
+      if (!touches.size) gRect = desk.getBoundingClientRect();
+      touches.set(first.id, [first.c[0] - gRect.left, first.c[1] - gRect.top]);
+      try { desk.setPointerCapture(first.id); } catch (_) { /* ignore */ }
+    } else if (SG) return;                                                 // one sticky gesture at a time
     if (e.pointerType === 'pen' || e.pointerType === 'mouse') {           // the S Pen and the mouse draw
       if (e.pointerType === 'pen') { penSeen = performance.now(); cancelHold(); }
       if (e.button > 0 && e.button !== 2) return;                         // button 2: the pen button / right mouse (ink.down turns it away)
+      if (stickyGrip(e)) return;                                           // pw-v9c
       chord = false;
       inkDown(e);
       return;
@@ -453,6 +667,7 @@ export function initPage(els) {
     if (inkId !== null) return;                                            // a finger is ignored while the pen writes
     if (e.target.closest('button, #pageList')) return;                     // buttons and the page list stay tappable
     if (performance.now() - penSeen < 600) return;                         // palm while the pen is near
+    if (!touches.size && stickyGrip(e)) return;                            // pw-v9c: one finger on a strip drags it, even zoom-locked
     if (!touches.size) gRect = desk.getBoundingClientRect();              // the first finger: the desk's place for this gesture
     touches.set(e.pointerId, pt(e));
     hint();                                                                // pw-v8i: composited before the first move
@@ -467,6 +682,7 @@ export function initPage(els) {
     e.preventDefault();
   });
   desk.addEventListener('pointermove', (e) => {
+    if (SG && e.pointerId === SG.pid) { stickyMove(e); return; }          // pw-v9c: a sticky being dragged or resized
     if (e.pointerType === 'pen') { penSeen = performance.now(); if (holdT) cancelHold(); }
     if (e.pointerId === inkId) {
       if (chord && !(e.buttons & 1)) {                                     // the tip lifted, the pen button still held: the end
@@ -509,6 +725,7 @@ export function initPage(els) {
     if (held) { held = false; gRect = null; relayout(); }
   }
   const up = (e) => {
+    if (SG && e.pointerId === SG.pid) { stickyEnd(e, e.type === 'pointercancel'); return; }   // pw-v9c
     if (e.pointerId === inkId) { endInk(e, e.type === 'pointercancel'); return; }
     if (!touches.has(e.pointerId)) return;
     touches.delete(e.pointerId);

@@ -23,9 +23,10 @@
    pw-v8z (6 Nov): an open note's bar shows its folder as a small chip (a tap moves it) and a star that pins it to the top; on the phone both sit in the ... menu.
    pw-v9a (6 Nov): every thumb in the page list has a ribbon button, grey or blue, one tap bookmarks the page; the big page's ribbon is the same blue.
    pw-v9b (6 Nov): Select on the notes grid ticks notes to move, bin or merge them (Undo for a while after); the page list's Select moves pages to another note.
+   pw-v9c (6 Nov): sticky notes: the + menu's Sticky puts a coloured square beside the page; write on it, drag it into the margin or onto a page, resize it by its corner.
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v9b";
+const CACHE = "pw-v9c";
 const SHARE_DB = "penworks.share";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",

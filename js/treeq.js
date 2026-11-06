@@ -36,6 +36,7 @@ const WHAT = {
   pinNote: 'pinning a note', createPage: 'a new page', reorderPages: 'moving a page', setPages: 'a paper change',
   setBookmark: 'a bookmark', deletePage: 'deleting a page', bin: 'moving to the Bin', restore: 'a restore',
   movePagesTo: 'moving pages to another note',
+  setSticky: 'a sticky note',                       // pw-v9c
 };
 // a row the overlay adds: the database's defaults under what the op carried
 const DEFAULTS = {
@@ -43,6 +44,7 @@ const DEFAULTS = {
   notes: { folder_id: null, name: 'Untitled', pinned: false, cover_path: null, deleted_at: null },
   pages: { note_id: null, position: 0, orientation: 'portrait', background: 'grid', bookmark: false,
            pdf_path: null, pdf_page: null, pdf_w: null, pdf_h: null, pdf_rot: 0,   // U4a: a normal page
+           kind: 'page', anchor_id: null, sk_x: null, sk_y: null, sk_w: null, sk_colour: null,   // pw-v9c: not a sticky
            snapshot_path: null, snapshot_at: null, flagged: false, deleted_at: null },
 };
 
@@ -238,7 +240,8 @@ function apply(d, op) {
     case 'movePagesTo': a.forEach(([id, note_id, position]) => patch('pages', [id], { note_id, position })); break;
     case 'setPages': patch('pages', a, b || {}); break;
     case 'setBookmark': patch('pages', [a], { bookmark: !!b }); break;
-    case 'deletePage': d.pages = list('pages').filter((r) => r.id !== a); break;
+    case 'setSticky': patch('pages', [a], b || {}); break;                                     // pw-v9c
+    case 'deletePage': d.pages = list('pages').filter((r) => r.id !== a && r.anchor_id !== a); break;   // pw-v9c: the anchor's cascade
     case 'bin': case 'restore':
       for (const t of TABLES) patch(t, (a && a[t]) || [], { deleted_at: op.call === 'bin' ? b : null });
       break;

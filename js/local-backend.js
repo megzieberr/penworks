@@ -25,6 +25,10 @@
 // The `imports` bucket is this browser's IndexedDB penworks.twin.imports (path -> Blob), so it outlives a reload like the
 // real bucket (the tests' "phone" is a second browser context, given the bytes through putImport). 50 MB at most, as
 // the bucket's file_size_limit; importsList() and importReads() are test hooks.
+// pw-v9c: pages carry 0007's sticky columns (kind 'page' or 'sticky', anchor_id, sk_x, sk_y, sk_w, sk_colour) and its two
+// checks (pages_kind_check, pages_sticky_check, 23514), on an insert and on an update (the row as it would be after the
+// patch). anchor_id is a foreign key to pages (23503) with "on delete cascade": a page deleted for good (remove, a note's
+// cascade, the bin's purge) takes the stickies anchored to it, and their strokes.
 
 const KEY = 'penworks.local.v2';
 const TABLES = ['folders', 'notes', 'pages'];
@@ -33,6 +37,7 @@ const DEFAULTS = {
   notes: { folder_id: null, name: 'Untitled', pinned: false, cover_path: null, deleted_at: null },
   pages: { note_id: null, position: 0, orientation: 'portrait', background: 'grid', bookmark: false,
            pdf_path: null, pdf_page: null, pdf_w: null, pdf_h: null, pdf_rot: 0,
+           kind: 'page', anchor_id: null, sk_x: null, sk_y: null, sk_w: null, sk_colour: null,
            snapshot_path: null, snapshot_at: null, flagged: false, deleted_at: null },
 };
 const IMPORT_MAX = 52428800;
@@ -116,6 +121,33 @@ function pdfSize(r) {
   if (!((w === null && h === null) || (w > 0 && h > 0))) refuse('new row for relation "pages" violates check constraint "pages_pdf_size_check"');
   if (![0, 90, 180, 270].includes(r.pdf_rot ?? 0)) refuse('new row for relation "pages" violates check constraint "pages_pdf_rot_check"');
 }
+// pw-v9c: 0007's checks, word for word, and the anchor's foreign key
+const SK_COLOURS = ['yellow', 'blue', 'green', 'purple'];
+function stickyRow(d, r) {
+  const kind = r.kind ?? 'page', nul = (k) => r[k] === null || r[k] === undefined;
+  if (!['page', 'sticky'].includes(kind)) refuse('new row for relation "pages" violates check constraint "pages_kind_check"');
+  const ok = kind === 'page'
+    ? ['anchor_id', 'sk_x', 'sk_y', 'sk_w', 'sk_colour'].every(nul)
+    : !nul('anchor_id') && Number.isFinite(r.sk_x) && Number.isFinite(r.sk_y) && Number.isFinite(r.sk_w)
+      && r.sk_w >= 113 && r.sk_w <= 454 && SK_COLOURS.includes(r.sk_colour);
+  if (!ok) refuse('new row for relation "pages" violates check constraint "pages_sticky_check"');
+  if (!nul('anchor_id') && !d.pages.some((p) => p.id === r.anchor_id)) {
+    refuse('insert or update on table "pages" violates foreign key constraint "pages_anchor_id_fkey"', '23503');
+  }
+}
+// "on delete cascade" from a page to the stickies anchored to it (a sticky never anchors a sticky, so one pass would do;
+// the loop is the cascade's own rule anyway). Returns the rows that went.
+function dropAnchored(d) {
+  const gone = [];
+  for (;;) {
+    const live = new Set(d.pages.map((p) => p.id));
+    const orphan = d.pages.filter((p) => p.anchor_id && !live.has(p.anchor_id));
+    if (!orphan.length) return gone;
+    gone.push(...orphan);
+    const set = new Set(orphan.map((p) => p.id));
+    d.pages = d.pages.filter((p) => !set.has(p.id));
+  }
+}
 // U4a: the imports bucket, kept in IndexedDB
 let importDb = null, importReads = 0;
 function imports(mode, fn) {
@@ -154,6 +186,7 @@ export const localApi = {
     d.folders.forEach((f) => { if (goneF.has(f.parent_id)) goneF.add(f.id); });
     d.folders = d.folders.filter((r) => !goneF.has(r.id));
     d.notes.forEach((n) => { if (goneF.has(n.folder_id)) n.folder_id = null; });
+    dropAnchored(d);                                                      // pw-v9c: a purged page takes its stickies
     dropStrokes(d);
     write(d);
     return before - (d.folders.length + d.notes.length + d.pages.length);
@@ -175,6 +208,7 @@ export const localApi = {
     if (table === 'pages' && !d.notes.some((n) => n.id === row.note_id)) refuse('That note does not exist.');
     if (table === 'pages') pdfSize(row);
     const r = { ...DEFAULTS[table], ...row, id, owner_id: 'local', created_at: row.created_at || now, updated_at: now };
+    if (table === 'pages') stickyRow(d, r);                               // pw-v9c
     d[table].push(r);
     if (table === 'pages') touchNotes(d, [r.note_id], now);
     write(d);
@@ -189,6 +223,7 @@ export const localApi = {
     const d = read(), now = new Date().toISOString(), set = new Set(ids);
     const hit = d[table].filter((r) => set.has(r.id));
     if (table === 'folders' && 'parent_id' in patch) hit.forEach((r) => twoLevels(d, r.id, patch.parent_id));
+    if (table === 'pages') hit.forEach((r) => stickyRow(d, { ...r, ...patch }));   // pw-v9c: the row as the patch would leave it
     hit.forEach((r) => {
       Object.assign(r, patch);
       if (table !== 'notes' || 'name' in patch) r.updated_at = now;   // notes: only a rename counts
@@ -215,7 +250,8 @@ export const localApi = {
     if (table === 'notes') d.pages = d.pages.filter((p) => !set.has(p.note_id));
     if (table === 'pages') touchNotes(d, touched, now);
     d[table] = d[table].filter((r) => !set.has(r.id));
-    tell(table, 'DELETE', goneRows); tell('pages', 'DELETE', cascade); tell('notes', 'UPDATE', notesOf(d, touched));
+    const anchored = table === 'pages' || table === 'notes' ? dropAnchored(d) : [];   // pw-v9c: the anchor's cascade
+    tell(table, 'DELETE', goneRows); tell('pages', 'DELETE', [...cascade, ...anchored]); tell('notes', 'UPDATE', notesOf(d, touched));
     if (table === 'pages' || table === 'notes') dropStrokes(d);
     write(d);
     logged('remove', table, [...ids]);
