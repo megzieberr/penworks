@@ -908,6 +908,47 @@ body.gsel .card.plus { opacity: .35; pointer-events: none; }
 #toast .toastAct { flex: none; min-height: 32px; padding: 0 6px; border: 0; border-radius: 6px; background: transparent; color: inherit;
   font: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 
+/* ---------- pw-v9e: Cut out (js/cutout.js; the look is _build/cutout/cutout-mock.png) ----------
+   A full-screen sheet in the dialogs' colours (--card, --line, --muted, --ink: dark mode follows), above the dialogs (55) and
+   under the toast (60, so the too-big toast shows on it). The header word and hint, the stage, the bar. The picture sits on a
+   CHECKERBOARD of 12 px light grey and white squares, the same in both modes: it means see-through. */
+#cutout { position: fixed; inset: 0; z-index: 57; }
+#cutout .cut { position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--card); color: var(--graphite); }
+#cutout .cutHead { flex: none; height: 56px; display: flex; align-items: baseline; gap: 14px; padding: 0 20px; border-bottom: 1px solid var(--line);
+  white-space: nowrap; overflow: hidden; }
+#cutout .cutHead b { font-size: 19px; line-height: 56px; }
+#cutout .cutHead span { color: var(--muted); font-size: 15px; overflow: hidden; text-overflow: ellipsis; }
+/* the stage: the picture fitted (js sets the board's size), pinch to zoom and two fingers pan (a transform on the board) */
+#cutout .cutStage { position: relative; flex: 1 1 0; min-height: 0; overflow: hidden; display: grid; place-items: center; padding: 18px;
+  background: color-mix(in srgb, var(--desk) 50%, var(--shelf)); touch-action: none; user-select: none; -webkit-user-select: none; }
+#cutout .cutBoard { position: relative; grid-area: 1 / 1; transform-origin: 50% 50%; box-shadow: 0 2px 10px rgba(20,22,26,.14);
+  background-color: #FFFFFF;
+  background-image: linear-gradient(45deg, #DCDCDC 25%, transparent 25%), linear-gradient(-45deg, #DCDCDC 25%, transparent 25%),
+                    linear-gradient(45deg, transparent 75%, #DCDCDC 75%), linear-gradient(-45deg, transparent 75%, #DCDCDC 75%);
+  background-size: 24px 24px; background-position: 0 0, 0 12px, 12px -12px, -12px 0; }
+#cutout .cutCanvas { display: block; width: 100%; height: 100%; }
+#cutout .cutMsg { grid-area: 1 / 1; color: var(--muted); font-size: 15px; text-align: center; padding: 0 12px; pointer-events: none; }
+#cutout .cutMsg:empty { display: none; }
+/* the ring where the last tap landed: the slider works on that tap */
+#cutout .cutMark { position: absolute; width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--ink); pointer-events: none;
+  transform: translate(-50%, -50%); box-shadow: 0 0 0 6px rgba(47,75,184,.14); }
+#cutout .cutMark::after { content: ''; position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--ink); transform: translate(-50%, -50%); }
+/* the bar: Undo, Reset | Fussiness | Everywhere | Cancel, Done (Done is the main button) */
+#cutout .cutBar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--line); }
+#cutout .cutGrow { flex: 1 1 240px; display: flex; align-items: center; gap: 10px; min-width: 200px; }
+#cutout .cutSl { color: var(--muted); font-size: 14px; white-space: nowrap; }
+#cutout .cutGrow input[type=range] { flex: 1; min-width: 0; height: 28px; margin: 0; accent-color: var(--ink); }
+#cutout .cutVal { min-width: 2.2em; text-align: right; font-variant-numeric: tabular-nums; }
+#cutout .cutSw { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 4px; border: 0; background: transparent;
+  font: inherit; font-size: 14px; color: var(--muted); white-space: nowrap; cursor: pointer; }
+#cutout .cutSw i { width: 38px; height: 22px; border-radius: 11px; background: var(--field-line); position: relative; display: inline-block; flex: none; }
+#cutout .cutSw i::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #FFFFFF;
+  box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: left .12s ease; }
+#cutout .cutSw.on i { background: var(--ink); }
+#cutout .cutSw.on i::after { left: 19px; }
+#cutout .cutEnd { margin-left: auto; display: flex; gap: 10px; }
+
 /* ---------- tablet portrait ---------- */
 @media (max-width: 900px) {
   :root { --side-w: 250px; }
@@ -941,6 +982,14 @@ body.gsel .card.plus { opacity: .35; pointer-events: none; }
   .card.plus .thumb svg { width: 30px; height: 30px; }
   .card .pin { left: 6px; top: 6px; width: 22px; height: 22px; }
   .card .pin svg { width: 13px; height: 13px; }
+  /* pw-v9e: Cut out's bar in three rows: the slider, then Undo / Reset / Everywhere, then Cancel / Done at the right */
+  #cutout .cutBar { gap: 8px 10px; }
+  #cutout .cutGrow { flex-basis: 100%; order: 1; }
+  #cutout .cutBar > .dlgBtn, #cutout .cutSw { order: 2; }
+  #cutout .cutEnd { order: 3; flex-basis: 100%; justify-content: flex-end; margin-left: 0; }
+  #cutout .cutHead { padding: 0 14px; gap: 10px; }
+  #cutout .cutHead span { font-size: 13px; }
+  #cutout .cutStage { padding: 10px; }
 }
 @media (prefers-reduced-motion: reduce) {
   #toast, .chev svg { transition: none; }
@@ -949,4 +998,5 @@ body.gsel .card.plus { opacity: .35; pointer-events: none; }
   #plThumbs.dragging .thumbP:not(.lift) { transition: none; }
   .alignMark { transition: none; }
   #side { transition: none; }
+  #cutout .cutSw i::after { transition: none; }
 }

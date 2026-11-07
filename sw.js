@@ -25,14 +25,15 @@
    pw-v9b (6 Nov): Select on the notes grid ticks notes to move, bin or merge them (Undo for a while after); the page list's Select moves pages to another note.
    pw-v9c (6 Nov): sticky notes: the + menu's Sticky puts a coloured square beside the page; write on it, drag it into the margin or onto a page, resize it by its corner.
    pw-v9d (7 Nov): a picture shared from WhatsApp lands like a PDF: the manifest's second files entry (image), every shared PDF and picture kept as a list in the form's order, each picture a new page.
+   pw-v9e (7 Nov): Cut out: a selected picture's wand chip opens a sheet where a tap takes its background away (a fussiness slider, Everywhere, no AI); Done keeps a new PNG.
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v9d";
+const CACHE = "pw-v9e";
 const SHARE_DB = "penworks.share";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",
   "./js/local-backend.js", "./js/page.js", "./js/ink.js", "./js/store.js", "./js/treeq.js", "./js/snap.js", "./js/live.js", "./js/tray.js", "./js/dbg.js",
-  "./js/pdfin.js", "./js/pdfview.js", "./js/pdfout.js",
+  "./js/pdfin.js", "./js/pdfview.js", "./js/pdfout.js", "./js/cutout.js",
   "./js/calc/calculator.js", "./js/calc/ui.js", "./js/calc/statlib.js", "./js/calcpanel.js", "./js/tools.js", "./js/align.js", "./css/calc.css",
   "./icons/icon-192.png", "./icons/icon-512.png", "./vendor/pdf-lib.min.js",
   "./vendor/pdf.min.mjs", "./vendor/pdf.worker.min.mjs"];

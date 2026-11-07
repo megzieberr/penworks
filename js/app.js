@@ -58,6 +58,9 @@
 // "Open picture as" (or "Open 3 pictures as"; WhatsApp's file names are never shown), New note in Loose or Add to a note.
 // Each picture is ONE new page, in the order shared, placed through the + menu's Image's own way in (pdfin.importImage,
 // ink.placeImage); the note opens on the first new page with its picture selected and the Select tool on. Not an undo step.
+// pw-v9e (7 Nov): Cut out. One unlocked picture selected has a wand chip (js/ink.js); it opens a full-screen sheet where a tap
+// takes the picture's background away (js/cutout.js: a flood fill on the device, a fussiness slider, Everywhere, no AI and
+// no service). Done keeps the edited PNG as a NEW file and puts its path on the picture, one undo step (ink.setImagePath).
 import { api } from './api.js';
 import { initPage, showStack, fit, scrollToPage, relayout, current, markSheet, bgSvg, pageSize, setLock, locked,
          setStickies, stickyFront, stickySpot, stickyAt, stickyBusy, SK_SIZE, SK_COLOURS } from './page.js';
@@ -72,6 +75,7 @@ import * as treeq from './treeq.js';
 import * as pdfin from './pdfin.js';
 import * as pdfview from './pdfview.js';
 import { buildPdf } from './pdfout.js';
+import * as cutout from './cutout.js';
 
 const $ = (id) => document.getElementById(id);
 const S = { folders: [], notes: [], pages: [], sel: 'loose', openNote: null, cur: 0, fold: {}, renaming: null,
@@ -2294,7 +2298,9 @@ function wire() {
     $('eyeBtn').classList.toggle('on', show);
   });
   ink.initInk({ doOp, desk: $('desk'), onChange: inkChanged, stickiesOn: stickiesOnPage,   // pw-v9c: the on-page stickies for the pictures
-                toast, openMenuAt: (x, y, items) => openMenu({ x, y }, items), selectTool: () => chooseTool('select') });
+                toast, openMenuAt: (x, y, items) => openMenu({ x, y }, items), selectTool: () => chooseTool('select'),
+                // pw-v9e: the wand chip opens Cut out; its Done puts the new file on that picture, one undo step
+                cutOut: (pageId, rec) => cutout.openCutout(rec, { toast, commit: (path, blob) => ink.setImagePath(pageId, rec.id, path, blob) }) });
   // a right mouse press that lands while something is open (the press itself closes it before its contextmenu):
   // remembered here, before the tray's and the menu's own closers run, so that contextmenu does not flip the tool
   document.addEventListener('pointerdown', (e) => { rightOverOpen = e.button === 2 && overlayOpen(); }, true);   // any other press forgets it
@@ -2396,6 +2402,7 @@ function wire() {
 async function settledBoth() { await treeq.settled(); await store.settled(); await treeq.settled(); }
 window.__pw = { S, api, idle: settledBoth, failed: () => treeq.dropCount(), current, ink, store, tray: trayState, treeq, mergeTree,
                 snap: pics.snapStats, renderGrid, covers: coverUrl, bookmarksTaken: () => ({ ...tookOver }),
+                cutout: { state: cutout.cutoutState, pixel: cutout.cutoutPixel, tap: cutout.cutoutTap, fill: cutout.cutFill },   // pw-v9e, for the checks
                 sticky: { stickiesIn, stickiesOf, stickiesOnPage, pagesOf, onPage, add: addSticky, menu: (id) => stickyColours({ x: 200, y: 200 }, id) },   // pw-v9c, for the checks
                 trayPending: () => ({ next: !!trayNext, busy: trayBusy, timer: !!trayT }),
                 pageDrag: () => (pd ? { lifted: pd.lifted, from: pd.from, to: pd.to } : null),

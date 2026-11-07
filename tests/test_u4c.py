@@ -356,8 +356,8 @@ try:
         clear_sel(pg)
         c1 = centre(d1); band1 = [c1[0] - 135, c1[1]]
         pen(pg, [band1])
-        check("set-up: the picture alone is selected; chips Copy, Cut, Duplicate, Delete, Lock",
-              [x[0] for x in chips(pg)] == ["copy", "cut", "duplicate", "delete", "lock"] and chips(pg)[-1][1] == "Lock", chips(pg))
+        check("set-up: the picture alone is selected; chips Copy, Cut, Duplicate, Delete, Lock (pw-v9e: then Cut out)",
+              [x[0] for x in chips(pg)] == ["copy", "cut", "duplicate", "delete", "lock", "cutout"] and chips(pg)[-2][1] == "Lock", chips(pg))
         pg.click(".selChips .chip[data-act='copy']"); pg.wait_for_timeout(40)
         pg.evaluate("window.__pw.ink.pasteAt('s1', 397, 500)"); pg.wait_for_timeout(60)
         p1 = imgs(pg, "s1")
@@ -403,7 +403,7 @@ try:
         pen(pg, [top]); s = sel(pg)
         check("the padlock chip shows only with a picture in the selection (the stroke alone: no padlock)", s and s["ids"] == [ink0[0]["id"]] and "lock" not in [x[0] for x in chips(pg)], [s, chips(pg)])
         clear_sel(pg); pen(pg, [band1])
-        check("with the picture selected it reads Lock", chips(pg)[-1] == ["lock", "Lock"], chips(pg))
+        check("with the picture selected it reads Lock", ["lock", "Lock"] in chips(pg), chips(pg))
         pg.click(".selChips .chip[data-act='lock']"); pg.wait_for_timeout(60)
         check("a tap locks it (locked true, nothing else changes)", imgs(pg)[0]["data"] == {**d1, "locked": True}, imgs(pg)[0]["data"])
         check("the chip now reads Unlock; the chips are Delete and Unlock only", chips(pg) == [["delete", "Delete"], ["lock", "Unlock"]], chips(pg))
@@ -427,8 +427,8 @@ try:
         check("locked: a drag inside does not move it (data and seq the same)", imgs(pg)[0] == lk, imgs(pg)[0]["data"])
         check("... and it stays selected", sel(pg) and sel(pg)["ids"] == [RID], sel(pg))
         pg.click(".selChips .chip[data-act='lock']"); pg.wait_for_timeout(60)
-        check("Unlock: locked false, the corners and the ring come back at once, the five chips", imgs(pg)[0]["data"]["locked"] is False and parts(pg) == [4, 1]
-              and [x[0] for x in chips(pg)] == ["copy", "cut", "duplicate", "delete", "lock"] and chips(pg)[-1][1] == "Lock", [parts(pg), chips(pg)])
+        check("Unlock: locked false, the corners and the ring come back at once, the five chips (pw-v9e: and Cut out)", imgs(pg)[0]["data"]["locked"] is False and parts(pg) == [4, 1]
+              and [x[0] for x in chips(pg)] == ["copy", "cut", "duplicate", "delete", "lock", "cutout"] and chips(pg)[-2][1] == "Lock", [parts(pg), chips(pg)])
         undo(pg)
         check("unlock is one undo step (undo: locked again)", imgs(pg)[0]["data"]["locked"] is True)
         redo(pg)
@@ -621,7 +621,7 @@ try:
         ctx2.close()
         check("no page errors (the whole run)", not errs, errs)
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        check("cache is pw-v9d", "pw-v9d" in keys, keys)
+        check("cache is pw-v9e", "pw-v9e" in keys, keys)
 
         ctx.close()
         b.close()

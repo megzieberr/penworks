@@ -94,7 +94,7 @@ try:
         check("share_target: POST, multipart, ./share-target/ under the scope", st.get("method") == "POST" and st.get("enctype") == "multipart/form-data"
               and st.get("action") == "./share-target/" and man.get("scope") == "./", st)
         fl = (st.get("params") or {}).get("files") or [{}]
-        # pw-v9d: a second entry (image) follows it; tests/test_shareimg.py checks that one
+        # pw-v9e: a second entry (image) follows it; tests/test_shareimg.py checks that one
         check("share_target files: the first param, pdf, accepting application/pdf and .pdf, title and text params too",
               fl[0].get("name") == "pdf" and set(fl[0].get("accept", [])) == {"application/pdf", ".pdf"}
               and st["params"].get("title") and st["params"].get("text"), st.get("params"))
@@ -248,9 +248,9 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v9d" not in keys:
+        if "pw-v9e" not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v9d", "pw-v9d" in keys, keys)
+        check("cache is pw-v9e", "pw-v9e" in keys, keys)
         check("the only POSTs were the shares, all to the share-target action", posts and all("/share-target/" in u for u in posts), posts)
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in
                        ["./js/app.js", "./js/pdfin.js", "./js/local-backend.js", "./css/app.css", "./sw.js", "./manifest.json", "./tests/test_u4b.py"])

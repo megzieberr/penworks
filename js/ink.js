@@ -136,6 +136,10 @@
 // cannot reach a Blob URL from inside the SVG, so there thumbSvg is handed data URLs (imageHrefs, FileReader on the device
 // copy, once per path per render), and it throws "The picture is not on this device yet" when the bytes are not here,
 // exactly as a missing PDF does. The PDF export (js/pdfout.js) embeds each file once and draws it under the ink.
+// Cut out (pw-v9e, her ask 7 Nov; the sheet and the fill: js/cutout.js): ONE unlocked picture selected (whatever it came in
+// by: + Image, the share, Paste) has a wand chip after Lock; it opens the sheet (the cutOut hook from app.js). Done gives the
+// picture a NEW file: setImagePath changes data.path only (id, seq, x, y, w, h, nw, nh, rot, locked kept), ONE undo step,
+// the old file stays on this device so undo shows it again. A picture's bytes never change under a path.
 // Sticky notes (pw-v9c; the anchor rule and the export rule: js/page.js's head). A sticky is a pages row with its own ink
 // layer here, keyed by its row id like a page's, its strokes in sticky px from its top-left; the layer is the whole square
 // (the strip is part of it and drawn above the ink). Every tool works on it as on a page: the pen's press is read by
@@ -192,6 +196,7 @@ let SEL = null;                  // the selection: { page, ids, g, chips, deg, z
 let CLIP = null;                 // the selection clipboard: { recs (deep copies, by seq), box (their selBox) }
 let toast = null, openMenuAt = null, selectTool = null;   // optional, from app.js: a toast, the menu at a point, the tray's select tool
 let stickiesOn = () => [];       // pw-v9c, from app.js: a page id -> its on-page stickies [{ id, x, y, w, colour }] (thumbSvg, pdfout)
+let cutOut = null;               // pw-v9e, from app.js: (pageId, a copy of the picture's record) -> the Cut out sheet (js/cutout.js)
 // the chips' four icons (the same drawing style as SVG_BIN in js/app.js)
 const ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">';
 const SVG_COPY = ICON + '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>';
@@ -200,6 +205,7 @@ const SVG_PLUS = ICON + '<path d="M12 5v14M5 12h14"/></svg>';
 const SVG_BIN = ICON + '<path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13"/></svg>';
 const SVG_LOCK = ICON + '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';     // U4c: a closed padlock (Lock)
 const SVG_UNLOCK = ICON + '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/></svg>';  // an open one (Unlock)
+const SVG_WAND = ICON + '<path d="M4 20 14 10"/><path d="M15 3v3M13.5 4.5h3M19 7v2M18 8h2M18 13l1.2 1.2M20 11l-1 1"/></svg>';   // pw-v9e: Cut out (the mock's wand)
 
 const uuid = () => crypto.randomUUID();
 const r1 = (v) => Math.round(v * 10) / 10;
@@ -212,6 +218,7 @@ export function initInk(o) {
   if (o.openMenuAt) openMenuAt = o.openMenuAt;
   if (o.selectTool) selectTool = o.selectTool;
   if (o.stickiesOn) stickiesOn = o.stickiesOn;
+  if (o.cutOut) cutOut = o.cutOut;
   deskEl = o.desk || document.getElementById('desk');
   deskEl.addEventListener('pointerleave', hideHandle);
   // the selection's handles and chips keep their size on screen: redraw them when the zoom changes
@@ -1635,9 +1642,11 @@ function makeSel(page, ids) {
 }
 // the chips for what is selected now (renderSel calls it; they are made again only when that changes): Copy, Cut, Duplicate,
 // Delete, and U4c's padlock after Delete when a picture is selected (Lock; Unlock when any selected picture is locked).
-// A selection holding a locked picture has Delete and Unlock only.
+// A selection holding a locked picture has Delete and Unlock only. pw-v9e: exactly ONE picture, unlocked: the wand after
+// Lock, Cut out (js/cutout.js); ink, several records or a locked picture: none.
 function fillChips() {
-  const recs = selRecs(), pic = recs.some(isImg), locked = recs.some(isLocked), key = (pic ? 'p' : '-') + (locked ? 'l' : '-');
+  const recs = selRecs(), pic = recs.some(isImg), locked = recs.some(isLocked), one = recs.length === 1 && pic && !locked && !!cutOut;
+  const key = (pic ? 'p' : '-') + (locked ? 'l' : '-') + (one ? 'c' : '-');
   SEL.locked = locked;
   if (SEL.ckey === key) return;
   SEL.ckey = key;
@@ -1653,6 +1662,25 @@ function fillChips() {
   if (!locked) { chip('copy', 'Copy', SVG_COPY, copySel); chip('cut', 'Cut', SVG_CUT, cutSel); chip('duplicate', 'Duplicate', SVG_PLUS, duplicateSel); }
   chip('delete', 'Delete', SVG_BIN, deleteSel);
   if (pic) chip('lock', locked ? 'Unlock' : 'Lock', locked ? SVG_UNLOCK : SVG_LOCK, lockSel);
+  if (one) chip('cutout', 'Cut out', SVG_WAND, cutoutSel);
+}
+// pw-v9e: the wand chip: the Cut out sheet on the one selected picture (a copy of its record; the selection stays)
+function cutoutSel() {
+  if (!SEL || !cutOut) return;
+  const recs = selRecs();
+  if (recs.length !== 1 || !isImg(recs[0]) || isLocked(recs[0])) return;
+  cutOut(SEL.page, JSON.parse(JSON.stringify(recs[0])));
+}
+// pw-v9e, Cut out's Done: the picture `id` on page pageId gets the file at `path` (blob: its bytes, kept on this device
+// already; drawn at once). Only data.path changes; ONE undo step, which puts the old record (the old path) back. False
+// when the picture is not on the page any more, or is that file already.
+export function setImagePath(pageId, id, path, blob) {
+  const d = data(pageId), old = d.byId.get(id);
+  if (!isImg(old) || !old.data || !path || old.data.path === path) return false;
+  if (blob) keepUrl(path, blob);
+  const rec = { ...old, style: { ...old.style }, data: { ...old.data, path } };
+  doOp(changeOp([{ page: pageId, removed: [old], added: [rec] }]));
+  return true;
 }
 // U4c: the padlock chip: every selected picture locked (none was) or unlocked (any was), one undo step; the selection stays
 function lockSel() {

@@ -16,6 +16,7 @@
 // pdf.js (vendor/pdf.min.mjs and its worker) loads the first time a PDF is opened or drawn, never on app start.
 // U4c (pw-v8n): pictures share all of it (keepImport, bytesOf, the upload ladder); importImage reads, downscales and keeps one.
 // pw-v9d: a picture shared to PenWorks goes through importImage too (the + menu's Image and the share landing, one way in).
+// pw-v9e: Cut out keeps its edited PNG through keepPicture (a new path each time, the same ladder).
 
 const LIB = new URL('../vendor/pdf.min.mjs', import.meta.url).href;           // beside the app, whatever page loads this file
 const WORKER = new URL('../vendor/pdf.worker.min.mjs', import.meta.url).href;
@@ -369,6 +370,15 @@ export async function importImage(file, pageId, how) {
   stats.pictures++;
   const pid = typeof pageId === 'function' ? pageId() : pageId;
   return cfg.placeImage && pid ? cfg.placeImage(pid, { path, nw, nh, blob }, how) : null;
+}
+// pw-v9e, Cut out (js/cutout.js): an edited picture's PNG kept as a NEW file <owner>/<uuid>.png (never over the old one: undo
+// needs the old bytes, and the phone's copy is never half replaced), then up the same ladder as a new picture (keepImport).
+// Returns its path, or null when there is nothing to keep or it is over the 10 MB cap (the caller says IMG_TOO_BIG).
+export async function keepPicture(blob, name = '') {
+  if (!blob || !(blob.size > 0) || blob.size > IMG_MAX) return null;
+  const path = `${cfg.userId}/${crypto.randomUUID()}.png`;
+  await keepImport(path, blob, name);
+  return path;
 }
 
 // ---------------------------------------------------------------- U4b: a PDF shared to PenWorks
