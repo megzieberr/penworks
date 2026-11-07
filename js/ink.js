@@ -1711,24 +1711,44 @@ function addCopies(pageId, recs, dx, dy) {
 // scaled down further when its height would pass 0.8 x the page's height; centred in the part of the page she sees (the
 // axes stamp's rule) and kept on the page; rot 0, unlocked; ONE undo step; it lands selected with the select tool on, so
 // the next pen touch moves it. blob: the device copy, so it draws at once. Returns the record, or null (no page on screen)
-export function placeImage(pageId, { path, nw, nh, blob }) {
-  const d = data(pageId), sheet = document.querySelector(`#stack .sheet[data-id="${CSS.escape(pageId)}"]`);
-  if (!d.svg || !sheet || !path || !(nw > 0) || !(nh > 0)) return null;
+// pw-v9d, a picture shared to PenWorks (how.landing, from js/app.js landShared through importImage): its page is new and
+// not on screen, so there is no view to centre on: the same size rule, centred across, its top the same gap from the
+// page's top as its sides (less when it would pass the bottom); the page's size is how.size while it has no layer. NOT an
+// undo step (a shared PDF's pages are not one either) and not selected here: app.js selects it (selectRecs) once the note
+// is open on that page.
+export function placeImage(pageId, { path, nw, nh, blob }, how = {}) {
+  const land = !!(how && how.landing), d = data(pageId), sheet = document.querySelector(`#stack .sheet[data-id="${CSS.escape(pageId)}"]`);
+  const sz = d.svg ? { w: d.w, h: d.h } : land && how.size ? how.size : { w: 0, h: 0 };
+  if ((!land && (!d.svg || !sheet)) || !(sz.w > 0 && sz.h > 0) || !path || !(nw > 0) || !(nh > 0)) return null;
   if (blob) keepUrl(path, blob);
-  const W = d.w, H = d.h, idx = +sheet.dataset.index - 1, db = deskEl.getBoundingClientRect();
-  const a = pagePoint(idx, db.left, db.top), b = pagePoint(idx, db.right, db.bottom), cl = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-  const cx = (cl(a[0], 0, W) + cl(b[0], 0, W)) / 2, cy = (cl(a[1], 0, H) + cl(b[1], 0, H)) / 2;
+  const W = sz.w, H = sz.h, cl = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   let w = Math.min(nw, 0.8 * W), h = w * nh / nw;
   if (h > 0.8 * H) { h = 0.8 * H; w = h * nw / nh; }
-  const x = cl(cx - w / 2, 0, W - w), y = cl(cy - h / 2, 0, H - h);
+  let x, y;
+  if (land) { x = (W - w) / 2; y = Math.min(x, H - h); }
+  else {
+    const idx = +sheet.dataset.index - 1, db = deskEl.getBoundingClientRect();
+    const a = pagePoint(idx, db.left, db.top), b = pagePoint(idx, db.right, db.bottom);
+    const cx = (cl(a[0], 0, W) + cl(b[0], 0, W)) / 2, cy = (cl(a[1], 0, H) + cl(b[1], 0, H)) / 2;
+    x = cl(cx - w / 2, 0, W - w); y = cl(cy - h / 2, 0, H - h);
+  }
   const top = d.strokes.length ? d.strokes[d.strokes.length - 1].seq : 0;
   const rec = { id: uuid(), page_id: pageId, seq: Math.max(Date.now(), top + 1), kind: 'image',
                 style: { colour: '#000000', width: 0, dash: 'solid', opacity: 1 },
                 data: { path, x: q2(x), y: q2(y), w: q2(w), h: q2(h), nw, nh, rot: 0, locked: false } };
+  if (land) { apply(pageId, [], [rec]); return rec; }
   doOp(changeOp([{ page: pageId, removed: [], added: [rec] }]));
-  if (T.tool !== 'select') { if (selectTool) selectTool(); else setTool('select'); }
-  makeSel(pageId, [rec.id]);
+  selectRecs(pageId, [rec.id]);
   return rec;
+}
+// records on page pageId become the selection with the select tool on (a new picture; pw-v9d: a shared one once its note is
+// open on that page). No undo step. False when the page has no layer on screen or none of the ids is on it
+export function selectRecs(pageId, ids) {
+  const d = data(pageId), on = ids.filter((id) => d.byId.has(id));
+  if (!d.svg || !on.length) return false;
+  if (T.tool !== 'select') { if (selectTool) selectTool(); else setTool('select'); }
+  makeSel(pageId, on);
+  return true;
 }
 // Duplicate (pw-v4o): a copy of the selection 24 px right and down, pulled back inside the page where it would leave it
 // (along an axis where the box is wider than the page it keeps the plain 24 px); the copy is selected; CLIP stays as it was

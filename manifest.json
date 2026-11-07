@@ -16,7 +16,8 @@
     "params": {
       "title": "title",
       "text": "text",
-      "files": [{ "name": "pdf", "accept": ["application/pdf", ".pdf"] }]
+      "files": [{ "name": "pdf", "accept": ["application/pdf", ".pdf"] },
+                { "name": "image", "accept": ["image/png", "image/jpeg", "image/webp", ".png", ".jpg", ".jpeg", ".webp"] }]
     }
   },
   "icons": [

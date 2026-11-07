@@ -1,7 +1,7 @@
 // PenWorks PDF in (U4a): the + button opens a PDF as note pages, her ink on top (js/pdfview.js draws them).
 // importPdf(file, target) is the one way in: target = { folderId } makes a NEW note named after the file (the name
 // without .pdf) in that folder (null = Loose), target = { noteId } puts the PDF's pages at the END of that note. U4b's
-// share target calls it the same way with the File sw.js kept for it (sharedFile, at the end of this file).
+// share target calls it the same way with the File sw.js kept for it (sharedFiles, at the end of this file).
 //
 // The file is read once. Over 50 MB (the imports bucket's limit), a broken file or a password-protected one: ONE plain
 // toast and nothing made. Otherwise its bytes are kept on this device at once (IndexedDB, a database of its own,
@@ -15,6 +15,7 @@
 // them (the phone) downloads them the first time it draws such a page, and keeps them.
 // pdf.js (vendor/pdf.min.mjs and its worker) loads the first time a PDF is opened or drawn, never on app start.
 // U4c (pw-v8n): pictures share all of it (keepImport, bytesOf, the upload ladder); importImage reads, downscales and keeps one.
+// pw-v9d: a picture shared to PenWorks goes through importImage too (the + menu's Image and the share landing, one way in).
 
 const LIB = new URL('../vendor/pdf.min.mjs', import.meta.url).href;           // beside the app, whatever page loads this file
 const WORKER = new URL('../vendor/pdf.worker.min.mjs', import.meta.url).href;
@@ -31,7 +32,7 @@ const cfg = {
   makeNote: null,       // (folderId, name) -> note id: the note row, through save()
   addPages: null,       // (noteId, specs, isNew) -> the page rows through save(), then the note on screen
   onBytes: () => {},    // (path) the bytes of that PDF (or U4c picture) are on this device now (the pages can draw)
-  placeImage: null,     // U4c: (pageId, { path, nw, nh, blob }) -> the picture's record on that page (js/ink.js placeImage)
+  placeImage: null,     // U4c: (pageId, { path, nw, nh, blob }, how) -> the picture's record on that page (js/ink.js placeImage)
 };
 let dbp = Promise.reject(new Error('initPdf has not run'));
 dbp.catch(() => {});
@@ -334,8 +335,11 @@ async function jpegTurn(file) {
 // the one way a picture comes in: decode it (a broken file = ONE toast, nothing lands), keep its long side at 2048 px at
 // most (PNG and WebP go out as PNG, alpha kept; JPEG stays JPEG at 0.9; a small PNG or upright JPEG is kept as it came, a
 // small WebP becomes PNG: the PDF export cannot embed WebP), keep it on the device (keepImport), then cfg.placeImage puts
-// the record on page pageId (js/ink.js placeImage). Returns that record, or null
-export async function importImage(file, pageId) {
+// the record on page pageId (js/ink.js placeImage). Returns that record, or null.
+// pw-v9d, the share landing (js/app.js landShared): pageId may be a function that makes the picture's page and returns its
+// id, called only once the picture has opened (a broken file makes no page), and `how` goes to placeImage as it is
+// ({ landing, size }: placed without a view, not an undo step). The + menu's Image passes the page she is on and no `how`.
+export async function importImage(file, pageId, how) {
   const no = (msg, why) => { if (why) console.warn('PenWorks: a picture was not opened:', why); cfg.toast(msg, 5000); return null; };
   if (!file || typeof file.size !== 'number') return null;
   let kind = '', bmp = null;
@@ -363,13 +367,16 @@ export async function importImage(file, pageId) {
   const path = `${cfg.userId}/${crypto.randomUUID()}.${jpeg ? 'jpg' : 'png'}`;
   await keepImport(path, blob, (file && file.name) || '');
   stats.pictures++;
-  return cfg.placeImage ? cfg.placeImage(pageId, { path, nw, nh, blob }) : null;
+  const pid = typeof pageId === 'function' ? pageId() : pageId;
+  return cfg.placeImage && pid ? cfg.placeImage(pid, { path, nw, nh, blob }, how) : null;
 }
 
 // ---------------------------------------------------------------- U4b: a PDF shared to PenWorks
 // sw.js keeps the shared file in IndexedDB penworks.share (store `files`, key `pending` = { blob, name, at }) and sends
 // the app to ./?share=1; app.js asks for it once she is logged in, imports it with importPdf like any other, and drops
 // it when she has answered the sheet. Not per user: the file waits before anyone is logged in.
+// pw-v9d: PDFs and pictures, a list: `pending` = { files: [{ blob, name, type }], at }, in the order they were shared;
+// a PDF lands with importPdf, a picture with importImage (one new page each).
 const SHARE_DB = 'penworks.share';
 async function shareRun(mode, fn) {
   const db = await openDb(SHARE_DB);
@@ -382,14 +389,18 @@ async function shareRun(mode, fn) {
     });
   } finally { db.close(); }
 }
-// the file waiting, as a File named as it was shared; null when there is none
-export async function sharedFile() {
+// the files waiting, as Files named and typed as they were shared, in order; [] when there are none. A value from before
+// pw-v9d ({ blob, name, at }, one PDF) is read as a list of one
+export async function sharedFiles() {
   try {
     const v = (await shareRun('readonly', (s, out) => { s.get('pending').onsuccess = (e) => { out.v = e.target.result || null; }; })).v;
-    if (!v || !v.blob) return null;
-    return new File([v.blob], v.name || 'Shared.pdf', { type: 'application/pdf' });
-  } catch (e) { console.warn('PenWorks: the shared PDF could not be read', e); return null; }
+    if (!v) return [];
+    const list = Array.isArray(v.files) ? v.files : v.blob ? [{ blob: v.blob, name: v.name || 'Shared.pdf', type: 'application/pdf' }] : [];
+    return list.filter((x) => x && x.blob).map((x) => new File([x.blob], x.name || 'Shared', { type: x.type || x.blob.type || '' }));
+  } catch (e) { console.warn('PenWorks: the shared files could not be read', e); return []; }
 }
+// a PDF (its type, or its name when it came without one); anything else waiting is a picture (sw.js kept nothing else)
+export const isPdfFile = (f) => !!f && (f.type === 'application/pdf' || /\.pdf$/i.test(f.name || ''));
 // drop it; olderThan (ms): only a file waiting longer than that (a share she never answered)
 export async function dropShared(olderThan = 0) {
   try {

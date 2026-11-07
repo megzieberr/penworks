@@ -54,6 +54,10 @@
 // copied (Copy, Cut, Paste: the clip carries its stickies and their strokes, a paste gives them new ids), deleted (the
 // cascade, and removePage here; undo brings both back). THE EXPORT RULE, her words: a sticky ON a page goes into that page's
 // PDF and pictures as it looks, clipped at the page's edge; a sticky in the margin simply is not there.
+// pw-v9d (7 Nov): a picture shared to PenWorks (WhatsApp's share button) lands the way a shared PDF does: the same sheet,
+// "Open picture as" (or "Open 3 pictures as"; WhatsApp's file names are never shown), New note in Loose or Add to a note.
+// Each picture is ONE new page, in the order shared, placed through the + menu's Image's own way in (pdfin.importImage,
+// ink.placeImage); the note opens on the first new page with its picture selected and the Select tool on. Not an undo step.
 import { api } from './api.js';
 import { initPage, showStack, fit, scrollToPage, relayout, current, markSheet, bgSvg, pageSize, setLock, locked,
          setStickies, stickyFront, stickySpot, stickyAt, stickyBusy, SK_SIZE, SK_COLOURS } from './page.js';
@@ -254,23 +258,23 @@ function stepFolder(id, dir) {
 }
 
 // ---------------------------------------------------------------- notes
-function createNote(fid) {
-  const t = nowIso();
-  const n = { id: uuid(), folder_id: fid || null, name: 'Untitled', pinned: false, cover_path: null, deleted_at: null, created_at: t, updated_at: t };
-  const p = { id: uuid(), note_id: n.id, position: 0, orientation: 'portrait', background: 'grid', deleted_at: null, created_at: t, updated_at: t };
-  S.notes.push(n); S.pages.push(p);
+const NEW_NOTE = 'Untitled';         // the usual new note's name (New note; pw-v9d: a shared picture's new note too)
+// a note row through save(), no pages: New note's (the usual name), a PDF's (named after its file), a shared picture's
+function makeNoteRow(fid, name = NEW_NOTE, t = nowIso()) {
+  const n = { id: uuid(), folder_id: fid || null, name, pinned: false, cover_path: null, deleted_at: null, created_at: t, updated_at: t };
+  S.notes.push(n);
   save('createNote', n);
+  return n;
+}
+function createNote(fid) {
+  const t = nowIso(), n = makeNoteRow(fid, NEW_NOTE, t);
+  const p = { id: uuid(), note_id: n.id, position: 0, orientation: 'portrait', background: 'grid', deleted_at: null, created_at: t, updated_at: t };
+  S.pages.push(p);
   save('createPage', p);
   openNote(n.id);
 }
 // U4a (js/pdfin.js): the note a PDF makes, named after the file; it has no page of its own, its pages are the PDF's
-function makePdfNote(fid, name) {
-  const t = nowIso();
-  const n = { id: uuid(), folder_id: fid || null, name, pinned: false, cover_path: null, deleted_at: null, created_at: t, updated_at: t };
-  S.notes.push(n);
-  save('createNote', n);
-  return n.id;
-}
+function makePdfNote(fid, name) { return makeNoteRow(fid, name).id; }
 // one page row per PDF page, after the note's last page, through save() (offline-safe); not an undo step. A new note opens
 // on its first page; in the open note the stack shows them and goes to the first of them.
 function addPdfPages(nid, specs, isNew) {
@@ -303,7 +307,8 @@ async function pdfPicked() {
   inp.value = '';
   if (file) await pdfin.importPdf(file, target);
 }
-// U4c: the picker for a picture (PNG, JPEG or WebP; Android offers Camera and Gallery): it lands on the page she is on
+// U4c: the picker for a picture (PNG, JPEG or WebP; Android offers Camera and Gallery): it lands on the page she is on.
+// pdfin.importImage is the one way a picture's file becomes a placed picture: here and in the share landing (landShared)
 let imgPage = null;
 function pickImage() {
   const p = pagesOf(S.openNote)[S.cur];
@@ -534,7 +539,7 @@ async function openNote(id, index) {                       // no index: the page
   showLock(false);                                          // pw-v7b: a note always opens unlocked and fitted
   stackKey = ''; render(); fit(index, 'open');
 }
-// one plain page at the end of a note, not an undo step (the empty-note path of openNote)
+// one plain page at the end of a note, not an undo step (the empty-note path of openNote; pw-v9d: a shared picture's page)
 function blankPage(nid) {
   const t = nowIso();
   const p = { id: uuid(), note_id: nid, position: nextPos(S.pages.filter((x) => x.note_id === nid && !x.deleted_at)), orientation: 'portrait',
@@ -1662,6 +1667,11 @@ function sharePage(i) { const p = pagesOf(S.openNote)[i]; if (p) openShare([p.id
 // PDF's pages at the END of that note and opens it on the first of them. Cancel and Escape drop the file; a tap outside
 // does nothing (a stray tap would lose the share). ?share=1 leaves the address once she has answered, before the note
 // opens, so a reload never asks again.
+// pw-v9d: pictures too, and a list (sw.js keeps every shared PDF and picture, in order). The title names one PDF by its
+// file name as before; pictures are "picture" or "3 pictures" (WhatsApp's IMG-...-WA0012.jpg means nothing to her, never
+// shown), several PDFs "2 PDFs", a mix "3 files". New note in Loose makes ONE note (named after the PDF when the first file
+// is one, as before; else New note's usual name), Add to a note adds at its END; each file in order, a PDF as its pages,
+// a picture as ONE new page (landShared). Cancel, Escape and the ten-minute rule drop the whole list.
 const SHARED = new URLSearchParams(location.search).get('share') === '1';
 const LEFTOVER = 10 * 60e3;          // a normal start drops a shared file nobody answered for ten minutes
 let shareInDlg = null;
@@ -1673,11 +1683,45 @@ function unshare() {
 }
 async function shareLanding() {
   if (!SHARED) { pdfin.dropShared(LEFTOVER); return; }
-  const file = await pdfin.sharedFile();
-  if (!file) { unshare(); toast('Nothing to open: share a PDF to PenWorks', 5000); return; }
-  openShareIn(file);
+  const files = await pdfin.sharedFiles();
+  if (!files.length) { unshare(); toast('Nothing to open: share a PDF or a picture to PenWorks', 5000); return; }
+  openShareIn(files);
 }
-function openShareIn(file) {
+// what the sheet's title calls the shared files (a new node each time: the title is drawn again on Back)
+function sharedWhat(files) {
+  const pdfs = files.filter(pdfin.isPdfFile).length, pics = files.length - pdfs;
+  if (files.length === 1 && pdfs === 1) return h('span', { class: 'dlgFile' }, files[0].name);
+  if (!pdfs) return pics === 1 ? 'picture' : `${pics} pictures`;
+  return pics ? `${files.length} files` : `${pdfs} PDFs`;
+}
+// pw-v9d: the shared files into ONE note, in order: target { folderId } = a new note (a PDF first: importPdf makes it,
+// named after the file, and opens it; a picture first: makeNoteRow, New note's name), { noteId } = at the END of that note.
+// A picture's page is a plain page (blankPage: portrait, grid, New note's paper), made only once the picture has opened,
+// and the picture goes on it through pdfin.importImage, the + menu's Image's own way in, placed by ink.placeImage's landing
+// rule. A file that does not open: its one toast, nothing made for it. Not an undo step (as a shared PDF never was).
+// Returns { noteId, first (the first new page's id), pic (its picture's record, when it is a picture's page), opened (the
+// note is a PDF's own new note and nothing else landed: importPdf has opened it already) }, or null when nothing landed.
+async function landShared(files, target) {
+  const size = pageSize('portrait');
+  let nid = target.noteId || null, first = null, pic = null, made = false, landed = 0;
+  for (const f of files) {
+    if (pdfin.isPdfFile(f)) {
+      const r = await pdfin.importPdf(f, nid ? { noteId: nid } : { folderId: target.folderId || null });
+      if (!r) continue;
+      if (!nid) { nid = r.noteId; made = true; }
+      first ||= r.pageIds[0]; landed++;
+    } else {
+      let pid = null;
+      const rec = await pdfin.importImage(f, () => { nid ||= makeNoteRow(target.folderId || null).id; return (pid = blankPage(nid).id); },
+        { landing: true, size });
+      if (!pid) continue;
+      if (!first) { first = pid; pic = rec; }
+      landed++;
+    }
+  }
+  return nid && first ? { noteId: nid, first, pic, opened: made && landed === 1 } : null;
+}
+function openShareIn(files) {
   closeShare(); closeMenu();
   if (shareInDlg) shareInDlg.remove();
   let done = false;
@@ -1690,12 +1734,16 @@ function openShareIn(file) {
     done = true; close(); unshare();
     const n = target.noteId ? note(target.noteId) : null;
     S.sel = n ? keyOf(n.folder_id) : 'loose'; remember();        // Back from the note lands where the note lives
-    const r = await pdfin.importPdf(file, target);              // too big or broken: its one toast, nothing made
+    const r = await landShared(files, target);                  // too big or broken: its one toast, nothing made for it
     await pdfin.dropShared();
     if (!r) { render(); return; }
-    if (n && S.openNote !== n.id) { const i = pagesOf(n.id).findIndex((p) => p.id === r.pageIds[0]); await openNote(n.id, Math.max(0, i)); }
+    if (!r.opened) {                                             // the note opens on the first new page
+      const i = Math.max(0, pagesOf(r.noteId).findIndex((p) => p.id === r.first));
+      if (S.openNote === r.noteId) shown(i); else await openNote(r.noteId, i);
+    }
+    if (r.pic) ink.selectRecs(r.first, [r.pic.id]);             // like + Image: the picture selected, the Select tool on
   };
-  const title = (a, b) => h('b', { class: 'dlgTitle', id: 'shareInTitle' }, a, h('span', { class: 'dlgFile' }, file.name), b);
+  const title = (a, b) => h('b', { class: 'dlgTitle', id: 'shareInTitle' }, a, sharedWhat(files), b);
   const cancelBtn = h('button', { type: 'button', class: 'dlgBtn', 'data-share-in': 'cancel', onclick: cancel }, 'Cancel');
   const first = () => {
     box.classList.remove('wide'); box.textContent = '';
@@ -1706,7 +1754,7 @@ function openShareIn(file) {
   };
   const pick = () => {                                       // pw-v9b: the same note picker as the page list's To note
     const backBtn = h('button', { type: 'button', class: 'dlgBtn', 'data-share-in': 'back', onclick: first }, 'Back');
-    pickNote(['Add ', h('span', { class: 'dlgFile' }, file.name), ' to'], (id) => go({ noteId: id }),
+    pickNote(['Add ', sharedWhat(files), ' to'], (id) => go({ noteId: id }),
       { box, gridId: 'shareInGrid', buttons: [backBtn, cancelBtn] });
     backBtn.focus();
   };
@@ -2016,7 +2064,7 @@ async function enter(user) {
   live.initLive({ api, userId: user.id, onRow: remoteRow, onTree: remoteTree, onGap: liveGap });   // U3d: after load(), one channel per login
   document.addEventListener('visibilitychange', () => { if (!document.hidden) maybeRefreshTree(); });
   addEventListener('online', maybeRefreshTree);
-  shareLanding();                                           // U4b: a PDF shared to PenWorks, after the login and the tree
+  shareLanding();                                           // U4b: a PDF (pw-v9d: or pictures) shared to PenWorks, after the login and the tree
 }
 
 // ---------------------------------------------------------------- the live mirror (U3d)
@@ -2356,7 +2404,9 @@ window.__pw = { S, api, idle: settledBoth, failed: () => treeq.dropCount(), curr
                 treeLive: () => ({ ...treeStats, waiting: treeEvents.length, timer: !!treeEvT }),
                 pdf: { importPdf: (f, t) => pdfin.importPdf(f, t), stats: () => ({ ...pdfin.pdfStats(), ...pdfview.viewStats() }),
                        cached: pdfin.cached, uploadsPending: pdfin.uploadsPending, budget: pdfview.setBudget,
-                       shared: () => pdfin.sharedFile().then((f) => (f ? { name: f.name, size: f.size } : null)) } };
+                       // pw-v9d: the list waiting: how many, the first one's name and size, and each one's name, size and type
+                       shared: () => pdfin.sharedFiles().then((fs) => (fs.length ? { count: fs.length, name: fs[0].name, size: fs[0].size,
+                         files: fs.map((f) => ({ name: f.name, size: f.size, type: f.type })) } : null)) } };
 Object.defineProperty(window.__pw, 'lastLoad', { get: () => lastLoad, set: (v) => { lastLoad = v; } });   // U3d: the tree's age
 
 wire();

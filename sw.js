@@ -8,9 +8,9 @@
 
    U4b: a PDF shared to PenWorks (Android's share sheet, WhatsApp's share button) arrives as a POST to ./share-target/
    (manifest.json share_target). GitHub Pages never sees it: this worker answers it, the page open or not. The file is
-   kept in IndexedDB penworks.share (store `files`, key `pending`, one file at a time: the next share replaces it), not in
+   kept in IndexedDB penworks.share (store `files`, key `pending`, one share at a time: the next share replaces it), not in
    the Cache API: the activate step below deletes every cache but this version's, and a share that landed just before an
-   update would go with it. Then a 303 to ./?share=1, where the app picks it up (js/pdfin.js sharedFile).
+   update would go with it. Then a 303 to ./?share=1, where the app picks it up (js/pdfin.js sharedFiles).
 
    pw-v8r (5 Nov): the parallel half of the U5g snap removed (her tablet verdict); perpendicular only.
    pw-v8s (5 Nov): calculator.js refreshed from Blipwork 21a3f23, the root sign and the brackets grow with what is inside.
@@ -24,9 +24,10 @@
    pw-v9a (6 Nov): every thumb in the page list has a ribbon button, grey or blue, one tap bookmarks the page; the big page's ribbon is the same blue.
    pw-v9b (6 Nov): Select on the notes grid ticks notes to move, bin or merge them (Undo for a while after); the page list's Select moves pages to another note.
    pw-v9c (6 Nov): sticky notes: the + menu's Sticky puts a coloured square beside the page; write on it, drag it into the margin or onto a page, resize it by its corner.
+   pw-v9d (7 Nov): a picture shared from WhatsApp lands like a PDF: the manifest's second files entry (image), every shared PDF and picture kept as a list in the form's order, each picture a new page.
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v9c";
+const CACHE = "pw-v9d";
 const SHARE_DB = "penworks.share";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",
@@ -61,15 +62,16 @@ function networkFirst(req, fallback) {
   }).catch(() => caches.match(req, { ignoreSearch: fallback }).then((hit) => hit || (fallback ? caches.match("./index.html") : Response.error())));
 }
 
-// U4b: the shared file, kept before the answer goes (the app may be starting cold and ask for it at once)
-function keepShared(file) {
+// U4b: the shared files, kept before the answer goes (the app may be starting cold and ask for it at once).
+// pw-v9d: a list, { files: [{ blob, name, type }], at } (one PDF = a list of one); the next share replaces it whole
+function keepShared(files) {
   return new Promise((resolve, reject) => {
     const r = indexedDB.open(SHARE_DB, 1);
     r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains("files")) r.result.createObjectStore("files"); };
     r.onerror = () => reject(r.error);
     r.onsuccess = () => {
       const db = r.result, t = db.transaction(["files"], "readwrite");
-      t.objectStore("files").put({ blob: file, name: file.name || "Shared.pdf", at: new Date().toISOString() }, "pending");
+      t.objectStore("files").put({ files, at: new Date().toISOString() }, "pending");
       t.oncomplete = () => { db.close(); resolve(); };
       t.onerror = t.onabort = () => { db.close(); reject(t.error); };
     };
@@ -81,12 +83,22 @@ function landing(url) {
   if (url.searchParams.has("local")) q.set("local", "1");
   return new URL("./?" + q, self.registration.scope).href;
 }
+// pw-v9d: every file under `pdf` (her installed app posts there until it is reinstalled) or `image` that is a PDF or a
+// picture, in the order the form gives them; a caption, a text-only share or any other file: nothing kept
+const PICS = { "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp" };
 async function shareIn(req, url) {
   try {
     const form = await req.formData();
-    const isPdf = (f) => f && typeof f !== "string" && f.size > 0 && (f.type === "application/pdf" || /\.pdf$/i.test(f.name || ""));
-    const file = form.getAll("pdf").find(isPdf);
-    if (file) await keepShared(file);
+    const real = (f) => f && typeof f !== "string" && f.size > 0;
+    const isPdf = (f) => real(f) && (f.type === "application/pdf" || /\.pdf$/i.test(f.name || ""));
+    const isPic = (f) => real(f) && (Object.hasOwn(PICS, f.type) || /\.(png|jpe?g|webp)$/i.test(f.name || ""));
+    const files = [];
+    for (const [k, f] of form.entries()) {
+      if (k !== "pdf" && k !== "image") continue;
+      if (isPdf(f)) files.push({ blob: f, name: f.name || "Shared.pdf", type: "application/pdf" });
+      else if (isPic(f)) files.push({ blob: f, name: f.name || "Shared picture" + (PICS[f.type] || ""), type: Object.hasOwn(PICS, f.type) ? f.type : "" });
+    }
+    if (files.length) await keepShared(files);
   } catch (_) { /* nothing kept: the app says there is nothing to open */ }
   return Response.redirect(landing(url), 303);
 }

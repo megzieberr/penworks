@@ -204,7 +204,7 @@ try:
         group[0] = "A. the way in"
         pg.click("#addPageBtn"); pg.wait_for_timeout(60)
         items = menu_items(pg)
-        check("the note's + menu reads Page, PDF, Image", items == ["Page", "PDF", "Image"], items)
+        check("the note's + menu reads Page, PDF, Image, Sticky (pw-v9c)", items == ["Page", "PDF", "Image", "Sticky"], items)
         acc = pg.get_attribute("#imgInput", "accept")
         check("#imgInput takes PNG, JPEG and WebP (one file)", acc == "image/png,image/jpeg,image/webp" and pg.get_attribute("#imgInput", "multiple") is None, acc)
         vis = pg.evaluate("window.__T.vis(0)")
@@ -621,7 +621,7 @@ try:
         ctx2.close()
         check("no page errors (the whole run)", not errs, errs)
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        check("cache is pw-v9c", "pw-v9c" in keys, keys)
+        check("cache is pw-v9d", "pw-v9d" in keys, keys)
 
         ctx.close()
         b.close()
