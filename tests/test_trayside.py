@@ -112,7 +112,7 @@ try:
             open_note(pg); g = geo(pg)
             check("default: no body.trayLeft, no pw.traySide, the tray is the right-most column", not g["left"] and g["side"] is None and tray_right_of_desk(g), g)
             check("default: the tray's hairline on its left (1px), none on its right", g["bl"] == "1px" and g["br"] == "0px", [g["bl"], g["br"]])
-            check("default: the padlock bottom-left, the counter bottom-right of the note", cx(g["lock"]) < mid_x(g) and cx(g["counter"]) > mid_x(g), g)
+            check("default: the padlock bottom-left; the desk counter hidden (pw-v9f: the number is on the page)", cx(g["lock"]) < mid_x(g) and g["counter"]["w"] == 0, g)
             pg.evaluate("document.getElementById('exitFs').hidden = false"); g = geo(pg)
             check("default: the full-screen exit top-right", cx(g["exit"]) > mid_x(g) and g["exit"]["t"] - g["body"]["t"] < 20, g["exit"])
             pg.evaluate("document.getElementById('exitFs').hidden = true")
@@ -140,7 +140,7 @@ try:
             check("a reload keeps it: the note opens with the tray on the left", g["left"] and tray_left_of_desk(g) and g["side"] == "left", g["tray"])
             # the chips mirrored
             check("left: the padlock in the RIGHT half of the note, bottom", cx(g["lock"]) > mid_x(g) and g["body"]["b"] - g["lock"]["b"] < 20, g["lock"])
-            check("left: the page counter in the LEFT half, bottom", cx(g["counter"]) < mid_x(g) and g["body"]["b"] - g["counter"]["b"] < 20, g["counter"])
+            check("left: the desk counter stays hidden (pw-v9f)", g["counter"]["w"] == 0, g["counter"])
             pg.evaluate("document.getElementById('exitFs').hidden = false"); g = geo(pg)
             check("left: the full-screen exit in the LEFT half, top", cx(g["exit"]) < mid_x(g) and g["exit"]["t"] - g["body"]["t"] < 20, g["exit"])
             hit = pg.evaluate("""() => ['zoomLock', 'exitFs'].every((id) => { const r = document.getElementById(id).getBoundingClientRect();

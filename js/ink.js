@@ -1688,12 +1688,14 @@ function lockSel() {
   const to = !selRecs().some(isLocked);
   changeSel((r) => (isImg(r) && !!(r.data && r.data.locked) !== to ? { ...r, style: { ...r.style }, data: { ...r.data, locked: to } } : null));
 }
-// Copy: the selection goes on the clipboard; nothing is added, the selection stays, no undo step
+// Copy: the selection goes on the clipboard; nothing is added, no undo step. pw-v9f (her ask 11 Nov, the Samsung Notes
+// way): the selection clears, so the box going away says it is copied
 function copySel() {
   if (!SEL) return;
   const recs = selRecs().sort(bySeq);
   if (!recs.length) return;
   CLIP = { recs: JSON.parse(JSON.stringify(recs)), box: selBox(recs) };
+  clearSelection();
   if (toast) toast('Copied.');
 }
 // Cut (pw-v7l): Copy, then Delete. The selection goes on the clipboard exactly as Copy puts it there, then its strokes
@@ -2226,12 +2228,20 @@ function liveSel(g) {
     dg.classList.add('on');
     return;
   }
+  if (g.kind === 'smove') movingSheet(g.page, true);               // pw-v9f: the ink shows past the page's edge while it moves
   const ox = g.kind === 'sresize' ? g.o[0] : 0, oy = g.kind === 'sresize' ? g.o[1] : 0, dx = g.dx || 0, dy = g.dy || 0;
   SEL.live = [s, ox, oy, dx, dy];
   SEL.g.setAttribute('transform', `matrix(${s} 0 0 ${s} ${ox * (1 - s) + dx} ${oy * (1 - s) + dy})`);
   placeChips(SEL.live);
 }
+// pw-v9f: a page whose selection is being moved sits above the other pages and stops clipping its ink, so the moving ink
+// stays in sight over the gap and over the next page (css .sheet.moving)
+function movingSheet(pageId, on) {
+  const el = document.querySelector(`#stack .sheet[data-id="${CSS.escape(pageId)}"]`);
+  if (el) el.classList.toggle('moving', on);
+}
 function unliveSel(g) {
+  movingSheet(g.page, false);
   const d = data(g.page);
   for (const r of g.recs) { const el = d.els.get(r.id); if (el) redraw(el, r); }
   if (SEL) { SEL.live = null; SEL.g.removeAttribute('transform'); SEL.chips.style.visibility = ''; SEL.deg.classList.remove('on'); placeChips(null); }
@@ -2353,6 +2363,7 @@ function up(e, cancelled) {
     // U5e: a turn leaves an axes stamp exactly as it was (no new seq either)
     const recs = (g.kind === 'srotate' ? g.recs.filter((r) => r.kind !== 'axes') : g.recs).filter((r) => !isLocked(r));   // U4c: a locked picture never moves
     if (!recs.length) return;
+    if (g.kind === 'smove' && toOtherPage(g, e, recs)) return;
     const [f, s, rot] = selXf(g), all = data(g.page).strokes, top = all.length ? all[all.length - 1].seq : 0;
     const base = Math.max(Date.now(), top + 1);
     const news = recs.slice().sort(bySeq).map((r, k) => ({ ...xform(r, f, s, rot), seq: base + k }));
@@ -2363,5 +2374,24 @@ function up(e, cancelled) {
   const changes = [];
   g.changes.forEach((c, page) => { if (c.removed.size || c.added.size) changes.push({ page, removed: [...c.removed.values()], added: [...c.added.values()] }); });
   if (changes.length) doOp(changeOp(changes));
+}
+// pw-v9f (her ask 11 Nov: "move ink across pages"): a moved selection lifted with the pen over ANOTHER page of the note
+// goes to that page: the pen's spot on the new page is where it grabbed (the same offset as on its own page), fresh ids
+// and seq values above that page's strokes in their own order, off the old page, ONE undo step for both pages; it stays
+// selected on its new page. Lifted in the gap, off the pages, or on a sticky (or moved from a sticky): false, and the
+// move stays on its own page as before.
+function toOtherPage(g, e, recs) {
+  if (typeof g.index !== 'number' || !e || !Number.isFinite(e.clientX)) return false;
+  const at = surfaceAt(e.clientX, e.clientY);
+  if (!at || at.sticky || at.id === g.page) return false;
+  const d = data(at.id);
+  if (!d.svg) return false;
+  const dx = at.x - g.p0[0], dy = at.y - g.p0[1];
+  const top = d.strokes.length ? d.strokes[d.strokes.length - 1].seq : 0, base = Math.max(Date.now(), top + 1);
+  const news = recs.slice().sort(bySeq).map((r, k) => ({ ...xform(r, (q) => [q[0] + dx, q[1] + dy], 1, 0), id: uuid(), page_id: at.id, seq: base + k }));
+  clearSelection();
+  doOp(changeOp([{ page: g.page, removed: recs, added: [] }, { page: at.id, removed: [], added: news }]));
+  makeSel(at.id, news.map((r) => r.id));
+  return true;
 }
 export const hook = { down, move, up, hover, fingerTap, holdMenu };

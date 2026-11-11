@@ -605,9 +605,10 @@ try:
         # pw-v4k: Copy fills the clipboard; it no longer duplicates on the spot (these checks are flipped)
         check("Copy adds nothing to the page (still the same three)", len(all_) == 3 and sorted(s["id"] for s in all_) == sorted([A, B, C]))
         check("Copy moves nothing", {s["id"]: s["data"]["points"] for s in all_} == S1)
-        check("the selection stays on the same two", sorted(sel(pg)["ids"]) == sorted([A, B]))
+        check("pw-v9f: Copy clears the selection (the Samsung Notes way)", sel(pg) is None, sel(pg))
         check("Copy is not an undo step", U(pg) == u1)
         check("the clipboard holds them (hasClip)", pg.evaluate("window.__pw.ink.hasClip()") is True)
+        pg.evaluate("([a, b]) => import('./js/ink.js').then(m => m.selectRecs('p4', [a, b]))", [A, B]); pg.wait_for_timeout(40)   # the two again, for Delete
         pg.locator(".selChips .chip[data-act='delete']").click(); pg.wait_for_timeout(30)
         check("Delete removes the selection (the two)", [s["id"] for s in strokes(pg, "p4")] == [C])
         check("Delete clears the selection and its chips", sel(pg) is None and not selui(pg)["g"] and not selui(pg)["chips"])
@@ -1925,8 +1926,9 @@ try:
             n1 = len(strokes(pg, "p4"))
             pg.locator(".selChips .chip[aria-label='Copy']").click(); pg.wait_for_timeout(30)
             # pw-v4k: flipped, the Copy icon fills the clipboard (no duplicate on the spot, the selection stays)
-            check("the Copy icon copies to the clipboard (nothing added, the selection stays)", len(strokes(pg, "p4")) == n1 and sel(pg) and sel(pg)["ids"] == [R1]
+            check("the Copy icon copies to the clipboard (nothing added; pw-v9f: the selection clears)", len(strokes(pg, "p4")) == n1 and sel(pg) is None
                   and pg.evaluate("window.__pw.ink.hasClip()") is True, sel(pg))
+            pg.evaluate("(r) => import('./js/ink.js').then(m => m.selectRecs('p4', [r]))", R1); pg.wait_for_timeout(40)   # the rect again, for Delete
             pg.locator(".selChips .chip[aria-label='Delete']").click(); pg.wait_for_timeout(30)
             check("the Delete icon still deletes (the rect goes, the selection clears)", len(strokes(pg, "p4")) == n1 - 1 and sel(pg) is None and R1 not in by_id(), sel(pg))
         check("no page errors in the select polish group", not e22, e22)
@@ -2045,7 +2047,7 @@ try:
         u0, before = U(pg), {s["id"]: s for s in strokes(pg, "p4")}
         pg.locator(".selChips .chip[data-act='copy']").click(); pg.wait_for_timeout(30)
         check("Copy: the page's stroke count is unchanged", len(strokes(pg, "p4")) == 3)
-        check("Copy: the selection is still those two", sel(pg) and sorted(sel(pg)["ids"]) == sorted([A, B]), sel(pg))
+        check("Copy: the selection clears (pw-v9f)", sel(pg) is None, sel(pg))
         check("Copy: hasClip() is true", pg.evaluate("window.__pw.ink.hasClip()") is True)
         check("Copy: no undo step", U(pg) == u0, [U(pg), u0])
         check("Copy: the toast says Copied.", pg.evaluate("document.getElementById('toast').textContent") == "Copied." and pg.evaluate("document.getElementById('toast').classList.contains('show')"))
@@ -2958,7 +2960,7 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         ctx, pg, e7 = fresh(b); errs += e7
-        check("cache is pw-v9c", "pw-v9c" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v9f", "pw-v9f" in pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())"), pg.evaluate("caches.keys()"))
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/ink.js", "./js/tray.js", "./js/page.js", "./js/app.js", "./js/dbg.js", "./css/app.css", "./sw.js"])
         check("no em-dashes in the code", chr(0x2014) not in srcs)
         check("no shape menu or shape tool in the tray", pg.locator("#tray [data-tool='shape'], #tray [data-tool='shapes']").count() == 0)

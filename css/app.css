@@ -306,6 +306,8 @@ input.rename {
 }
 .sheet svg { position: absolute; inset: 0; display: block; }
 .sheet svg.ink { pointer-events: none; overflow: hidden; }
+.sheet.moving { z-index: 3; }                      /* pw-v9f: a selection moving off its page stays in sight (js/ink.js movingSheet) */
+.sheet.moving svg.ink { overflow: visible; }
 /* U4a: a PDF page under the ink (js/pdfview.js); its canvas fills the page, the pinch scales it with the stack */
 .sheet > .pdfLayer { position: absolute; inset: 0; overflow: hidden; pointer-events: none; border-radius: inherit; }
 .sheet > .pdfLayer > canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
@@ -362,7 +364,14 @@ input.rename {
   border-radius: 8px; background: transparent; color: var(--desk-text); font-weight: 700; font-size: 15px; cursor: pointer; white-space: nowrap;
 }
 #addBelow:hover { background: var(--desk-veil); }
+/* pw-v9f: the page number lives ON each page now (.pageNo, js/page.js), so the desk's corner number is gone (the element
+   stays: js/app.js still fills it) */
+.sheet > .pageNo {
+  position: absolute; right: 16px; bottom: 10px; pointer-events: none; color: #9AA0A8;
+  font-weight: 600; font-size: 13px; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
 #counter {   /* plain grey text on the desk (light in both modes): no pill */
+  display: none !important;
   position: absolute; right: 14px; bottom: 14px; z-index: 5; background: transparent; color: #808080;
   font-weight: 600; font-size: 13px; padding: 0; border: 0; border-radius: 0; font-variant-numeric: tabular-nums;
   pointer-events: none;

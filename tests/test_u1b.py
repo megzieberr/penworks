@@ -333,7 +333,8 @@ try:
         check("stack and tray visible", tr["width"] == 56 and tr["x"] + 56 <= 1280.5 and d["width"] > 1100 and sh["width"] > 0, [d, tr])
         check("a portrait page fits at zoom 1", pg.evaluate("document.getElementById('stack').dataset.zoom") == "1.000"
               and sh["x"] - d["x"] >= 20 and (d["x"] + d["width"]) - (sh["x"] + sh["width"]) >= 20, [d, sh])
-        check("counter sits bottom-right of the desk", box("#counter")["x"] > d["x"] + d["width"] - 140 and box("#counter")["y"] > d["y"] + d["height"] - 60)
+        check("pw-v9f: the desk's counter is hidden, page 1 carries its own number", not pg.locator("#counter").is_visible()
+              and pg.locator("#stack .sheet[data-index='1'] > .pageNo").inner_text().startswith("1 / "))
         check("no horizontal scroll (tablet)", pg.evaluate("document.documentElement.scrollWidth <= innerWidth"))
         if SHOTS: pg.screenshot(path=str(SHOTS / "tablet-note.png"))
         group[0] = "no bookmark or ribbon"
@@ -401,7 +402,7 @@ try:
             st = pg.evaluate("(u)=>fetch(u).then(r=>r.status+' '+r.headers.get('content-type'))", ic["src"])
             check("icon " + ic["src"], st.startswith("200 image/png"), st)
         check("service worker registers and is active", pg.evaluate("navigator.serviceWorker.ready.then(r=>!!r.active)"))
-        check("cache is pw-v9e (share pages)", pg.evaluate("caches.keys()") == ["pw-v9e"] or "pw-v9e" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
+        check("cache is pw-v9f (share pages)", pg.evaluate("caches.keys()") == ["pw-v9f"] or "pw-v9f" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
         inst = ctx.new_cdp_session(pg).send("Page.getInstallabilityErrors")
         check("Chrome sees it as installable", not inst.get("installabilityErrors"), inst)
         pg.reload(); ready(pg); pg.wait_for_timeout(500)

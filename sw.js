@@ -26,9 +26,10 @@
    pw-v9c (6 Nov): sticky notes: the + menu's Sticky puts a coloured square beside the page; write on it, drag it into the margin or onto a page, resize it by its corner.
    pw-v9d (7 Nov): a picture shared from WhatsApp lands like a PDF: the manifest's second files entry (image), every shared PDF and picture kept as a list in the form's order, each picture a new page.
    pw-v9e (7 Nov): Cut out: a selected picture's wand chip opens a sheet where a tap takes its background away (a fussiness slider, Everywhere, no AI); Done keeps a new PNG.
+   pw-v9f (11 Nov): the page number sits on each page (never printed), ink moves across pages, Copy clears the selection.
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v9e";
+const CACHE = "pw-v9f";
 const SHARE_DB = "penworks.share";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",

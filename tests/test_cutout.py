@@ -532,9 +532,9 @@ try:
         group[0] = "N. files"
         check("no page errors", not errs, errs)
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        check("cache is pw-v9e", "pw-v9e" in keys, keys)
+        check("cache is pw-v9f", "pw-v9f" in keys, keys)
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
-        check("sw.js: CACHE pw-v9e, its version line, and js/cutout.js in the shell", 'const CACHE = "pw-v9e";' in swt and "   pw-v9e (7 Nov): " in swt and '"./js/cutout.js"' in swt)
+        check("sw.js: CACHE pw-v9f, its version line, and js/cutout.js in the shell", 'const CACHE = "pw-v9f";' in swt and "   pw-v9e (7 Nov): " in swt and '"./js/cutout.js"' in swt)
         src = pg.evaluate("fetch('./js/cutout.js').then(r => r.text())")
         code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("//"))
         check("js/cutout.js asks nothing of the network (no fetch, no http, no XMLHttpRequest, no WebSocket, no import())",

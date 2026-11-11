@@ -244,6 +244,7 @@ export function showStack(pages, stickies = []) {
     el.appendChild(bgSvg(s.w, s.h, p.background));
     if (p.pdf_path) { el.dataset.pdf = '1'; el.appendChild(Object.assign(document.createElement('div'), { className: 'pdfLayer' })); }   // U4a: under the ink
     if (p.bookmark) el.appendChild(bookmarkTab());
+    el.appendChild(pageNo(i + 1, pages.length));
     stack.insertBefore(el, addBelow);
     L.tops.push(y); L.ids.push(p.id);
     y += s.h + GAP;
@@ -436,6 +437,15 @@ export function bookmarkTab() {
   const t = document.createElement('div');
   t.className = 'bookmarkTab';
   t.innerHTML = RIBBON;
+  return t;
+}
+// pw-v9f (her ask 11 Nov: "moved to on the page ... it should not print"): "3 / 4" in grey in the page's bottom-right
+// corner, in page px so it grows with the zoom; under the ink (the ink layer comes after it), never in the pen's way.
+// It is a screen thing only: the PDF export, the share pictures and the page picture are drawn from the records.
+function pageNo(n, of) {
+  const t = document.createElement('div');
+  t.className = 'pageNo';
+  t.textContent = n + ' / ' + of;
   return t;
 }
 // put the tab on (or take it off) the page's sheet without rebuilding the stack
