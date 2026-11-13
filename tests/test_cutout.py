@@ -182,7 +182,7 @@ try:
         RID, RPATH = ring.get("id"), ring.get("data", {}).get("path")
         check("set-up: the ring lands on page 1 as a picture, selected", RID and RPATH and (pg.evaluate("window.__pw.ink.selection()") or {}).get("ids") == [RID], ring)
         ch = chips(pg)
-        check("one unlocked picture: Copy, Cut, Duplicate, Delete, Lock, then Cut out (the wand)", ch == ["copy", "cut", "duplicate", "delete", "lock", "cutout"], ch)
+        check("one unlocked picture: Copy, Cut, Duplicate, Delete, Lock, then Cut out (the wand), then Crop (pw-v9g)", ch == ["copy", "cut", "duplicate", "delete", "lock", "cutout", "crop"], ch)
         lab = pg.evaluate("(() => { const c = document.querySelector(\".selChips .chip[data-act='cutout']\"); return c ? [c.getAttribute('aria-label'), c.title, !!c.querySelector('svg')] : null; })()")
         check("... its word is Cut out (aria-label and title), an icon", lab == ["Cut out", "Cut out", True], lab)
         pg.wait_for_timeout(100)
@@ -532,9 +532,9 @@ try:
         group[0] = "N. files"
         check("no page errors", not errs, errs)
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        check("cache is pw-v9f", "pw-v9f" in keys, keys)
+        check("cache is pw-v9g", "pw-v9g" in keys, keys)
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
-        check("sw.js: CACHE pw-v9f, its version line, and js/cutout.js in the shell", 'const CACHE = "pw-v9f";' in swt and "   pw-v9e (7 Nov): " in swt and '"./js/cutout.js"' in swt)
+        check("sw.js: CACHE pw-v9g, its version line, and js/cutout.js in the shell", 'const CACHE = "pw-v9g";' in swt and "   pw-v9e (7 Nov): " in swt and '"./js/cutout.js"' in swt)
         src = pg.evaluate("fetch('./js/cutout.js').then(r => r.text())")
         code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("//"))
         check("js/cutout.js asks nothing of the network (no fetch, no http, no XMLHttpRequest, no WebSocket, no import())",

@@ -140,6 +140,10 @@
 // by: + Image, the share, Paste) has a wand chip after Lock; it opens the sheet (the cutOut hook from app.js). Done gives the
 // picture a NEW file: setImagePath changes data.path only (id, seq, x, y, w, h, nw, nh, rot, locked kept), ONE undo step,
 // the old file stays on this device so undo shows it again. A picture's bytes never change under a path.
+// Crop (pw-v9g, her ask 13 Nov "I want to be able to crop my images please"; the tool: js/crop.js): the same ONE unlocked
+// picture has a Crop chip right after the wand; it opens crop mode on the page (the cropIt hook from app.js). Done gives the
+// picture a NEW file AND a new box: setImageCrop changes data.path, x, y, w, h, nw, nh (id, seq, rot, locked kept), ONE undo
+// step, so the kept part stays exactly where it lay; undo brings the whole picture back.
 // Sticky notes (pw-v9c; the anchor rule and the export rule: js/page.js's head). A sticky is a pages row with its own ink
 // layer here, keyed by its row id like a page's, its strokes in sticky px from its top-left; the layer is the whole square
 // (the strip is part of it and drawn above the ink). Every tool works on it as on a page: the pen's press is read by
@@ -197,6 +201,7 @@ let CLIP = null;                 // the selection clipboard: { recs (deep copies
 let toast = null, openMenuAt = null, selectTool = null;   // optional, from app.js: a toast, the menu at a point, the tray's select tool
 let stickiesOn = () => [];       // pw-v9c, from app.js: a page id -> its on-page stickies [{ id, x, y, w, colour }] (thumbSvg, pdfout)
 let cutOut = null;               // pw-v9e, from app.js: (pageId, a copy of the picture's record) -> the Cut out sheet (js/cutout.js)
+let cropIt = null;               // pw-v9g, from app.js: (pageId, a copy of the picture's record) -> crop mode on the page (js/crop.js)
 // the chips' four icons (the same drawing style as SVG_BIN in js/app.js)
 const ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">';
 const SVG_COPY = ICON + '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>';
@@ -206,6 +211,7 @@ const SVG_BIN = ICON + '<path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13"/></svg>'
 const SVG_LOCK = ICON + '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';     // U4c: a closed padlock (Lock)
 const SVG_UNLOCK = ICON + '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/></svg>';  // an open one (Unlock)
 const SVG_WAND = ICON + '<path d="M4 20 14 10"/><path d="M15 3v3M13.5 4.5h3M19 7v2M18 8h2M18 13l1.2 1.2M20 11l-1 1"/></svg>';   // pw-v9e: Cut out (the mock's wand)
+const SVG_CROP = ICON + '<path d="M7 3v14h14"/><path d="M3 7h14v14"/></svg>';   // pw-v9g: Crop (two crossed corners)
 
 const uuid = () => crypto.randomUUID();
 const r1 = (v) => Math.round(v * 10) / 10;
@@ -219,6 +225,7 @@ export function initInk(o) {
   if (o.selectTool) selectTool = o.selectTool;
   if (o.stickiesOn) stickiesOn = o.stickiesOn;
   if (o.cutOut) cutOut = o.cutOut;
+  if (o.cropIt) cropIt = o.cropIt;
   deskEl = o.desk || document.getElementById('desk');
   deskEl.addEventListener('pointerleave', hideHandle);
   // the selection's handles and chips keep their size on screen: redraw them when the zoom changes
@@ -1643,10 +1650,12 @@ function makeSel(page, ids) {
 // the chips for what is selected now (renderSel calls it; they are made again only when that changes): Copy, Cut, Duplicate,
 // Delete, and U4c's padlock after Delete when a picture is selected (Lock; Unlock when any selected picture is locked).
 // A selection holding a locked picture has Delete and Unlock only. pw-v9e: exactly ONE picture, unlocked: the wand after
-// Lock, Cut out (js/cutout.js); ink, several records or a locked picture: none.
+// Lock, Cut out (js/cutout.js); ink, several records or a locked picture: none. pw-v9g: the same picture also has Crop
+// right after the wand (js/crop.js).
 function fillChips() {
-  const recs = selRecs(), pic = recs.some(isImg), locked = recs.some(isLocked), one = recs.length === 1 && pic && !locked && !!cutOut;
-  const key = (pic ? 'p' : '-') + (locked ? 'l' : '-') + (one ? 'c' : '-');
+  const recs = selRecs(), pic = recs.some(isImg), locked = recs.some(isLocked), solo = recs.length === 1 && pic && !locked;
+  const one = solo && !!cutOut, crop = solo && !!cropIt;
+  const key = (pic ? 'p' : '-') + (locked ? 'l' : '-') + (one ? 'c' : '-') + (crop ? 'k' : '-');
   SEL.locked = locked;
   if (SEL.ckey === key) return;
   SEL.ckey = key;
@@ -1663,6 +1672,26 @@ function fillChips() {
   chip('delete', 'Delete', SVG_BIN, deleteSel);
   if (pic) chip('lock', locked ? 'Unlock' : 'Lock', locked ? SVG_UNLOCK : SVG_LOCK, lockSel);
   if (one) chip('cutout', 'Cut out', SVG_WAND, cutoutSel);
+  if (crop) chip('crop', 'Crop', SVG_CROP, cropSel);
+}
+// pw-v9g: the Crop chip: crop mode on the one selected picture (a copy of its record); crop.js clears the selection
+function cropSel() {
+  if (!SEL || !cropIt) return;
+  const recs = selRecs();
+  if (recs.length !== 1 || !isImg(recs[0]) || isLocked(recs[0])) return;
+  cropIt(SEL.page, JSON.parse(JSON.stringify(recs[0])));
+}
+// pw-v9g, Crop's Done: the picture `id` on page pageId gets the file at `path` (blob: its bytes, kept on this device already)
+// and the box `box` { x, y, w, h, nw, nh } in ONE undo step (undo puts the old record, whole picture, back). id, seq, rot,
+// locked and the style kept. False when the picture is gone, locked, or no longer has the path `from` (it changed meanwhile).
+export function setImageCrop(pageId, id, from, path, blob, box) {
+  const d = data(pageId), old = d.byId.get(id);
+  if (!isImg(old) || !old.data || isLocked(old) || old.data.path !== from || !path || path === from || !box) return false;
+  if (!(box.w > 0 && box.h > 0 && box.nw > 0 && box.nh > 0)) return false;
+  if (blob) keepUrl(path, blob);
+  const rec = { ...old, style: { ...old.style }, data: { ...old.data, path, x: box.x, y: box.y, w: box.w, h: box.h, nw: box.nw, nh: box.nh } };
+  doOp(changeOp([{ page: pageId, removed: [old], added: [rec] }]));
+  return true;
 }
 // pw-v9e: the wand chip: the Cut out sheet on the one selected picture (a copy of its record; the selection stays)
 function cutoutSel() {

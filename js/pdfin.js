@@ -374,9 +374,10 @@ export async function importImage(file, pageId, how) {
 // pw-v9e, Cut out (js/cutout.js): an edited picture's PNG kept as a NEW file <owner>/<uuid>.png (never over the old one: undo
 // needs the old bytes, and the phone's copy is never half replaced), then up the same ladder as a new picture (keepImport).
 // Returns its path, or null when there is nothing to keep or it is over the 10 MB cap (the caller says IMG_TOO_BIG).
-export async function keepPicture(blob, name = '') {
+// pw-v9g: Crop keeps a JPEG picture's crop as a JPEG (jpeg true: a .jpg path), a PNG's as a PNG.
+export async function keepPicture(blob, name = '', jpeg = false) {
   if (!blob || !(blob.size > 0) || blob.size > IMG_MAX) return null;
-  const path = `${cfg.userId}/${crypto.randomUUID()}.png`;
+  const path = `${cfg.userId}/${crypto.randomUUID()}.${jpeg ? 'jpg' : 'png'}`;
   await keepImport(path, blob, name);
   return path;
 }

@@ -335,6 +335,23 @@ input.rename {
   font-weight: 700; font-size: 14px; font-variant-numeric: tabular-nums; box-shadow: 0 2px 8px rgba(20,22,26,.18);
 }
 .selDeg.on { display: block; }
+/* pw-v9g: crop mode (js/crop.js): its layer in the picture's page (or sticky) px, never clipped, above the ink; only the
+   rectangle and the handles take a press. The bar's two words where the selection chips sit, fixed colours (on the paper). */
+.sheet svg.cropLayer, .sticky > svg.cropLayer { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; z-index: 2; }
+.cropLayer [data-k] { pointer-events: all; }
+.cropLayer .cropKnob, .cropLayer .cropLine, .cropLayer .cropLine2, .cropLayer .cropDim { pointer-events: none; }
+.cropLayer [data-k="move"] { cursor: move; }
+.cropLayer [data-k="n"], .cropLayer [data-k="s"] { cursor: ns-resize; }
+.cropLayer [data-k="w"], .cropLayer [data-k="e"] { cursor: ew-resize; }
+.cropLayer [data-k="nw"], .cropLayer [data-k="se"] { cursor: nwse-resize; }
+.cropLayer [data-k="ne"], .cropLayer [data-k="sw"] { cursor: nesw-resize; }
+.cropBar { position: absolute; z-index: 4; display: flex; gap: 8px; transform-origin: 0 0; white-space: nowrap; }
+.cropBar button {
+  height: 40px; min-width: 84px; padding: 0 18px; border: 0; border-radius: 20px; font: inherit; font-weight: 700; font-size: 15px;
+  cursor: pointer; touch-action: manipulation; background: #2F4BB8; color: #FFFFFF; box-shadow: 0 2px 8px rgba(20,22,26,.18);
+}
+.cropBar button[data-crop="cancel"] { background: #FFFFFF; color: #2F4BB8; box-shadow: inset 0 0 0 1.5px #2F4BB8, 0 2px 8px rgba(20,22,26,.18); }
+.cropBar button:disabled { opacity: .6; cursor: default; }
 /* U5a: the tools on the paper (js/tools.js): their own layer over the page's ink, in page px, never clipped (a ruler may
    hang off the page), above the next page too; the pen reaches them through the desk, never through this layer */
 .sheet svg.toolLayer { overflow: visible; pointer-events: none; z-index: 2; }

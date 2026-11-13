@@ -61,6 +61,9 @@
 // pw-v9e (7 Nov): Cut out. One unlocked picture selected has a wand chip (js/ink.js); it opens a full-screen sheet where a tap
 // takes the picture's background away (js/cutout.js: a flood fill on the device, a fussiness slider, Everywhere, no AI and
 // no service). Done keeps the edited PNG as a NEW file and puts its path on the picture, one undo step (ink.setImagePath).
+// pw-v9g (13 Nov): Crop. The same picture has a Crop chip after the wand; crop mode runs on the page (js/crop.js). While it
+// is on, the desk hook below swallows the pen and the mouse (no ink) and a finger's tap or hold; the undo and redo buttons,
+// closing the note and the pen button end it as Cancel. Done: a new file and a new box, one undo step (ink.setImageCrop).
 import { api } from './api.js';
 import { initPage, showStack, fit, scrollToPage, relayout, current, markSheet, bgSvg, pageSize, setLock, locked,
          setStickies, stickyFront, stickySpot, stickyAt, stickyBusy, SK_SIZE, SK_COLOURS } from './page.js';
@@ -76,6 +79,7 @@ import * as pdfin from './pdfin.js';
 import * as pdfview from './pdfview.js';
 import { buildPdf } from './pdfout.js';
 import * as cutout from './cutout.js';
+import * as crop from './crop.js';
 
 const $ = (id) => document.getElementById(id);
 const S = { folders: [], notes: [], pages: [], sel: 'loose', openNote: null, cur: 0, fold: {}, renaming: null,
@@ -556,6 +560,7 @@ function blankPage(nid) {
 function closeNote(skipHistory) {
   if (document.body.classList.contains('full')) exitFull();
   showLock(false);
+  crop.cancelCrop(false);                                           // pw-v9g
   closePanel(); ink.clearSelection();
   if (S.openNote) { delete S.hist[S.openNote]; tidyInk(); }    // closing a note ends its undo history
   S.openNote = null; S.listOpen = false; S.tick = null; S.renaming = null; remember();
@@ -586,8 +591,9 @@ function tidyInk() {
   for (const id of [...held]) (goneStickies.get(id) || []).forEach((g) => held.add(g.row.id));   // pw-v9c: a held page holds its stickies
   for (const id of [...orphans]) if (!held.has(id) && !page(id)) { ink.forget(id); orphans.delete(id); }
 }
-function undo() { if (!S.openNote) return; const H = hist(), op = H.u.pop(); if (!op) return; op.undo(); H.r.push(op); renderTray(); }
-function redo() { if (!S.openNote) return; const H = hist(), op = H.r.pop(); if (!op) return; op.redo(); H.u.push(op); renderTray(); }
+// pw-v9g: crop mode on: it ends as Cancel first (the picture under it may change)
+function undo() { crop.cancelCrop(); if (!S.openNote) return; const H = hist(), op = H.u.pop(); if (!op) return; op.undo(); H.r.push(op); renderTray(); }
+function redo() { crop.cancelCrop(); if (!S.openNote) return; const H = hist(), op = H.r.pop(); if (!op) return; op.redo(); H.u.push(op); renderTray(); }
 
 function touchNote(nid) { const n = note(nid); if (n) n.updated_at = nowIso(); }
 function renumber(list) {
@@ -2266,6 +2272,7 @@ function overlayOpen() {
 function penButton() {
   const blocked = rightOverOpen; rightOverOpen = false;
   if (blocked || overlayOpen() || ink.busy()) return;
+  if (crop.cropActive()) { crop.cancelCrop(); return; }            // pw-v9g: the pen button ends crop mode as Cancel, the tool stays
   const t = ink.tool();
   chooseTool(t.tool === 'select' ? t.lastInk : 'select');
 }
@@ -2300,7 +2307,8 @@ function wire() {
   ink.initInk({ doOp, desk: $('desk'), onChange: inkChanged, stickiesOn: stickiesOnPage,   // pw-v9c: the on-page stickies for the pictures
                 toast, openMenuAt: (x, y, items) => openMenu({ x, y }, items), selectTool: () => chooseTool('select'),
                 // pw-v9e: the wand chip opens Cut out; its Done puts the new file on that picture, one undo step
-                cutOut: (pageId, rec) => cutout.openCutout(rec, { toast, commit: (path, blob) => ink.setImagePath(pageId, rec.id, path, blob) }) });
+                cutOut: (pageId, rec) => cutout.openCutout(rec, { toast, commit: (path, blob) => ink.setImagePath(pageId, rec.id, path, blob) }),
+                cropIt: (pageId, rec) => crop.startCrop(pageId, rec, { toast }) });   // pw-v9g: the Crop chip
   // a right mouse press that lands while something is open (the press itself closes it before its contextmenu):
   // remembered here, before the tray's and the menu's own closers run, so that contextmenu does not flip the tool
   document.addEventListener('pointerdown', (e) => { rightOverOpen = e.button === 2 && overlayOpen(); }, true);   // any other press forgets it
@@ -2309,10 +2317,14 @@ function wire() {
   tools.initTools({ trayBtn: $('drawToolsBtn'), desk: $('desk') });   // U5a: the Tools panel and the ruler on the paper
   // U5a: the tools get the first look at a pen press; a press they take is theirs until the lift, any other is ink's
   let penOwner = null;
-  // pw-v9c: a pen press on a sticky (its body: page.js has already taken a strip or corner press) is ink's on the sticky's
-  // own layer and never reaches the tools: the ruler, compass and protractor stay on pages
+  // pw-v9g: while crop mode is on, a pen or mouse press that reaches the desk (not a crop handle: those never do) is taken
+  // by nobody: no ink, no selection, no tool; a finger's tap and hold do nothing either (its pan and pinch stay page.js's)
+  const swallow = { down: () => true, move: () => {}, up: () => {}, hover: () => {} };
   const deskInk = { ...ink.hook,
+    fingerTap: (cx, cy) => { if (!crop.cropActive()) ink.hook.fingerTap(cx, cy); },
+    holdMenu: (cx, cy) => { if (!crop.cropActive()) ink.hook.holdMenu(cx, cy); },
     down: (e) => {
+      if (crop.cropActive()) { penOwner = swallow; return true; }
       penOwner = !stickyAt(e.clientX, e.clientY) && tools.hook.down(e) ? tools.hook : ink.hook;
       return penOwner === tools.hook || ink.hook.down(e);
     },
@@ -2321,7 +2333,7 @@ function wire() {
     hover: (e) => { if (!stickyAt(e.clientX, e.clientY)) tools.hook.hover(e); ink.hook.hover(e); } };
   initPage({ desk: $('desk'), stack: $('stack'), addBelow: $('addBelow'),
              onCurrent: (i) => { S.cur = Math.max(0, i); updateCount(); ink.clearSelection(); rememberPage(); },   // a new page: the selection clears
-             onSheets: (sheets) => { ink.attach(sheets); pdfview.attach(sheets); tools.attach(sheets); }, onView: pdfview.view,
+             onSheets: (sheets) => { ink.attach(sheets); pdfview.attach(sheets); tools.attach(sheets); crop.sheetsChanged(); }, onView: pdfview.view,
              // pw-v9c: the stickies' layers, a live resize, a strip tap (the menu), a finished move or resize (one undo step)
              onStickies: (els, sized) => { if (els.length) ink.attach(els); sized.forEach(([id, w]) => ink.fitLayer(id, w)); },
              onStickySize: (id, w) => ink.fitLayer(id, w),
@@ -2403,6 +2415,7 @@ async function settledBoth() { await treeq.settled(); await store.settled(); awa
 window.__pw = { S, api, idle: settledBoth, failed: () => treeq.dropCount(), current, ink, store, tray: trayState, treeq, mergeTree,
                 snap: pics.snapStats, renderGrid, covers: coverUrl, bookmarksTaken: () => ({ ...tookOver }),
                 cutout: { state: cutout.cutoutState, pixel: cutout.cutoutPixel, tap: cutout.cutoutTap, fill: cutout.cutFill },   // pw-v9e, for the checks
+                crop: { state: crop.cropState, set: crop.cropSet, done: crop.doneCrop, cancel: crop.cancelCrop },               // pw-v9g, for the checks
                 sticky: { stickiesIn, stickiesOf, stickiesOnPage, pagesOf, onPage, add: addSticky, menu: (id) => stickyColours({ x: 200, y: 200 }, id) },   // pw-v9c, for the checks
                 trayPending: () => ({ next: !!trayNext, busy: trayBusy, timer: !!trayT }),
                 pageDrag: () => (pd ? { lifted: pd.lifted, from: pd.from, to: pd.to } : null),
