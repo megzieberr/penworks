@@ -105,7 +105,7 @@ def set_input(pg, k, v):
     pg.evaluate("([k, v]) => { const i = document.querySelector(`#calcCard .calcFace input[data-slot='${k}']`); i.value = v;"
                 " i.dispatchEvent(new Event('input', { bubbles: true })); }", [k, v])
 def hexrgb(h): return f"rgb({int(h[1:3], 16)}, {int(h[3:5], 16)}, {int(h[5:7], 16)})"
-def with_scale(b, s, h=1700):
+def with_scale(b, s, h=2000):   # v9g: the bigger LCD made 2.5x 1842 px tall (737 x 2.5), so 1700 -> 2000
     ctx = b.new_context(viewport={"width": 1400, "height": h})
     pg = ctx.new_page(); errs = []
     pg.on("pageerror", lambda e: errs.append(str(e)))
@@ -323,8 +323,8 @@ try:
             ctx, pg, errs = with_scale(b, sc)
             s = float(pg.evaluate("getComputedStyle(document.getElementById('calcCard')).getPropertyValue('--calc-s')"))
             r = rect(pg, "#calcCard")
-            check(f"{sc}x: the card is {sc}x (344 x {sc} = {344 * sc:.0f} px wide) and fits the 1400 x 1700 screen",
-                  abs(s - sc) < 1e-6 and abs(r["w"] - 344 * sc) < 1 and r["b"] <= 1700, [s, r])
+            check(f"{sc}x: the card is {sc}x (344 x {sc} = {344 * sc:.0f} px wide) and fits the 1400 x 2000 screen",
+                  abs(s - sc) < 1e-6 and abs(r["w"] - 344 * sc) < 1 and r["b"] <= 2000, [s, r])
             keys(pg, "ac", "d1", "d0", "d9", "d2", "eq", "shift", "dms")
             o = pg.evaluate(OVERLAP_JS)
             check(f"{sc}x: no two printed words overlap or touch", not o["bad"], o["bad"])

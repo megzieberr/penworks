@@ -186,9 +186,10 @@ try:
         c0 = rect(pg, "#calcCard"); hx, hy = center(rect(pg, "#calcCard .calc-name"))
         # pw-v7e: the card now opens at the top (y 0), so the drag goes down-left (it was up-left, which now clamps at the top)
         # pw-v8v: the face made the card 625 px tall at 1.0x, so on this 800 px screen it has only about 110 px to go down: +100, not +150
-        pg.mouse.move(hx, hy); pg.mouse.down(); pg.mouse.move(hx - 120, hy + 40, steps=6); pg.mouse.move(hx - 300, hy + 100, steps=6); pg.mouse.up(); pg.wait_for_timeout(80)
+        # v9g: the bigger LCD (13 Nov) made it 737 px tall: under the bar it already touches the bottom, so the drag goes up-left, -50
+        pg.mouse.move(hx, hy); pg.mouse.down(); pg.mouse.move(hx - 120, hy - 20, steps=6); pg.mouse.move(hx - 300, hy - 50, steps=6); pg.mouse.up(); pg.wait_for_timeout(80)
         c1 = rect(pg, "#calcCard")
-        check("dragging the head moves the card by the drag (-300, +100)", abs((c1["l"] - c0["l"]) + 300) <= 1.5 and abs((c1["t"] - c0["t"]) - 100) <= 1.5, [c0, c1])
+        check("dragging the head moves the card by the drag (-300, -50)", abs((c1["l"] - c0["l"]) + 300) <= 1.5 and abs((c1["t"] - c0["t"]) + 50) <= 1.5, [c0, c1])
         # drag far off: clamped inside the viewport
         hx, hy = center(rect(pg, "#calcCard .calc-name"))
         pg.mouse.move(hx, hy); pg.mouse.down(); pg.mouse.move(hx + 2000, hy + 2000, steps=8); pg.mouse.up(); pg.wait_for_timeout(80)
@@ -295,13 +296,14 @@ try:
         # C1: 1280 x 1100, nothing stored: the default
         # pw-v8v: the face made the card 625 px tall at 1.0x (1000 px at 1.6x), so 1.6x no longer fits under the bar on a 1000 px
         # screen; the screen here is 1100 px tall so the rule (1.6x when it fits) is still the one tested
-        ctx, pg, errs = fresh(1280, 1100)
+        # v9g: the bigger LCD made the card 737 px tall at 1.0x (1179 px at 1.6x), so the screen went from 1100 to 1300 px
+        ctx, pg, errs = fresh(1280, 1300)
         pg.click("#toolsBtn"); pg.wait_for_timeout(150)
         c, tray, bar, s = rect(pg, "#calcCard"), rect(pg, "#tray"), rect(pg, "#noteBar"), pg.evaluate(SC)
-        print(f"MEASURED default on 1280 x 1100: scale {s}, card {c['w']:.1f} x {c['h']:.1f} at ({c['l']:.0f}, {c['t']:.0f})")
+        print(f"MEASURED default on 1280 x 1300: scale {s}, card {c['w']:.1f} x {c['h']:.1f} at ({c['l']:.0f}, {c['t']:.0f})")
         check("1280 px screen, nothing stored: the card opens at 1.6x, 550.4 px wide (344 x 1.6)", abs(s - 1.6) < 1e-9 and abs(c["w"] - 550.4) <= 0.5, [s, c])
         check("... beside the tray (12 px) and 12 px under the note bar, all on screen",
-              abs(c["r"] - (tray["l"] - 12)) <= 1 and abs(c["t"] - (bar["b"] + 12)) <= 1.5 and inside(c, 1280, 1100), [c, tray, bar])
+              abs(c["r"] - (tray["l"] - 12)) <= 1 and abs(c["t"] - (bar["b"] + 12)) <= 1.5 and inside(c, 1280, 1300), [c, tray, bar])
         z = pg.evaluate("""() => { const w = document.querySelector('#calcCard .calc-wrap'), out = { zoom: getComputedStyle(w).zoom, transforms: [] };
           for (let e = document.querySelector('#calcCard .lcd-res'); e; e = e.parentElement) { const t = getComputedStyle(e).transform; if (t && t !== 'none') out.transforms.push(e.className || e.tagName); }
           return out; }""")
@@ -329,8 +331,8 @@ try:
         check("proportions at 1.0x: within 1% of the 1.6x card's", abs((c1["h"] / c1["w"]) / (c["h"] / c["w"]) - 1) < 0.01, [c1["w"], c1["h"]])
         grip_drag(pg, 3000, 3000)
         cb, sb = rect(pg, "#calcCard"), pg.evaluate(SC)
-        print(f"MEASURED biggest that fits 1280 x 1100: scale {sb:.3f}, card {cb['w']:.1f} x {cb['h']:.1f}")
-        check("dragged far out on an 1100 px tall screen: as big as fits (below 2.5x, at least 99% of the height) and still all on screen", 1.6 < sb < 2.5 and inside(cb, 1280, 1100) and cb["h"] >= 1089, [sb, cb])
+        print(f"MEASURED biggest that fits 1280 x 1300: scale {sb:.3f}, card {cb['w']:.1f} x {cb['h']:.1f}")
+        check("dragged far out on a 1300 px tall screen: as big as fits (below 2.5x, at least 99% of the height) and still all on screen", 1.6 < sb < 2.5 and inside(cb, 1280, 1300) and cb["h"] >= 1287, [sb, cb])
         # a mid size and a dragged place, then a reload
         grip_drag(pg, -250, -250)
         hx, hy = center(rect(pg, "#calcCard .calc-name"))
@@ -352,9 +354,9 @@ try:
         cs_, ss = rect(pg, "#calcCard"), pg.evaluate(SC)
         check("the screen made shorter (700 px): the card shrinks to fit, all on screen", ss < sm and inside(cs_, 1280, 700), [ss, cs_])
         check("... and her size is still the stored one", abs(pg.evaluate(STORED)["scale"] - sm) < 0.001, pg.evaluate(STORED))
-        pg.set_viewport_size({"width": 1280, "height": 1100}); pg.wait_for_timeout(150)
+        pg.set_viewport_size({"width": 1280, "height": 1300}); pg.wait_for_timeout(150)
         check("the screen tall again: her size is back", abs(pg.evaluate(SC) - sm) < 0.001, pg.evaluate(SC))
-        check("no page errors (1280 x 1100)", not errs, errs)
+        check("no page errors (1280 x 1300)", not errs, errs)
         ctx.close()
 
         # C1b: 1280 x 800, nothing stored: the default keeps under the note bar, as big as the room there allows
@@ -368,13 +370,14 @@ try:
 
         # C2: 1600 x 1700 (room for 2.5x): the upper limit, the keys, "=", a long input, a stroke beside
         # pw-v8v: 2.5x is now 1562 px tall (625 x 2.5), so the screen went from 1400 to 1700 px to keep room for it
-        ctx, pg, errs = fresh(1600, 1700)
+        # v9g: the bigger LCD made 2.5x 1842 px tall (737 x 2.5), so the screen went from 1700 to 2000 px
+        ctx, pg, errs = fresh(1600, 2000)
         pg.click("#toolsBtn"); pg.wait_for_timeout(150)
         check("1600 px screen, nothing stored: 1.6x", abs(pg.evaluate(SC) - 1.6) < 1e-9, pg.evaluate(SC))
         grip_drag(pg, 3000, 3000)
         c, s = rect(pg, "#calcCard"), pg.evaluate(SC)
         print(f"MEASURED at the top limit: scale {s}, card {c['w']:.1f} x {c['h']:.1f}")
-        check("dragged far out: it stops at 2.5x (860 px wide), all on screen", s == 2.5 and abs(c["w"] - 860) <= 0.5 and inside(c, 1600, 1700), [s, c])
+        check("dragged far out: it stops at 2.5x (860 px wide), all on screen", s == 2.5 and abs(c["w"] - 860) <= 0.5 and inside(c, 1600, 2000), [s, c])
         tray = rect(pg, "#tray")
         check("... grown beside the tray it slid left, never over the tray (its right edge 12 px left of the tray)", abs(c["r"] - (tray["l"] - 12)) <= 1, [c, tray])
         check("2.5x is remembered", pg.evaluate(STORED)["scale"] == 2.5, pg.evaluate(STORED))
@@ -411,7 +414,7 @@ try:
         ok, got = stroke_lands(pg, sx, sy)
         check("with the card open at 2.5x, a mouse stroke beside it lands within 1.5 px of the pointer", ok, [sx, sy, c, got])
         check("the card stayed open, never rebuilt", not pg.evaluate("document.getElementById('calcCard').hidden") and pg.locator(".calc-lcd").count() == 1)
-        check("no page errors (1600 x 1700)", not errs, errs)
+        check("no page errors (1600 x 2000)", not errs, errs)
         ctx.close()
 
         # C3: a 375 px phone with 2.5x and a far-right place stored: never off-screen

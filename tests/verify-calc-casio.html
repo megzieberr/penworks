@@ -59,7 +59,12 @@ const KEY = {
   "Ans": "ans", "×10x": "exp10", "x⁻¹": "xinv", "log": "log", "ln": "ln", "log□": "logbox", "ENG": "eng",
   "π": "shift exp10",   // Build 3: π is SHIFT ×10^x (two key presses)
 };
-const keyIds = seq => seq.trim().split(/\s+/).filter(Boolean).flatMap(t => /^\d+$/.test(t) ? t.split("").map(d => "d" + d) : (KEY[t] || t).split(" "));
+/* LCD size (13 Nov 2026): the screen's sizes are base px × --lcd-k (css/styles.css).
+   Limits below that describe a text size ("one line is under 20 px high") are
+   written at the old size and multiplied by these, so they hold at any --lcd-k. */
+const lcdK = h => parseFloat(getComputedStyle(h.querySelector(".calc-lcd")).getPropertyValue("--lcd-k")) || 1;
+const lcdKi = h => parseFloat(getComputedStyle(h.querySelector(".calc-ind")).fontSize) / 9;   // the status row's own, slower factor
+const keyIds = seq =>seq.trim().split(/\s+/).filter(Boolean).flatMap(t => /^\d+$/.test(t) ? t.split("").map(d => "d" + d) : (KEY[t] || t).split(" "));
 
 function freshCalc(h = host, opts = {}) {
   h.innerHTML = "";
@@ -354,7 +359,7 @@ function measureStatus(where, h, press) {
        `${where}: the worst case really lights A, M, STO, STAT, FREQ, D, Math, ▲▼`, `"${texts.join(" | ")}"`);
   const tops = lit.map(n => Math.round(box(n).top));
   const clipped = lit.filter(n => { const s = h.querySelector(`.calc-ind .ind-${n}`); return s.scrollWidth > s.clientWidth + 0.5; });
-  tick(new Set(tops).size === 1 && ind.scrollWidth <= ind.clientWidth + 0.5 && clipped.length === 0 && ind.getBoundingClientRect().height <= 14,
+  tick(new Set(tops).size === 1 && ind.scrollWidth <= ind.clientWidth + 0.5 && clipped.length === 0 && ind.getBoundingClientRect().height <= 14 * lcdKi(h),
        `${where}: one line, nothing clipped or overflowing`,
        `status line ${Math.round(ind.getBoundingClientRect().width)}×${Math.round(ind.getBoundingClientRect().height)} px, content ${ind.scrollWidth} px, clipped: ${clipped.join(",") || "none"}`);
   const moved = ["stat", "drg", "math"].filter(n => Math.abs(box(n).left - base[n]) > 0.5);
@@ -1234,14 +1239,14 @@ function measureBuild5(where, h, press) {
        `LCD ${Math.round(h0)} → ${Math.round(L().height)} px`);
   press("AC X x² − 4 SOLVE");
   lab = h.querySelector(".lcd-pr-label");
-  tick(lab && lab.textContent === "Solve for X" && inside(lab) && lab.getBoundingClientRect().height < 20, `${where}: "Solve for X" sits on one line inside the LCD`,
+  tick(lab && lab.textContent === "Solve for X" && inside(lab) && lab.getBoundingClientRect().height < 20 * lcdK(h),`${where}: "Solve for X" sits on one line inside the LCD`,
        lab ? `${Math.round(lab.getBoundingClientRect().width)}×${Math.round(lab.getBoundingClientRect().height)} px` : "missing");
   // (3) the SOLVE answer: three small lines, values right-aligned
   press("=");
   const rows = [...h.querySelectorAll(".lcd-sv-row")], eq = h.querySelector(".lcd-sv-eq");
   const fs = [eq, ...rows].map(e => parseFloat(getComputedStyle(e).fontSize));
   const flush = rows.every(r => { const v = r.querySelector(".lcd-sv-val"); return Math.abs(textRight(v) - r.getBoundingClientRect().right) < 1; });
-  tick(rows.length === 2 && fs.every(f => f === fs[0] && f <= 13) && flush && [eq, ...rows].every(inside) && Math.abs(L().height - h0) < 0.5,
+  tick(rows.length === 2 && fs.every(f => f === fs[0] && f <= 13 * lcdK(h) + 0.01) && flush && [eq, ...rows].every(inside) && Math.abs(L().height - h0) < 0.5,
        `${where}: the answer is three small lines (${fs.join("/")} px), X= and L−R= values right-aligned, inside the LCD`,
        `${rows.length + 1} lines, right-aligned ${flush}, LCD ${Math.round(h0)} → ${Math.round(L().height)} px`);
   // (4) an equation too long for one line (with a fraction in it): cut off at the right, never wrapped
@@ -1249,7 +1254,7 @@ function measureBuild5(where, h, press) {
   const g = read(h);
   const eq2 = h.querySelector(".lcd-sv-eq"), rows2 = [...h.querySelectorAll(".lcd-sv-row")];
   const fr = eq2 && eq2.querySelector(".calc-frac");
-  tick(g.sv.startsWith("X=8,0000") && eq2.scrollWidth > eq2.clientWidth && eq2.getBoundingClientRect().height < 40 && inside(eq2) && rows2.every(inside)
+  tick(g.sv.startsWith("X=8,0000") && eq2.scrollWidth > eq2.clientWidth && eq2.getBoundingClientRect().height < 40 * lcdK(h) && inside(eq2) && rows2.every(inside)
        && rows2.every(r => r.scrollWidth <= r.clientWidth + 0.5) && Math.abs(L().height - h0) < 0.5 && fr && inside(fr),
        `${where}: a long equation is cut off at the right on its one line, X= and L−R= still fit, LCD height unchanged`,
        `"${g.sv}", line ${eq2.scrollWidth}/${eq2.clientWidth} px, ${Math.round(eq2.getBoundingClientRect().height)} px high, LCD ${Math.round(h0)} → ${Math.round(L().height)} px`);
@@ -1927,7 +1932,7 @@ function measureBuild7(where, h, press) {
   press("MODE 5");
   const items = [...h.querySelectorAll(".lcd-mi")];
   const tops = new Set(items.map(i => Math.round(i.getBoundingClientRect().top))).size;
-  tick(items.length === 4 && tops === 4 && items.every(inside) && items.every(i => i.getBoundingClientRect().height < 20) && same(h0),
+  tick(items.length === 4 && tops === 4 && items.every(inside) && items.every(i => i.getBoundingClientRect().height < 20 * lcdK(h)) && same(h0),
        `${where}: MODE 5 shows the four types one per line, inside the LCD, height unchanged`, `${items.length} items on ${tops} lines, LCD ${Math.round(h0)} → ${Math.round(L().height)} px`);
   // (2) the three-unknown grid with the widest cells: row numbers, brackets, 3 rows
   press(`2 ${["(−) 12345", "123456", "(−) 1 ÷ 3", "(−) 99999", "(−) 1 ÷ 7", "2 x^ 30", "1 ÷ 3"].map(s => s + " =").join(" ")} ◀ ◀ ◀ ▶`);
@@ -1960,7 +1965,7 @@ function measureBuild7(where, h, press) {
   // (5) the long label and an answer
   press(`AC MODE 5 3 1 = (−) 5 = 6 = = = =`);
   const lab = h.querySelector(".lcd-pr-label"), val = h.querySelector(".lcd-res");
-  tick(!!lab && lab.textContent === "X-Value Minimum=" && inside(lab) && lab.getBoundingClientRect().height < 20 && inside(val) && L().right - textRight(val) < 14 && same(h0),
+  tick(!!lab && lab.textContent === "X-Value Minimum=" && inside(lab) && lab.getBoundingClientRect().height < 20 * lcdK(h) && inside(val) && L().right - textRight(val) < 12 + 2 * lcdK(h) && same(h0),   /* 12 = LCD border + padding; the 5/2's own side gap grows with the size */
        `${where}: "X-Value Minimum=" sits on one line top left, the value bottom right, height unchanged`,
        lab ? `${Math.round(lab.getBoundingClientRect().width)}×${Math.round(lab.getBoundingClientRect().height)} px, LCD ${Math.round(L().height)} px` : "missing");
   // (6) complex roots, exact and as long decimals, fit on their line
@@ -2941,7 +2946,7 @@ function measureBuild9(where, h, press) {
   const tin = h.querySelector(".lcd-eqn-in"), cur = tin && tin.querySelector(".calc-cursor"), ex = tin && tin.querySelector(".lcd-expr"), tb = h.querySelector("table.lcd-stat");
   let tr = null;
   if (ex && cur) { const rg = document.createRange(); rg.setStart(ex, 0); rg.setEndBefore(cur); tr = rg.getBoundingClientRect(); }   // the typed digits only
-  tick(!!tin && !!cur && inside(tin) && same(h0) && !h.querySelector(".lcd-res") && tr.left - L().left < 16 && tr.right < L().left + L().width / 2 + 40
+  tick(!!tin && !!cur && inside(tin) && same(h0) && !h.querySelector(".lcd-res") && tr.left - L().left < 16 && tr.right < L().left + L().width / 2 + 40 * lcdK(h)
        && cur.getBoundingClientRect().left >= tr.right - 1 && getComputedStyle(cur).animationName === "calc-blink" && tin.getBoundingClientRect().top >= tb.getBoundingClientRect().bottom - 0.5,
        `${where}: typing 123456,78: bottom LEFT under the grid, a blinking cursor after it, nothing bottom right, LCD height unchanged`,
        `text ${tr ? Math.round(tr.left - L().left) : "?"}…${tr ? Math.round(tr.right - L().left) : "?"} px from the LCD's left, LCD ${Math.round(L().height)} px`);
