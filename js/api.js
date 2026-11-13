@@ -67,12 +67,39 @@ const liveApi = {
     if (!name || !password) return { ok: false, message: 'Type your username and password.' };
     let c;
     try { c = await client(); } catch (_) { return { ok: false, message: 'Could not reach PenWorks. Check the connection.' }; }
-    const { data, error } = await c.auth.signInWithPassword({ email: name + EMAIL_DOMAIN, password });
-    if (error) {
-      const wrong = error.status === 400 || /invalid/i.test(error.message || '');
-      return { ok: false, message: wrong ? 'That username or password is not right.' : 'Could not reach PenWorks. Check the connection.' };
+    const OFF = 'Could not reach PenWorks. Check the connection.';
+    const login = async (pwd, refused) => {
+      const { data, error } = await c.auth.signInWithPassword({ email: name + EMAIL_DOMAIN, password: pwd });
+      if (error) {
+        const wrong = error.status === 400 || /invalid/i.test(error.message || '');
+        return { ok: false, message: wrong ? refused : OFF };
+      }
+      return { ok: true, user: userOf(data.session) };
+    };
+    const oldWay = () => login(password, 'That username or password is not right.');
+    // pw-v9h: the login lock (migration 0008). A short code is asked of login_gate first (it counts wrong tries and locks);
+    // a right code hands back the long secret, the real password. A long password (the laptop tools' secret) never asks.
+    // No gate function yet (PGRST202) or no gate row for this person ('none'): the old way.
+    const code = String(password);
+    if (code.length >= 32) return oldWay();
+    let g;
+    try { g = await c.rpc('login_gate', { p_username: name, p_code: code }); } catch (_) { return { ok: false, message: OFF }; }
+    if (g.error) return g.error.code === 'PGRST202' ? oldWay() : { ok: false, message: OFF };
+    const a = g.data || {};
+    if (a.status === 'none') return oldWay();
+    if (a.status === 'wrong') {
+      const left = typeof a.left === 'number' ? (a.left === 1 ? ' 1 try left.' : ' ' + a.left + ' tries left.') : '';
+      return { ok: false, message: 'That password is not right.' + left };
     }
-    return { ok: true, user: userOf(data.session) };
+    if (a.status === 'locked') {
+      const u = new Date(a.until), now = new Date();
+      if (isNaN(u)) return { ok: false, message: 'Too many wrong tries. Try again later.' };
+      const hm = String(u.getHours()).padStart(2, '0') + ':' + String(u.getMinutes()).padStart(2, '0');
+      const day = u.toDateString() === now.toDateString() ? '' : 'tomorrow ';
+      return { ok: false, message: 'Too many wrong tries. Try again ' + day + 'at ' + hm + '.' };
+    }
+    if (a.status !== 'ok' || !a.secret) return { ok: false, message: OFF };
+    return login(a.secret, 'The login lock and the password do not match. Ask Claude to check it.');
   },
 
   async signOut() { const c = await client(); await c.auth.signOut(); },

@@ -432,9 +432,9 @@ try:
         check("closing the note ends crop mode, nothing left behind", not is_on(pg) and not pg.evaluate("document.querySelector('.cropLayer, .cropBar')"))
         check("no page errors", not errs, errs)
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        check("cache is pw-v9g", "pw-v9g" in keys, keys)
+        check("cache is pw-v9h", "pw-v9h" in keys, keys)
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
-        check("sw.js: CACHE pw-v9g, its version line, js/crop.js in the shell", 'const CACHE = "pw-v9g";' in swt and "   pw-v9g (13 Nov): " in swt and '"./js/crop.js"' in swt)
+        check("sw.js: CACHE pw-v9h, the pw-v9g version line, js/crop.js in the shell", 'const CACHE = "pw-v9h";' in swt and "   pw-v9g (13 Nov): " in swt and '"./js/crop.js"' in swt)
         src = pg.evaluate("fetch('./js/crop.js').then(r => r.text())")
         code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("//")).replace("'http://www.w3.org/2000/svg'", "SVG")   # the SVG namespace is a name, not a call
         check("js/crop.js asks nothing of the network (the SVG namespace aside)", not re.search(r"fetch\(|https?:|XMLHttpRequest|WebSocket|import\(", code))

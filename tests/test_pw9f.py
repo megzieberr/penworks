@@ -185,7 +185,7 @@ try:
         # ------------------------------------------------------------ the cache
         group[0] = "cache"
         swt = (ROOT / "sw.js").read_text(encoding="utf-8")
-        check("sw.js: CACHE pw-v9g and the pw-v9f version line", 'const CACHE = "pw-v9g";' in swt and "   pw-v9f (11 Nov): " in swt)
+        check("sw.js: CACHE pw-v9h and the pw-v9f version line", 'const CACHE = "pw-v9h";' in swt and "   pw-v9f (11 Nov): " in swt)
         b.close()
 finally:
     srv.terminate()

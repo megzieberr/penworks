@@ -2,6 +2,7 @@ LOGIN-LOCAL.md
 backup/
 node_modules/
 .env
+.env-*.tmp
 PROJECT-HISTORY.md
 PROJECT-STATUS.md
 _build/

@@ -28,9 +28,10 @@
    pw-v9e (7 Nov): Cut out: a selected picture's wand chip opens a sheet where a tap takes its background away (a fussiness slider, Everywhere, no AI); Done keeps a new PNG.
    pw-v9f (11 Nov): the page number sits on each page (never printed), ink moves across pages, Copy clears the selection.
    pw-v9g (13 Nov): Crop: a selected picture's Crop chip (after the wand) crops it on the page with a rectangle; Done keeps a new file, one undo step.
+   pw-v9h (13 Nov): the login lock: a short code is checked by the database first (migration 0008), 5 wrong tries lock the login for a while, a right code signs in with the long secret.
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v9g";
+const CACHE = "pw-v9h";
 const SHARE_DB = "penworks.share";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",
