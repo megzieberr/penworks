@@ -311,7 +311,7 @@ tmpd.rmdir()
 # ------------------------------------------------------------ sw.js and the files
 group[0] = "F. files"
 swt = (ROOT / "sw.js").read_text(encoding="utf-8")
-check("13. sw.js: CACHE pw-v9h and its version line", 'const CACHE = "pw-v9h";' in swt and "   pw-v9h (13 Nov): " in swt)
+check("13. sw.js: CACHE pw-v9i and the pw-v9h version line", 'const CACHE = "pw-v9i";' in swt and "   pw-v9h (13 Nov): " in swt)
 check("sw.js has no BOM", not (ROOT / "sw.js").read_bytes().startswith(b"\xef\xbb\xbf"))
 touched = ["js/api.js", "sw.js", "supabase/migrations/0008_login_gate.sql", "tools/arm_gate.py", "tools/README-gate.md", "tests/test_gate.py"]
 check("no em-dashes in the files this round touched", all(chr(0x2014) not in (ROOT / f_).read_text(encoding="utf-8") for f_ in touched))

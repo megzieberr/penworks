@@ -3341,10 +3341,11 @@ export function mountCalculator(host, opts = {}) {
     else {
       ex.scrollLeft = exprScroll;
       mark.hidden = false;
-      const room = mark.offsetWidth + 1;   // keep the cursor clear of the ◀ marker
+      const z = ex.currentCSSZoom || 1;   // a CSS zoom on the card: rects are zoomed, offsetWidth and scrollLeft are not
+      const room = (mark.offsetWidth + 1) * z;   // keep the cursor clear of the ◀ marker
       const er = ex.getBoundingClientRect(), cr = cur.getBoundingClientRect();
-      if (cr.right > er.right - 1) ex.scrollLeft += cr.right - er.right + 1;
-      else if (ex.scrollLeft > 0 && cr.left < er.left + room) ex.scrollLeft -= er.left + room - cr.left;
+      if (cr.right > er.right - z) ex.scrollLeft += (cr.right - er.right + z) / z;
+      else if (ex.scrollLeft > 0 && cr.left < er.left + room) ex.scrollLeft -= (er.left + room - cr.left) / z;
       exprScroll = ex.scrollLeft;
     }
     ex.scrollLeft = exprScroll;
