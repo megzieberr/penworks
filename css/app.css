@@ -827,6 +827,32 @@ body.trayLeft #counter { right: auto; left: 14px; }
   display: block; width: 100%; height: 40px; margin-top: 6px; border: 0; border-radius: 8px; background: var(--ink); color: var(--card);
   font: inherit; font-size: 14.5px; font-weight: 700; cursor: pointer;
 }
+/* pw-v9j: the quick graph's card (the mock's .gcard: the axes card's look), its blocks 80 px wide, a 70 x 50 picture and
+   the name; and the Axes pill above a selected graph (the selection's chip colours, a pill so the word shows) */
+.graphCard {
+  position: fixed; z-index: 41; background: var(--card); color: var(--graphite); border-radius: 10px;
+  padding: 12px 14px 14px; box-shadow: 0 6px 30px rgba(20,22,26,.25); width: max-content; max-width: calc(100vw - 16px);
+}
+.graphCard .gClose {
+  position: absolute; top: 6px; right: 6px; width: 36px; height: 36px; padding: 6px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--graphite); cursor: pointer;
+}
+.graphCard .gClose:hover { background: var(--hover); }
+.graphCard .gClose svg { width: 100%; height: 100%; display: block; }
+.graphCard .gTitle { display: block; font-size: 14.5px; font-weight: 700; line-height: 24px; margin-bottom: 4px; padding-right: 36px; }
+.graphCard .gFam { font-size: 12.5px; font-weight: 700; color: var(--muted); margin: 8px 0 4px; }
+.graphCard .gBlocks { display: flex; flex-wrap: wrap; gap: 8px; }
+.graphCard .gBlk {
+  width: 80px; padding: 5px 0 4px; border: 1px solid var(--field-line); border-radius: 8px; background: var(--field); color: var(--graphite);
+  display: flex; flex-direction: column; align-items: center; gap: 1px; font: inherit; cursor: pointer; touch-action: manipulation;
+}
+.graphCard .gBlk:hover { background: var(--hover); }
+.graphCard .gBlk svg { width: 70px; height: 50px; display: block; }
+.graphCard .gBlk b { font-size: 13px; line-height: 15px; font-weight: 700; }
+.selChips .chip.gchip { width: auto; padding: 0 14px 0 10px; border-radius: 19px; display: flex; align-items: center; gap: 7px; font-weight: 700; font-size: 14.5px; }
+/* Caveat 500, carried by the app (SIL Open Font Licence, fonts/OFL-Caveat.txt): no Google Fonts link for it, so it works
+   offline. The graph's marks are drawn as its glyph outlines (js/caveat-glyphs.js); this face is for anything that sets text */
+@font-face { font-family: 'Caveat'; font-style: normal; font-weight: 500; font-display: swap; src: url('../fonts/caveat-500.woff2') format('woff2'); }
 /* the stamp's numbers and letters never catch a press or a text selection (the pen draws over them) */
 svg.ink text, svg.thumbInk text { pointer-events: none; user-select: none; -webkit-user-select: none; }
 

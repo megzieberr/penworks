@@ -34,7 +34,11 @@
 // After the page's ink, each on-page sticky (ink.stickiesOnPage, app.js's overlap rule) in its own saved graphics state:
 // clipped to the page, moved to its top-left, clipped to its rounded square (radius 3), filled in its colour, the strip
 // (30 page px) in the darker shade, then its strokes exactly as a page's (inkOps). No grip bar, no corner mark.
+// pw-v9j: a quick graph (kind 'graph') is drawn from js/graph.js graphParts, the screen's own parts in the screen's order:
+// its axis lines, ticks and heads stroked black, its degree marks and letters x and y FILLED as Caveat glyph outlines (the
+// same shapes as the page; no font is embedded), tan's asymptotes dashed, the curve last in its colour.
 import * as ink from './ink.js';
+import { graphParts } from './graph.js';
 import { pageSize, pdfShape, A4, CM, GRID, GRID_TOP, LINE_GAP, LINE_TOP, SK_COLOURS, SK_STRIP } from './page.js';
 import * as pdfin from './pdfin.js';
 import * as pdfview from './pdfview.js';
@@ -294,6 +298,15 @@ function inkOps(ops, recs, gsOf, imgOf) {
   let run = null;
   const end = () => { if (run) stroke(run.ds.join(''), run.colour, run.w, run.dashed, undefined); run = null; };
   for (const rec of pen) {
+    if (rec.kind === 'graph') {                                    // pw-v9j: the quick graph's parts in the screen's order (js/graph.js):
+      end();                                                       // black axes, the Caveat marks as FILLED glyph outlines, then the curve
+      for (const p of graphParts(rec)) {
+        if (!p.d) continue;
+        if (p.fill) ops.push(rgOf(p.fill).replace(/RG$/, 'rg'), pdfPath(p.d), 'f');
+        else ops.push(rgOf(p.stroke) + ' ' + n2(p.width) + ' w 1 J ' + (p.dash ? '[' + p.dash.map(n2).join(' ') + '] 0 d' : '[] 0 d'), pdfPath(p.d), 'S');
+      }
+      continue;
+    }
     const st = rec.style || {}, w = st.width || 2.5;
     const op = st.opacity !== undefined && +st.opacity !== 1 ? +st.opacity : undefined;
     for (const [d, dashed] of pathsOf(rec)) {

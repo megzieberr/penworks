@@ -4,7 +4,8 @@
 // at 32 px per cm onto a PenWorks page at CM px per cm (K below scales its sizes).
 //
 // - The Tools button (#drawToolsBtn, under the calculator in js/tray.js) opens a small panel beside the tray, on the
-//   desk side like the pen panel: Ruler, Compass, Protractor, Axes. Ruler, Compass and Protractor (U5d) are toggles, Axes
+//   desk side like the pen panel: Ruler, Compass, Protractor, Axes, Graph (pw-v9j: its card, see "the quick graph's card"
+//   below). Ruler, Compass and Protractor (U5d) are toggles, Axes
 //   (U5e) opens its settings card. A tool row is a toggle: the tool comes out on the CURRENT page, a second tap puts it away
 //   (wherever it is). The panel closes on a press anywhere but itself and its button (the pen panel's rule), on Escape
 //   and on a resize. The button is pressed (aria-pressed, .on) while any tool is out. Not role="dialog": app.js
@@ -123,6 +124,7 @@ import { CM, view, pagePoint, current } from './page.js';
 import * as ink from './ink.js';
 import { alignDir, segsOf, markOf } from './align.js';
 import { trayState } from './tray.js';
+import * as graph from './graph.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 const PI = Math.PI, TAU = 2 * PI;
@@ -157,6 +159,7 @@ const ROWS = [
   ['compass', 'Compass', ICON + '<circle cx="12" cy="4.6" r="1.6"/><path d="M11.2 6.1L7.5 19.5M12.8 6.1l3.7 13.4M8.9 14.5h6.2"/></svg>'],
   ['protractor', 'Protractor', ICON + '<path d="M3 17.5a9 9 0 0 1 18 0z"/><path d="M12 17.5v-3"/></svg>'],
   ['axes', 'Axes…', ICON + '<path d="M12 21V3M3 12h18M9.5 5.5L12 3l2.5 2.5M18.5 9.5L21 12l-2.5 2.5"/></svg>'],
+  ['graph', 'Graph…', ICON + '<path d="M5 3v18M3 15h18"/><path d="M5 7c2.2 0 3.3 8 5.5 8s3.3-8 5.5-8 2.5 3 3.5 4"/></svg>'],   // pw-v9j
 ];
 
 let btn = null, panel = null, deskEl = null;
@@ -789,6 +792,9 @@ function buildPanel() {
     else if (id === 'axes') {                                      // U5e: not a toggle: it opens the settings card (the stamp is ink)
       b.removeAttribute('aria-pressed'); b.setAttribute('aria-expanded', 'false'); b.setAttribute('aria-controls', 'axesCard');
       b.addEventListener('click', toggleCard);
+    } else if (id === 'graph') {                                   // pw-v9j: opens the Graph card; pressed while it is open (the mock's panel 1)
+      b.setAttribute('aria-expanded', 'false'); b.setAttribute('aria-controls', 'graphCard');
+      b.addEventListener('click', toggleGraphCard);
     }
     rowBtn[id] = b;
     if (id !== 'protractor') { panel.append(b); continue; }
@@ -811,7 +817,7 @@ function buildPanel() {
   document.body.append(panel);
 }
 export function openPanel() { if (!panel) return; panel.hidden = false; place(); paint(); }
-export function closePanel() { closeCard(); if (panel && !panel.hidden) panel.hidden = true; }
+export function closePanel() { closeCard(); closeGraphCard(); if (panel && !panel.hidden) panel.hidden = true; }
 function togglePanel() { if (panel.hidden) openPanel(); else closePanel(); }
 
 // ---------------------------------------------------------------- U5e: the axes stamp's settings card
@@ -934,6 +940,7 @@ function placeCard() {                                             // beside the
 }
 function openCard() {
   if (!panel || panel.hidden) return;
+  closeGraphCard();                                                // pw-v9j: one card at a time
   if (!card) buildCard();
   const o = loadAxes();
   for (const k of AX_F) fld[k].value = String(o[k]);
@@ -970,6 +977,78 @@ function placeAxes() {
   live.commit(rec);
   saveAxes();
   closeCard();
+}
+
+// ---------------------------------------------------------------- pw-v9j: the quick graph's card (_docs/PENWORKS-GRAPH-PLAN.md, Tool 1)
+// The Graph row ("Graph…", under Axes) opens a card beside the panel on the desk side, its top level with the panel's (the
+// mock's panel 1); the row looks pressed while it is open. ONE family row for now, "sin, cos, tan": six blocks (sin, −sin,
+// cos, −cos, tan, −tan), each a small computed picture with its name. A tap on a block closes the panel and the card and
+// lands that graph on the CURRENT page (js/graph.js newGraph: about a third of the page wide, 0 to 360 degrees, the y-axis at
+// the left, its middle at the middle of the part of the page she sees, kept on the page; the curve in the pen's colour and
+// width, the axes black), through ink.liveShape and its commit: ONE undo step. The card closes on its X, on Escape, with
+// the panel, and when the Axes card opens (one card at a time). A press inside it never reaches the page or the closers.
+let gcard = null;
+function buildGraphCard() {
+  gcard = document.createElement('div');
+  gcard.id = 'graphCard'; gcard.className = 'graphCard'; gcard.hidden = true;
+  gcard.setAttribute('role', 'group'); gcard.setAttribute('aria-label', 'Graph');
+  const x = document.createElement('button');
+  x.type = 'button'; x.className = 'gClose'; x.id = 'graphClose'; x.setAttribute('aria-label', 'Close the graphs');
+  x.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  x.addEventListener('click', closeGraphCard);
+  const title = document.createElement('span');
+  title.className = 'gTitle'; title.textContent = 'Graph';
+  const fam = document.createElement('div');
+  fam.className = 'gFam'; fam.textContent = 'sin, cos, tan';
+  const row = document.createElement('div');
+  row.className = 'gBlocks'; row.dataset.family = 'trig';
+  for (const k of graph.KINDS) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'gBlk'; b.id = 'gblk-' + k.replace('-', 'n'); b.dataset.kind = k;
+    b.setAttribute('aria-label', 'Place ' + graph.LABEL[k]);
+    b.innerHTML = graph.blockSvg(k) + '<b>' + graph.LABEL[k] + '</b>';
+    b.addEventListener('click', () => placeGraph(k));
+    row.append(b);
+  }
+  gcard.append(x, title, fam, row);
+  gcard.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); });   // the S Pen's button
+  document.body.append(gcard);
+}
+function placeGraphCard() {                                        // beside the panel on the desk side, its top level with the panel's, on screen
+  if (!gcard || gcard.hidden || !panel || panel.hidden) return;
+  const pb = panel.getBoundingClientRect(), w = gcard.offsetWidth, h = gcard.offsetHeight;
+  const left = document.body.classList.contains('trayLeft') ? pb.right + 8 : pb.left - 8 - w;
+  gcard.style.left = Math.max(8, Math.min(innerWidth - w - 8, left)) + 'px';
+  gcard.style.top = Math.max(8, Math.min(innerHeight - h - 8, pb.top)) + 'px';
+}
+function openGraphCard() {
+  if (!panel || panel.hidden) return;
+  closeCard();
+  if (!gcard) buildGraphCard();
+  gcard.hidden = false;
+  if (rowBtn.graph) { rowBtn.graph.setAttribute('aria-expanded', 'true'); rowBtn.graph.setAttribute('aria-pressed', 'true'); }
+  placeGraphCard();
+  try { if (document.fonts) document.fonts.load('500 18px Caveat'); } catch (e) { /* the page draws glyph outlines anyway */ }
+}
+function closeGraphCard() {
+  if (gcard && !gcard.hidden) gcard.hidden = true;
+  if (rowBtn.graph) { rowBtn.graph.setAttribute('aria-expanded', 'false'); rowBtn.graph.setAttribute('aria-pressed', 'false'); }
+}
+function toggleGraphCard() { if (gcard && !gcard.hidden) closeGraphCard(); else openGraphCard(); }
+function placeGraph(kind) {
+  const sheet = curSheet();
+  if (!sheet) { closePanel(); return; }
+  const W = parseFloat(sheet.style.width), H = parseFloat(sheet.style.height), idx = +sheet.dataset.index - 1;
+  const db = (deskEl || document.getElementById('desk')).getBoundingClientRect();
+  const a = pagePoint(idx, db.left, db.top), b = pagePoint(idx, db.right, db.bottom);   // the part of the page she sees
+  const cx = (clamp(a[0], 0, W) + clamp(b[0], 0, W)) / 2, cy = (clamp(a[1], 0, H) + clamp(b[1], 0, H)) / 2;
+  let rec = graph.newGraph(crypto.randomUUID(), sheet.dataset.id, kind, trayState().pen, W, cx, cy);
+  const bx = graph.graphGeom(rec).box, M = 8;                      // kept on the page (8 px in) when it fits
+  const dx = bx[2] - bx[0] < W - 2 * M ? clamp(0, M - bx[0], W - M - bx[2]) : 0, dy = bx[3] - bx[1] < H - 2 * M ? clamp(0, M - bx[1], H - M - bx[3]) : 0;
+  if (dx || dy) rec = { ...rec, data: { ...rec.data, x0: r2(rec.data.x0 + dx), y0: r2(rec.data.y0 + dy) } };
+  closePanel();
+  const live = ink.liveShape(sheet.dataset.id, rec);
+  if (live) live.commit(rec);
 }
 
 // ---------------------------------------------------------------- the pen (app.js asks penDown first; move and up follow)
@@ -1201,6 +1280,7 @@ export function initTools({ trayBtn, desk }) {
   // U5e: a press inside the axes card never reaches the page, the tray's closers or the menu's (calcpanel.js's rule:
   // those listen on document in the capture phase, so this stop is a capture listener on window, earlier still)
   window.addEventListener('pointerdown', (e) => { if (card && !card.hidden && card.contains(e.target)) e.stopPropagation(); }, true);
+  window.addEventListener('pointerdown', (e) => { if (gcard && !gcard.hidden && gcard.contains(e.target)) e.stopPropagation(); }, true);   // pw-v9j: the Graph card too
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePanel(); });
   window.addEventListener('resize', () => {                        // U5e: a soft keyboard for the card's fields never closes it
     if (card && !card.hidden && card.contains(document.activeElement)) { place(); placeCard(); return; }

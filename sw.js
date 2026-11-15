@@ -30,15 +30,17 @@
    pw-v9g (13 Nov): Crop: a selected picture's Crop chip (after the wand) crops it on the page with a rectangle; Done keeps a new file, one undo step.
    pw-v9h (13 Nov): the login lock: a short code is checked by the database first (migration 0008), 5 wrong tries lock the login for a while, a right code signs in with the long secret.
    pw-v9i (14 Nov): calculator.js refreshed from Blipwork: on a long line the cursor stays clear of the ◀ marker when the card is zoomed.
+   pw-v9j (15 Nov): the quick graph, unit 2: Tools, Graph… lands sin, cos or tan (and their minus) on the page; Caveat carried in fonts/.
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v9i";
+const CACHE = "pw-v9j";
 const SHARE_DB = "penworks.share";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",
   "./js/local-backend.js", "./js/page.js", "./js/ink.js", "./js/store.js", "./js/treeq.js", "./js/snap.js", "./js/live.js", "./js/tray.js", "./js/dbg.js",
   "./js/pdfin.js", "./js/pdfview.js", "./js/pdfout.js", "./js/cutout.js", "./js/crop.js",
   "./js/calc/calculator.js", "./js/calc/ui.js", "./js/calc/statlib.js", "./js/calcpanel.js", "./js/tools.js", "./js/align.js", "./css/calc.css",
+  "./js/graph.js", "./js/caveat-glyphs.js", "./fonts/caveat-500.woff2", "./fonts/OFL-Caveat.txt",
   "./icons/icon-192.png", "./icons/icon-512.png", "./vendor/pdf-lib.min.js",
   "./vendor/pdf.min.mjs", "./vendor/pdf.worker.min.mjs"];
 const CDN = ["cdn.jsdelivr.net", "fonts.googleapis.com", "fonts.gstatic.com"];

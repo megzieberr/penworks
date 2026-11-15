@@ -93,6 +93,17 @@
 // a turn leaves it exactly as it was (no new seq); no reshape handles. Recolour and restyle change its colour only (it
 // stays thin and opaque, never a highlighter). Both erasers remove it whole. The PDF (js/pdfout.js) strokes its lines and
 // writes its labels as Helvetica text. Its ends, crossing and ticks are stick points in js/tools.js (derived, not stored).
+// Quick graph (pw-v9j, unit 2 of _docs/PENWORKS-GRAPH-PLAN.md; the record and the drawing: js/graph.js's head): kind 'graph',
+// ONE record, drawn as a <g data-type="graph"> of paths (setGraph: axes, marks, asymptotes, then the curve on top). It
+// follows the axes stamp's rules: a tap on an axis, an asymptote or the curve picks it, a box touching any of them picks the
+// whole graph; a move carries the origin, a resize scales the origin about the corner and px, py by s; a turn leaves it as it
+// was; no reshape handles; both erasers remove it whole. A recolour or restyle changes its CURVES' colour only (the axes stay
+// black). Selected alone: an "Axes" pill first among the chips hides or shows the axes, marks and letters (one undo step), and
+// a round handle on the x-axis's left end (SEL.gl, grabbed within GRAB before every other grip) opens the window to the left,
+// smoothly, -360 to 0 degrees (data.axes.xl; the y-axis and the scale stay), one undo step on the lift. Her fix 15 Nov 10:32:
+// when the opened graph would cross the page's left edge the whole graph slides right just enough to stay PAGE_M inside
+// (worked out from where the drag started, so pushing back brings it back), and where sliding would push its right end off
+// the page the handle stops opening (openStart, openedTo); the window and the slide are the same one undo step.
 // Regular shapes (pw-v8g, her ask 2 Nov 16:54: "squares and triangles to come out as proper shapes ... PERFECT equalateral
 // triangles"). A held ring's corners are fitted, still a 'triangle' with 3 points or a 'rect' with 4 (fitTriangle, fitQuad):
 // a triangle with exactly one angle within 12 degrees of 90 becomes a true right triangle (the right-angle corner stays, the
@@ -156,6 +167,8 @@ import * as store from './store.js';
 import { pageAt, pagePoint, view, pageSize, CM, surfaceAt, surfacePoint, SK_COLOURS, SK_STRIP } from './page.js';
 import { bytesOf } from './pdfin.js';
 import { alignDir, segsOf, markOf, markPaths, roundAlong, lineCross, distToSeg as segGap, segCross, MEET, FADE_MS } from './align.js';
+import { graphGeom, graphParts, XL_MIN } from './graph.js';
+export { graphGeom };
 
 // snap: the pen held still this long (ms) at the end of a stroke; ?hold=400 in the address overrides it.
 // 350 is her number (29 Oct 15:30; it was 500)
@@ -212,6 +225,7 @@ const SVG_LOCK = ICON + '<rect x="5" y="11" width="14" height="10" rx="2"/><path
 const SVG_UNLOCK = ICON + '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/></svg>';  // an open one (Unlock)
 const SVG_WAND = ICON + '<path d="M4 20 14 10"/><path d="M15 3v3M13.5 4.5h3M19 7v2M18 8h2M18 13l1.2 1.2M20 11l-1 1"/></svg>';   // pw-v9e: Cut out (the mock's wand)
 const SVG_CROP = ICON + '<path d="M7 3v14h14"/><path d="M3 7h14v14"/></svg>';   // pw-v9g: Crop (two crossed corners)
+const SVG_AXES = ICON + '<path d="M12 21V3M3 12h18M9.5 5.5L12 3l2.5 2.5M18.5 9.5L21 12l-2.5 2.5"/></svg>';   // pw-v9j: the Axes pill (the Tools row's axes)
 
 const uuid = () => crypto.randomUUID();
 const r1 = (v) => Math.round(v * 10) / 10;
@@ -263,6 +277,10 @@ export function outline(rec, n = 48) {
   if (rec.kind === 'image') return imgCorners(rec);                // U4c: the turned box's four corners
   if (rec.kind === 'axes') {                                       // U5e: its box's four corners, then the axes' ends
     const a = axesGeom(rec), b = a && a.box;
+    return a ? [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]], ...a.ends] : [];
+  }
+  if (rec.kind === 'graph') {                                      // quick graph (pw-v9j): its box's four corners, then the axes' ends
+    const a = graphGeom(rec), b = a && a.box;
     return a ? [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]], ...a.ends] : [];
   }
   if (d.type === 'line' || d.type === 'arrow') return [[d.x1, d.y1], [d.x2, d.y2]];
@@ -357,7 +375,7 @@ function turn(q, c, deg) {
 }
 const nrmDeg = (a) => { const v = ((a % 360) + 540) % 360 - 180; return v === -180 ? 180 : v; };   // degrees in (-180, 180]
 const pointsOf = (rec) => (rec.kind === 'image' ? closedCorners(rec)            // U4c: the turned box, closed (its four sides are segments)
-  : rec.kind === 'shape' || rec.kind === 'axes' ? outline(rec) : ((rec.data && rec.data.points) || []));
+  : rec.kind === 'shape' || rec.kind === 'axes' || rec.kind === 'graph' ? outline(rec) : ((rec.data && rec.data.points) || []));
 // ---------------------------------------------------------------- U4c: pictures (the head's "Pictures" block)
 export const isImg = (rec) => !!rec && rec.kind === 'image';
 const isLocked = (rec) => isImg(rec) && !!(rec.data && rec.data.locked);
@@ -626,6 +644,25 @@ function setAxes(g, rec) {                                         // the stamp'
   }
   g.replaceChildren(...kids);
 }
+// pw-v9j: the quick graph's parts in drawing order (axes and ticks, heads, the marks and letters, asymptotes, curves), so a
+// number is BEHIND the curve where they meet, with no halo. The glyphs are filled outlines (never <text>), so the thumbs and
+// the shared pictures (an SVG drawn through an <img>) need no font
+function setGraph(g, rec) {
+  const kids = graphParts(rec).map((p) => {
+    const e = document.createElementNS(SVGNS, 'path');
+    e.setAttribute('class', p.cls); e.setAttribute('d', p.d || 'M0 0');
+    if (p.fill) { e.setAttribute('fill', p.fill); e.setAttribute('stroke', 'none'); }
+    else {
+      e.setAttribute('fill', 'none'); e.setAttribute('stroke', p.stroke); e.setAttribute('stroke-width', String(p.width));
+      e.setAttribute('stroke-linecap', 'round'); e.setAttribute('stroke-linejoin', 'round');
+      if (p.dash) e.setAttribute('stroke-dasharray', p.dash.map((v) => f2(v)).join(' '));
+    }
+    if (p.t) e.dataset.t = p.t;
+    if (p.i !== undefined) e.dataset.curve = String(p.i);
+    return e;
+  });
+  g.replaceChildren(...kids);
+}
 function arrowHeadPts(d, w) {                                    // an arrow along its chord, a curved arrow along its end tangent
   if (d.type === 'carrow') { const { u, L } = carrowDir(d); return headPts([d.x2, d.y2], u[0], u[1], L, w); }
   const dx = d.x2 - d.x1, dy = d.y2 - d.y1, L = Math.hypot(dx, dy) || 1;
@@ -641,6 +678,7 @@ export function arcD(d) {                                             // M start
 function setGeom(el, rec) {
   if (rec.kind === 'image') { setImg(el, rec); return; }          // U4c: the picture at its box
   if (rec.kind === 'axes') { setAxes(el, rec); return; }           // U5e: the stamp is drawn again whole
+  if (rec.kind === 'graph') { setGraph(el, rec); return; }         // pw-v9j: the quick graph is drawn again whole
   const d = rec.data;
   if ((d.type === 'arc' || d.type === 'circle') && el.tagName === 'g') {   // U5c: a compass shape: the shape, then its needle mark
     const [sh, dot] = el.children;
@@ -683,6 +721,12 @@ function makeEl(rec, hrefOf) {
     g.dataset.id = rec.id; g.dataset.type = 'axes';
     styleEl(g, rec); g.removeAttribute('stroke-dasharray');
     setAxes(g, rec);
+    return g;
+  }
+  if (rec.kind === 'graph') {                                      // pw-v9j: a <g> of paths (js/graph.js graphParts), each part its own colour
+    const g = document.createElementNS(SVGNS, 'g');
+    g.dataset.id = rec.id; g.dataset.type = 'graph'; g.setAttribute('class', 'graph');
+    setGraph(g, rec);
     return g;
   }
   const shape = rec.kind === 'shape' && rec.data && (hasNeedle(rec) ? 'g' : SHAPE_TAG[rec.data.type]);
@@ -941,10 +985,20 @@ function near(rec, x, y, reach) {
   const r2 = reach * reach;
   if (rec.kind === 'image') return inImg(rec, x, y, reach);       // U4c: inside its turned box (grown by reach)
   if (rec.kind === 'axes') { const a = axesGeom(rec); return !!a && a.lines.some((s) => segDist2(x, y, s[0], s[1]) <= r2); }   // U5e: on an axis line
+  if (rec.kind === 'graph') return graphSegs(rec).some((s) => segDist2(x, y, s[0], s[1]) <= r2);   // pw-v9j: on an axis, an asymptote or a curve
   const pts = pointsOf(rec);
   if (pts.length === 1) return (pts[0][0] - x) ** 2 + (pts[0][1] - y) ** 2 <= r2;
   for (let i = 1; i < pts.length; i++) if (segDist2(x, y, pts[i - 1], pts[i]) <= r2) return true;
   return false;
+}
+// pw-v9j: the segments of a graph a tap, an eraser or a box can meet: its axis lines (when shown), asymptotes and curves
+function graphSegs(rec) {
+  const g = graphGeom(rec), out = [];
+  if (!g) return out;
+  out.push(...g.lines);
+  for (const a of g.asym) out.push([a.a, a.b]);
+  for (const c of g.curves) for (const r of c.runs) for (let i = 1; i < r.length; i++) out.push([r[i - 1], r[i]]);
+  return out;
 }
 // where segment a-b crosses the circle (cx, cy, R): t values strictly inside (0, 1)
 function crossings(a, b, cx, cy, R) {
@@ -1433,7 +1487,7 @@ export function classify(raw) {
 // ---------------------------------------------------------------- shape handles (grab with the select tool)
 export function handles(rec) {
   const d = rec.data || {};
-  if (rec.kind === 'axes' || rec.kind === 'image') return [];     // U5e, U4c: an axes stamp and a picture have no reshape handles                              // U5e: an axes stamp has no reshape handles
+  if (rec.kind === 'axes' || rec.kind === 'image' || rec.kind === 'graph') return [];     // U5e, U4c: an axes stamp and a picture have no reshape handles                              // U5e: an axes stamp has no reshape handles
   if (d.fixed) return [];                                          // U5a: a ruler line (fixed) moves whole, its ends are never reshaped
   if (d.type === 'line' || d.type === 'arrow') return [[d.x1, d.y1], [d.x2, d.y2]];
   if (d.type === 'rect' || d.type === 'triangle') return d.points.map((q) => [q[0], q[1]]);
@@ -1528,7 +1582,7 @@ function xform(rec, f, s, rot) {
     if (rot) nd.rot = nrmDeg(r1((+d.rot || 0) + rot)) || 0;
     return { ...rec, style: { ...rec.style }, data: nd };
   }
-  if (rec.kind === 'axes') {                                       // U5e: the origin through f, px and py x s; it never turns (rot: left as it was)
+  if (rec.kind === 'axes' || rec.kind === 'graph') {               // U5e: the origin through f, px and py x s; it never turns (rot: left as it was); pw-v9j: a graph too
     if (rot) return { ...rec, style: { ...rec.style }, data: { ...d } };
     const o = f([d.x0, d.y0]), q2 = (v) => Math.round(v * 100) / 100;
     nd = { ...d, x0: q2(o[0]), y0: q2(o[1]), px: q2(d.px * s), py: q2(d.py * s) };
@@ -1589,7 +1643,7 @@ function renderSel(t) {                          // t: a live transform while dr
   SEL.g.appendChild(box);
   fillChips();
   if (SEL.locked) {                              // U4c: a locked picture: the dashed box only, no corners, no turn ring
-    SEL.rot = null;
+    SEL.rot = null; SEL.gl = null;
     if (t) SEL.g.setAttribute('transform', t); else SEL.g.removeAttribute('transform');
     SEL.box = [x0, y0, x1, y1];
     placeChips(t ? SEL.live : null);
@@ -1611,6 +1665,13 @@ function renderSel(t) {                          // t: a live transform while dr
   setAttrs(knob, { class: 'selrot', cx, cy: ry, r: 6 / z, fill: '#FFFFFF', stroke: SEL_BLUE, 'stroke-width': 1.5 / z });
   SEL.g.append(stem, knob);
   SEL.rot = [cx, ry];
+  const gr = soloGraph(), gg = gr && graphGeom(gr);                 // pw-v9j: one graph: a round handle on the x-axis's left end
+  SEL.gl = gg ? gg.left.slice() : null;
+  if (SEL.gl) {
+    const h = document.createElementNS(SVGNS, 'circle');
+    setAttrs(h, { class: 'selgl', cx: SEL.gl[0], cy: SEL.gl[1], r: 6 / z, fill: '#FFFFFF', stroke: SEL_BLUE, 'stroke-width': 1.5 / z });
+    SEL.g.appendChild(h);
+  }
   if (t) SEL.g.setAttribute('transform', t); else SEL.g.removeAttribute('transform');
   SEL.box = [x0, y0, x1, y1];
   placeChips(t ? SEL.live : null);
@@ -1655,7 +1716,8 @@ function makeSel(page, ids) {
 function fillChips() {
   const recs = selRecs(), pic = recs.some(isImg), locked = recs.some(isLocked), solo = recs.length === 1 && pic && !locked;
   const one = solo && !!cutOut, crop = solo && !!cropIt;
-  const key = (pic ? 'p' : '-') + (locked ? 'l' : '-') + (one ? 'c' : '-') + (crop ? 'k' : '-');
+  const graphs = recs.filter(isGraph), axesOn = graphs.some(graphAxesOn);   // pw-v9j: the Axes pill while a graph is selected
+  const key = (pic ? 'p' : '-') + (locked ? 'l' : '-') + (one ? 'c' : '-') + (crop ? 'k' : '-') + (graphs.length ? (axesOn ? 'A' : 'a') : '-');
   SEL.locked = locked;
   if (SEL.ckey === key) return;
   SEL.ckey = key;
@@ -1673,6 +1735,58 @@ function fillChips() {
   if (pic) chip('lock', locked ? 'Unlock' : 'Lock', locked ? SVG_UNLOCK : SVG_LOCK, lockSel);
   if (one) chip('cutout', 'Cut out', SVG_WAND, cutoutSel);
   if (crop) chip('crop', 'Crop', SVG_CROP, cropSel);
+  if (graphs.length) {                            // pw-v9j: a pill with its word (the mock's panel 3), first in the row
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'chip gchip'; btn.dataset.act = 'axes';
+    btn.innerHTML = SVG_AXES + '<span>Axes</span>';
+    btn.setAttribute('aria-pressed', axesOn ? 'true' : 'false'); btn.title = axesOn ? 'Hide the axes' : 'Show the axes';
+    btn.addEventListener('click', (e) => { e.stopPropagation(); axesSel(); });
+    chips.prepend(btn);
+  }
+}
+// pw-v9j: quick graph helpers. The Axes pill: one tap hides the axes, their marks and letters on every selected graph (any
+// shown), the next shows them again; one undo step; the selection stays
+const isGraph = (r) => !!r && r.kind === 'graph';
+const graphAxesOn = (r) => !(r.data && r.data.axes && r.data.axes.on === false);
+function axesSel() {
+  if (!SEL) return;
+  const to = !selRecs().filter(isGraph).some(graphAxesOn);
+  changeSel((r) => (isGraph(r) && graphAxesOn(r) !== to ? { ...r, style: { ...r.style }, data: { ...r.data, axes: { ...r.data.axes, on: to } } } : null));
+}
+// the one selected graph (unlocked selection of exactly one graph), else null: it has the left handle
+function soloGraph() {
+  if (!SEL || SEL.locked || SEL.ids.size !== 1) return null;
+  const r = selRecs()[0];
+  return isGraph(r) ? r : null;
+}
+// the graph rec with its window's left end at deg degrees (rounded to 0.01 degree), nothing else changed
+const PAGE_M = 8;                // pw-v9j (her fix 15 Nov 10:32): an opened graph keeps this many page px inside the page
+function withXl(rec, deg) {
+  const d = rec.data;
+  return { ...rec, style: { ...rec.style }, data: { ...d, axes: { ...d.axes, xl: Math.round(deg * 100) / 100 || 0 } } };
+}
+// at the start of a left-handle drag on rec (page width W): lim, the leftmost page x anything drawn may reach (the margin,
+// or where it already was if it hung further out); floor, the furthest left the window may open so that, slid right to
+// lim, its right end (the head, the letter x) still stays inside W less the margin (or where it already reached)
+function openStart(rec, W) {
+  const g0 = graphGeom(rec);
+  if (!W || !g0) return { lim: -Infinity, floor: XL_MIN };
+  const lim = Math.min(PAGE_M, g0.box[0]), rlim = Math.max(W - PAGE_M, g0.box[2]), xl0 = g0.xl;
+  const ok = (deg) => { const g = graphGeom(withXl(rec, deg)); if (!g) return false; const s = Math.max(0, lim - g.box[0]); return s === 0 || g.box[2] + s <= rlim; };
+  if (ok(XL_MIN)) return { lim, floor: XL_MIN };
+  let lo = XL_MIN, hi = xl0;                                       // ok(xl0): it fits where it is (no slide needed there)
+  for (let k = 0; k < 30; k++) { const m = (lo + hi) / 2; if (ok(m)) hi = m; else lo = m; }
+  return { lim, floor: Math.min(xl0, Math.ceil(hi * 100) / 100) };
+}
+// the graph rec with its window's left end at page x, worked out from rec (where the drag started) every time: degrees
+// from rec's own origin, no snapping, floor (o.floor, else -360) to 0; then the whole graph slid right just as far as its
+// leftmost drawn thing needs to stay at o.lim (the y-axis back where it started whenever it fits)
+function openedTo(rec, x, o) {
+  const d = rec.data, floor = o ? Math.max(XL_MIN, o.floor) : XL_MIN;
+  const r = withXl(rec, Math.max(floor, Math.min(0, (x - d.x0) / d.px * 90)));
+  const g = o && graphGeom(r), s = g ? o.lim - g.box[0] : 0;
+  if (s > 0) r.data = { ...r.data, x0: Math.ceil((d.x0 + s) * 100) / 100 };
+  return r;
 }
 // pw-v9g: the Crop chip: crop mode on the one selected picture (a copy of its record); crop.js clears the selection
 function cropSel() {
@@ -1880,6 +1994,10 @@ function inBox(id, b) {
       if (a && a.lines.some((s) => segInBox(s[0], s[1], B))) out.push(r.id);
       continue;
     }
+    if (r.kind === 'graph') {                                      // pw-v9j: an axis, an asymptote or a curve inside or crossing the box
+      if (graphSegs(r).some((s) => segInBox(s[0], s[1], B))) out.push(r.id);
+      continue;
+    }
     const pts = pointsOf(r);
     let hit = pts.some(([x, y]) => x >= B[0] && x <= B[2] && y >= B[1] && y <= B[3]);
     for (let i = 1; !hit && i < pts.length; i++) hit = segInBox(pts[i - 1], pts[i], B);
@@ -1917,13 +2035,20 @@ function changeSel(fn) {
   return true;
 }
 export function recolourSelection(c) {          // colour only: width, dash, opacity and geometry stay (U4c: never a picture)
-  return changeSel((r) => (isImg(r) || same((r.style || {}).colour, c) ? null : { ...r, style: { ...r.style, colour: c } }));
+  return changeSel((r) => (isImg(r) ? null : r.kind === 'graph' ? graphColour(r, c) : same((r.style || {}).colour, c) ? null : { ...r, style: { ...r.style, colour: c } }));
+}
+// pw-v9j: a graph's axes stay black (her ruling 15 Nov): a new colour goes to its curves only
+function graphColour(r, c) {
+  const cs = (r.data && r.data.curves) || [];
+  if (cs.every((k) => same(k.colour, c))) return null;
+  return { ...r, style: { ...r.style }, data: { ...r.data, curves: cs.map((k) => ({ ...k, colour: c })) } };
 }
 export function restyleSelection() { return changeSel(restyled); }   // the full restyle rule
 
 // ---------------------------------------------------------------- restyle: its own colour, the matching tool's width and opacity; restyle never changes the dash
 function restyled(r) {
   if (isImg(r)) return null;                                       // U4c: restyle never touches a picture
+  if (r.kind === 'graph') return graphColour(r, (ST.restyle && ST.restyle.colour) || ST.pen.colour);   // pw-v9j: its curves' colour only
   if (r.kind === 'axes') {                                         // U5e: colour only; an axes stays thin, solid and opaque
     const c2 = (ST.restyle && ST.restyle.colour) || ST.pen.colour;
     return same((r.style || {}).colour, c2) ? null : { ...r, style: { ...r.style, colour: c2 } };
@@ -2205,6 +2330,16 @@ function down(e) {
     return true;
   }
   if (T.tool === 'select') {                                       // first match wins (pw-v7m): ring, corner (from outside), inside the box, shape handle, a new box
+    // pw-v9j: before all of them, the one selected graph's left handle (within GRAB): it opens the x-axis to the left
+    if (SEL && SEL.gl && SEL.page === at.id && Math.hypot(SEL.gl[0] - at.x, SEL.gl[1] - at.y) <= GRAB / z) {
+      const rec = soloGraph();
+      if (rec) {
+        G = { kind: 'gopen', index: at.index, page: at.id, rec, now: rec, el: d.els.get(rec.id), off: SEL.gl[0] - at.x, o: openStart(rec, d.w) };
+        for (const k of SEL.g.children) if (!k.classList.contains('selgl')) k.style.visibility = 'hidden';
+        SEL.chips.style.visibility = 'hidden';
+        return true;
+      }
+    }
     const grip = selGrip(at, z);
     if (grip === 'rot') {                                          // the ring: turn about the box's centre
       const b = SEL.box, c = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
@@ -2242,7 +2377,7 @@ function down(e) {
 // the live preview while the selection is dragged: each selected path is redrawn from its record put through the
 // gesture (no transform on the ink, so its width never changes); the records change on lift. The box and its
 // handles ride a transform; the chips ride a move or a resize and hide during a turn
-function redraw(el, rec) { if (rec.kind === 'shape' || rec.kind === 'axes' || rec.kind === 'image') setGeom(el, rec); else el.setAttribute('d', dOf(rec)); }
+function redraw(el, rec) { if (rec.kind === 'shape' || rec.kind === 'axes' || rec.kind === 'graph' || rec.kind === 'image') setGeom(el, rec); else el.setAttribute('d', dOf(rec)); }
 function liveSel(g) {
   const d = data(g.page), [f, s, rot] = selXf(g);
   for (const r of g.recs) { const el = d.els.get(r.id); if (el) redraw(el, xform(r, f, s, rot)); }
@@ -2293,6 +2428,14 @@ function move(events) {
     return;
   }
   if (G.kind === 'snapped' || G.kind === 'still') return;         // a snapped shape stays put until the pen lifts (U4c: 'still', a locked picture)
+  if (G.kind === 'gopen') {                                        // pw-v9j: the left end follows the pen across (smooth, -360 to 0)
+    const [x] = surfacePoint(G.index, ev.clientX, ev.clientY);
+    G.now = openedTo(G.rec, x + G.off, G.o);
+    if (G.el) setGeom(G.el, G.now);
+    const h = SEL && SEL.g.querySelector('.selgl'), gg = graphGeom(G.now);
+    if (h && gg) h.setAttribute('cx', f1(gg.left[0]));
+    return;
+  }
   if (G.kind === 'grab') {
     const [x, y] = surfacePoint(G.index, ev.clientX, ev.clientY);
     for (const e of events) {                                      // how far the pen ever got from where it landed (the tap rule)
@@ -2357,6 +2500,12 @@ function up(e, cancelled) {
     doOp(changeOp([{ page: g.page, removed: [], added: [g.rec] }]));   // a snap is one step: the shape
     return;
   }
+  if (g.kind === 'gopen') {                                        // pw-v9j: one undo step (same id and seq), the selection stays
+    if (SEL) SEL.chips.style.visibility = '';
+    if (cancelled || (g.now.data.axes.xl === g.rec.data.axes.xl && g.now.data.x0 === g.rec.data.x0)) { if (g.el) setGeom(g.el, g.rec); if (SEL) renderSel(); return; }
+    doOp(changeOp([{ page: g.page, removed: [g.rec], added: [g.now] }]));
+    return;
+  }
   if (g.kind === 'grab') {
     hideHandle();
     if (g.mark) { fadeAlignMark(g.mark); g.mark = null; }          // U5g: the square fades out
@@ -2390,7 +2539,7 @@ function up(e, cancelled) {
     if (cancelled || same) return;                                 // a tap or a 0 px drag: nothing changes, no reorder
     // the changed selection comes to the front: fresh seq values after every stroke on the page, in its own order
     // U5e: a turn leaves an axes stamp exactly as it was (no new seq either)
-    const recs = (g.kind === 'srotate' ? g.recs.filter((r) => r.kind !== 'axes') : g.recs).filter((r) => !isLocked(r));   // U4c: a locked picture never moves
+    const recs = (g.kind === 'srotate' ? g.recs.filter((r) => r.kind !== 'axes' && r.kind !== 'graph') : g.recs).filter((r) => !isLocked(r));   // U4c: a locked picture never moves
     if (!recs.length) return;
     if (g.kind === 'smove' && toOtherPage(g, e, recs)) return;
     const [f, s, rot] = selXf(g), all = data(g.page).strokes, top = all.length ? all[all.length - 1].seq : 0;

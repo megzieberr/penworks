@@ -151,7 +151,7 @@ try:
         check("a tap opens the panel", p and p["shown"], p)
         check("the panel is role=group (not a dialog: overlayOpen must not see it), aria-label 'Tools'",
               pg.get_attribute("#toolsPanel", "role") == "group" and pg.get_attribute("#toolsPanel", "aria-label") == "Tools")
-        check("four rows in order: Ruler, Compass, Protractor, Axes…", [r[0] for r in rows] == ["Ruler", "Compass", "Protractor", "Axes…"], rows)
+        check("five rows in order: Ruler, Compass, Protractor, Axes…, Graph… (pw-v9j)", [r[0] for r in rows] == ["Ruler", "Compass", "Protractor", "Axes…", "Graph…"], rows)
         check("all four rows are live (U5b, U5d, U5e); the three tools unpressed; Axes… is no toggle (no aria-pressed)",
               all(r[1] is False and r[2] == "" for r in rows) and all(r[3] == "false" for r in rows[:3]) and rows[3][3] is None, rows)
         check("right tray: the panel sits on the desk side, 8 px left of the tray, level with its button",
@@ -505,7 +505,7 @@ try:
         open_note(pg)
         pg.click("#drawToolsBtn"); pg.wait_for_timeout(60)
         rows = pg.evaluate("[...document.querySelectorAll('#toolsPanel .trow')].map((b) => b.getAttribute('aria-pressed'))")
-        check("reopened: no tool out, every tool row unpressed (Axes… is no toggle)", R(pg) is None and pg.locator("svg.toolLayer").count() == 0 and rows == ["false"] * 3 + [None], rows)
+        check("reopened: no tool out, every tool row unpressed (Axes… is no toggle)", R(pg) is None and pg.locator("svg.toolLayer").count() == 0 and rows == ["false"] * 3 + [None, "false"], rows)   # pw-v9j: Graph… unpressed (pressed only while its card is open)
         close_panel(pg)
         check("the fixed lines are still there after the reopen (saved like any ink)", len(recs(pg)) == 3, len(recs(pg)))
         check("no page errors", not errs, errs)
