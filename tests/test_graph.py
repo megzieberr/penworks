@@ -74,6 +74,10 @@ HELP = """async () => {
       parts: kids.map((k) => ({ cls: k.getAttribute('class'), t: k.dataset.t || null, stroke: k.getAttribute('stroke'), fill: k.getAttribute('fill'),
         width: k.getAttribute('stroke-width'), dash: k.getAttribute('stroke-dasharray'), tag: k.tagName, dl: (k.getAttribute('d') || '').length })),
       texts: g.querySelectorAll('text').length }; };
+  T.sgeo = (rid) => { const r = T.recs('s0').find((x) => x.id === rid); if (!r) return null;   // pw-v9k: an axes stamp and the curves it carries
+    const s = window.__GR.stampGeom(r), a = window.__pw.ink.axesGeom(r);
+    return { box: a && a.box, asym: s ? s.asym.map((q) => q.x) : [], runs: s ? s.curves.map((c) => c.runs.map((u) => [u[0], u[u.length - 1], u.length])) : [],
+      ys: s ? s.curves.map((c) => c.runs.flat().map((q) => q[1])) : [], xs: s ? s.curves.map((c) => c.runs.flat().map((q) => q[0])) : [] }; };
   T.vis = (idx) => { const b = document.getElementById('desk').getBoundingClientRect(), a = window.__P.pagePoint(idx, b.left, b.top), c = window.__P.pagePoint(idx, b.right, b.bottom);
     const cx = (v) => Math.max(0, Math.min(794, v)), cy = (v) => Math.max(0, Math.min(1123, v));
     return [cx(a[0]), cy(a[1]), cx(c[0]), cy(c[1])]; };
@@ -498,6 +502,322 @@ try:
         e = el(pg, keep["id"])
         check("... and drawn: 8 marks, the curve last", e and [p["cls"] for p in e["parts"]].count("num") == 8 and e["parts"][-1]["cls"] == "curve", e and [p["cls"] for p in e["parts"]])
 
+        # ------------------------------------------------------------ H: unit 2b (pw-v9k): a second curve on the same axes, a curve on her axes stamp
+        group[0] = "H. 2b: add to a graph"
+        SH2 = ROOT / "_build" / "graph" / "unit2b"
+        PINK = "#FF0C84"
+        sws = pg.evaluate("[...document.querySelectorAll('#tray .sw')].map((b) => b.dataset.colour)")
+        THIRD = [c for c in sws if c.lower() not in (BLUE.lower(), PINK.lower(), "#000000")][0]
+        def pen_colour(c):
+            pg.click("#tool-pen"); pg.wait_for_timeout(30); pg.click(f'#tray .sw[data-colour="{c}"]'); pg.wait_for_timeout(40)
+        def pick(bx):
+            pg.click("#tool-select"); pg.wait_for_timeout(40); box_select(pg, bx)
+        def tap(kind):
+            open_gcard(pg); pg.click(bid(kind)); pg.wait_for_timeout(80)
+        def sgeo(i): return pg.evaluate("(i) => window.__T.sgeo(i)", i)
+        def gys(i): return pg.evaluate("""(i) => { const r = window.__T.recs('s0').find((x) => x.id === i); const g = window.__pw.ink.graphGeom(r);
+            return g.curves.map((c) => c.runs.flat().map((q) => q[1])); }""", i)
+        def axrecs(): return [r for r in recs(pg) if r["kind"] == "axes"]
+        def shot2(name, bx, top=150, bottom=110):
+            show(pg, [(bx[0] + bx[2]) / 2, (bx[1] + bx[3]) / 2])
+            tl = pg.evaluate("([x, y]) => window.__T.client('s0', x, y)", [bx[0], bx[1]]); br = pg.evaluate("([x, y]) => window.__T.client('s0', x, y)", [bx[2], bx[3]])
+            y0 = max(0, tl[1] - top); y1 = min(800, br[1] + bottom); w = 900; x0 = max(0, min(1280 - w, (tl[0] + br[0]) / 2 - w / 2))
+            SH2.mkdir(parents=True, exist_ok=True); pg.screenshot(path=str(SH2 / name), clip={"x": x0, "y": y0, "width": w, "height": y1 - y0})
+        def nonum_before_curve(parts):
+            cls = [p["cls"] for p in parts]
+            return "curve" in cls and all(i < cls.index("curve") for i, c in enumerate(cls) if c in ("num", "letter", "axis", "head"))
+
+        # tan added to a sin graph: clipped by the sin window; sin added to a tan graph sits in tan's taller window
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        land(pg, "sin"); gid = graphs(pg)[0]["id"]; d0 = graphs(pg)[0]["data"]
+        pen_colour(PINK); pick(geo(pg, gid)["box"])
+        check("a box picks the sin graph", sel(pg) and sel(pg)["ids"] == [gid], sel(pg))
+        open_gcard(pg)
+        check("opening Tools, Graph… keeps the selection alive (the card shows, the graph still selected)", gcard_shown(pg) and sel(pg) and sel(pg)["ids"] == [gid], sel(pg))
+        pg.click(bid("tan")); pg.wait_for_timeout(80)
+        r = graphs(pg); dd = r[0]["data"]
+        check("tan tapped with the sin graph selected: still ONE record (same id); tan ADDED as the second curve, in the pen's colour at the tap (pink)",
+              len(recs(pg)) == 1 and r[0]["id"] == gid and [c["kind"] for c in dd["curves"]] == ["sin", "tan"] and dd["curves"][1]["colour"].lower() == PINK.lower()
+              and dd["curves"][1] == {"kind": "tan", "colour": dd["curves"][1]["colour"], "width": pen_w, "dx": 0, "dy": 0, "sx": 1, "sy": 1}, dd["curves"])
+        check("... the window, size and place unchanged (x0, y0, px, py, axes as landed: sin's 1.35)", {k: v for k, v in dd.items() if k != "curves"} == {k: v for k, v in d0.items() if k != "curves"}, dd)
+        g = geo(pg, gid); ys = gys(gid)
+        check("... tan brings its dashed asymptotes at 90° and 270°; tan is simply clipped by the sin window (every point within ±1.35)",
+              g["asym"] == [d0["x0"] + d0["px"], d0["x0"] + 3 * d0["px"]] and all(abs(y - d0["y0"]) <= 1.35 * d0["py"] + 0.02 for y in ys[1]) and len(g["runs"][1]) == 3, [g["asym"], len(g["runs"][1])])
+        check("... the panel and the card closed; the graph stays selected", not panel_shown(pg) and not gcard_shown(pg) and sel(pg) and sel(pg)["ids"] == [gid])
+        shot2("a3-sin-tan.png", sel(pg)["box"])
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        land(pg, "tan"); gid = graphs(pg)[0]["id"]; d0 = graphs(pg)[0]["data"]
+        pick(geo(pg, gid)["box"]); tap("sin")
+        dd = graphs(pg)[0]["data"]
+        check("sin added to a tan graph sits in tan's taller window (yh stays 2.6, nothing else moves)",
+              [c["kind"] for c in dd["curves"]] == ["tan", "sin"] and dd["axes"]["yh"] == 2.6 and {k: v for k, v in dd.items() if k != "curves"} == {k: v for k, v in d0.items() if k != "curves"}, dd)
+
+        # sin with cos over it
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        land(pg, "sin"); gid = graphs(pg)[0]["id"]; d0 = graphs(pg)[0]["data"]
+        pen_colour(PINK); pick(geo(pg, gid)["box"]); tap("cos")
+        dd = graphs(pg)[0]["data"]; d1 = dd
+        check("cos added to sin: curves sin (Blue) then cos (pink), one record", len(recs(pg)) == 1 and [(c["kind"], c["colour"].lower()) for c in dd["curves"]] == [("sin", BLUE.lower()), ("cos", PINK.lower())], dd["curves"])
+        parts = el(pg, gid)["parts"]; cv = [p for p in parts if p["cls"] == "curve"]
+        check("drawn in the order added, newest on top: two curve paths last, cos (pink) the very last; every mark, letter and axis BEHIND both",
+              len(cv) == 2 and parts[-1]["cls"] == "curve" and parts[-1]["stroke"].lower() == PINK.lower() and parts[-2]["stroke"] == BLUE and nonum_before_curve(parts), [(p["cls"], p["stroke"]) for p in parts])
+        undo(pg)
+        check("ONE undo takes the cos away (the graph as it landed); the graph stays", graphs(pg)[0]["data"] == d0 and len(recs(pg)) == 1, graphs(pg)[0]["data"]["curves"])
+        pg.click("#redoBtn"); pg.wait_for_timeout(60)
+        check("... redo puts it back", graphs(pg)[0]["data"] == d1)
+        if not (sel(pg) and sel(pg)["ids"] == [gid]): pick(geo(pg, gid)["box"])
+        tap("cos")
+        check("cos tapped again (already on those axes): nothing changes", graphs(pg)[0]["data"] == d1 and len(recs(pg)) == 1, graphs(pg)[0]["data"]["curves"])
+        tap("sin")
+        check("sin tapped (already there, now with a pink pen): nothing changes either (no stacked duplicate)", graphs(pg)[0]["data"] == d1)
+        undo(pg)
+        check("... and no undo step was made: the next undo takes the cos away", graphs(pg)[0]["data"] == d0)
+        pg.click("#redoBtn"); pg.wait_for_timeout(60)
+        if not (sel(pg) and sel(pg)["ids"] == [gid]): pick(geo(pg, gid)["box"])
+        shot2("a1-sin-cos.png", sel(pg)["box"])
+        pg.click(f'#tray .sw[data-colour="{THIRD}"]'); pg.wait_for_timeout(60)
+        cs = graphs(pg)[0]["data"]["curves"]
+        check("a colour tap with the two-curve graph selected recolours only the NEWEST curve (cos); sin stays Blue", cs[0]["colour"] == BLUE and cs[1]["colour"].lower() == THIRD.lower(), cs)
+        undo(pg)
+        check("... one undo step", graphs(pg)[0]["data"] == d1)
+        pg.click(".selChips .chip.gchip"); pg.wait_for_timeout(60)
+        e1 = el(pg, gid)
+        check("the Axes pill hides the axes, marks and letters; both curves stay", graphs(pg)[0]["data"]["axes"]["on"] is False and [p["cls"] for p in e1["parts"]] == ["curve", "curve"], [p["cls"] for p in e1["parts"]])
+        shot2("a4-axes-hidden.png", sel(pg)["box"])
+        pg.click(".selChips .chip.gchip"); pg.wait_for_timeout(60)
+        check("... and shows them again", graphs(pg)[0]["data"]["axes"]["on"] is True)
+        undo(pg); undo(pg)
+        sb = sel(pg)["box"]; st = [d1["x0"] + 2 * d1["px"], d1["y0"] + 0.5 * d1["py"]]
+        pen(pg, [st, addv(st, [20, 15]), addv(st, [40, 30])]); pg.wait_for_timeout(60)
+        dm = graphs(pg)[0]["data"]
+        check("a move carries the whole graph, both curves with it (x0, y0 + (40, 30); curves and window unchanged)",
+              abs(dm["x0"] - d1["x0"] - 40) < 0.011 and abs(dm["y0"] - d1["y0"] - 30) < 0.011 and dm["curves"] == d1["curves"] and dm["axes"] == d1["axes"], dm)
+        gm = geo(pg, gid)
+        check("... both curves drawn at the new place (sin from the new origin, cos from 1 above it)",
+              dist(gm["runs"][0][0][0], [dm["x0"], dm["y0"]]) < 0.05 and dist(gm["runs"][1][0][0], [dm["x0"], dm["y0"] - dm["py"]]) < 0.05, [gm["runs"][0][0][0], gm["runs"][1][0][0]])
+        zz = z(pg); sb = sel(pg)["box"]; pad = 4 / zz
+        o, c = [sb[0] - pad, sb[1] - pad], [sb[2] + pad, sb[3] + pad]
+        u = subv(c, o); L = math.hypot(*u); u = [u[0] / L, u[1] / L]
+        st = addv(c, [u[0] * 5 / zz, u[1] * 5 / zz]); sc = 1.25
+        pen(pg, [st, addv(st, [(c[0] - o[0]) * (sc - 1) / 2, (c[1] - o[1]) * (sc - 1) / 2]), addv(st, [(c[0] - o[0]) * (sc - 1), (c[1] - o[1]) * (sc - 1)])]); pg.wait_for_timeout(60)
+        dr = graphs(pg)[0]["data"]; gr2 = geo(pg, gid)
+        check("a resize scales all of it, both curves too (px x 1.25; cos still from 1 above the origin at the new scale)",
+              abs(dr["px"] / dm["px"] - sc) < 0.002 and dr["curves"] == d1["curves"] and dist(gr2["runs"][1][0][0], [dr["x0"], dr["y0"] - dr["py"]]) < 0.05, dr)
+        undo(pg); undo(pg)
+        check("... two undos: back where it was", graphs(pg)[0]["data"] == d1)
+        hl = geo(pg, gid)["left"]
+        pen(pg, [hl, addv(hl, [-2 * d1["px"], 0]), addv(hl, [-6 * d1["px"], 0])]); pg.wait_for_timeout(60)
+        d2 = graphs(pg)[0]["data"]; g2 = geo(pg, gid); X = lambda deg: d2["x0"] + deg / 90 * d2["px"]
+        check("the left handle opens the window to -360 with two curves on it", d2["axes"]["xl"] == -360 and d2["curves"] == d1["curves"], d2["axes"])
+        check("... EVERY curve fills the opened window: sin from (-360°, 0), cos from (-360°, 1), both to 360°",
+              dist(g2["runs"][0][0][0], [X(-360), d2["y0"]]) < 0.05 and dist(g2["runs"][1][0][0], [X(-360), d2["y0"] - d2["py"]]) < 0.05
+              and abs(g2["runs"][0][-1][1][0] - X(360)) < 0.05 and abs(g2["runs"][1][-1][1][0] - X(360)) < 0.05, [g2["runs"][0][0][0], g2["runs"][1][0][0]])
+        p2 = el(pg, gid)["parts"]
+        check("... the 8 marks still sit BEHIND both curves", [p["cls"] for p in p2].count("num") == 8 and nonum_before_curve(p2) and [p["cls"] for p in p2][-2:] == ["curve", "curve"])
+        shot2("a2-sin-cos-minus360.png", sel(pg)["box"])
+        th = pg.evaluate("(i) => window.__T.el(i, window.__pw.ink.thumbSvg('s0'))", gid)
+        check("the page thumb (thumbSvg) carries both curves, cos last in pink", th and [p["cls"] for p in th["parts"]][-2:] == ["curve", "curve"] and th["parts"][-1]["stroke"].lower() == PINK.lower(), th and [p["cls"] for p in th["parts"]])
+        undo(pg)
+        check("one undo closes the window again (the curves stay)", graphs(pg)[0]["data"] == d1)
+
+        group[0] = "H. 2b: anything else lands a new graph"
+        clear_sel(pg); tap("cos")
+        check("nothing selected: a block tap lands a NEW graph, as before (two graphs now; the first unchanged)", len(graphs(pg)) == 2 and graphs(pg)[0]["data"] == d1, len(graphs(pg)))
+        g_new = [x for x in graphs(pg) if x["id"] != gid][0]
+        check("... the new one holds just its own curve", [c["kind"] for c in g_new["data"]["curves"]] == ["cos"])
+        undo(pg)
+        land(pg, "-cos"); gid2 = [x for x in graphs(pg) if x["id"] != gid][0]["id"]
+        pg.click("#tool-select"); pg.wait_for_timeout(30)
+        bA, bB = geo(pg, gid)["box"], geo(pg, gid2)["box"]
+        box_select(pg, [min(bA[0], bB[0]), min(bA[1], bB[1]), max(bA[2], bB[2]), max(bA[3], bB[3])])
+        two = sel(pg)
+        tap("tan")
+        check("two graphs selected: a NEW graph lands; neither selected graph changes", two and len(two["ids"]) == 2 and len(graphs(pg)) == 3
+              and graphs(pg)[0]["data"] == d1 and len([x for x in graphs(pg) if x["id"] == gid2][0]["data"]["curves"]) == 1, [two, len(graphs(pg))])
+        undo(pg); undo(pg)
+        clear_sel(pg); pg.click("#tool-pen"); pg.wait_for_timeout(30)
+        vis = pg.evaluate("window.__T.vis(0)")
+        sx_, sy_ = vis[0] + 30, vis[1] + 30
+        pen(pg, [[sx_, sy_], [sx_ + 30, sy_ + 10], [sx_ + 60, sy_ + 4]]); pg.wait_for_timeout(60)
+        stroke_ = [x for x in recs(pg) if x["kind"] not in ("graph", "axes")]
+        pick([sx_, sy_ - 2, sx_ + 60, sy_ + 12])
+        one = sel(pg)
+        tap("sin")
+        check("a pen stroke alone selected: a NEW graph lands; the stroke and the old graph are unchanged",
+              stroke_ and one and one["ids"] == [stroke_[0]["id"]] and len(graphs(pg)) == 2 and graphs(pg)[0]["data"] == d1, [one, len(graphs(pg))])
+
+        # ------------------------------------------------------------ B: a curve on her own axes stamp
+        group[0] = "H. 2b: a curve on her axes stamp"
+        def place_stamp(v, deg, line=False):
+            open_panel(pg)
+            if pg.locator("#axesCard").count() == 0 or pg.locator("#axesCard").is_hidden(): pg.click("#trow-axes"); pg.wait_for_timeout(60)
+            if pg.is_checked("#ax-deg") != deg: pg.click("#ax-deg"); pg.wait_for_timeout(30)
+            if pg.is_checked("#ax-line") != line: pg.click("#ax-line"); pg.wait_for_timeout(30)
+            for k, x in zip(["xs", "xe", "xd"] if line else ["xs", "xe", "xd", "ys", "ye", "yd"], v): pg.fill(f"#ax-{k}", str(x))
+            pg.click("#axesPlace"); pg.wait_for_timeout(80)
+            return axrecs()[-1]
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour("#000000")
+        st0 = place_stamp([0, 360, 90, -2, 2, 1], True); sid = st0["id"]; sd = st0["data"]
+        check("her stamp placed from the Axes card (Degrees on, 0 to 360 by 90, -2 to 2 by 1)", sd["deg"] is True and sd["xe"] == 360 and sd["ye"] == 2 and "curves" not in sd, sd)
+        e_before = el(pg, sid)
+        pen_colour(PINK); pick(sgeo(sid)["box"])
+        check("a box picks the stamp", sel(pg) and sel(pg)["ids"] == [sid], sel(pg))
+        tap("cos")
+        a1 = axrecs()
+        check("cos tapped with the stamp selected: NO new graph; still ONE record, the same stamp (kind axes, same id, style untouched)",
+              len(recs(pg)) == 1 and len(a1) == 1 and a1[0]["id"] == sid and a1[0]["style"] == st0["style"], [x["kind"] for x in recs(pg)])
+        sd1 = a1[0]["data"]
+        check("... the curve is stored IN the stamp's data (data.curves: cos in pink), every other number of the stamp unchanged",
+              {k: v for k, v in sd1.items() if k != "curves"} == sd and [(c["kind"], c["colour"].lower()) for c in sd1["curves"]] == [("cos", PINK.lower())], sd1)
+        e1 = el(pg, sid)
+        check("... her stamp draws exactly as before (same lines, ticks, heads and text, no degree glyphs, no Caveat letters), the curve added LAST, in pink",
+              e1["parts"][:-1] == e_before["parts"] and e1["texts"] == e_before["texts"] and e1["parts"][-1]["cls"] == "curve" and e1["parts"][-1]["stroke"].lower() == PINK.lower()
+              and not any(p["cls"] in ("num", "letter") and p["tag"] == "path" for p in e1["parts"]), [len(e_before["parts"]), len(e1["parts"])])
+        sg = sgeo(sid); SX = lambda deg: sd["x0"] + deg / 90 * sd["px"]; SY = lambda v: sd["y0"] - v * sd["py"]
+        check("... Degrees on: the curve follows the stamp's own scale exactly: from (0°, 1) to (360°, 1), through (180°, -1)",
+              dist(sg["runs"][0][0][0], [SX(0), SY(1)]) < 0.05 and dist(sg["runs"][0][-1][1], [SX(360), SY(1)]) < 0.05
+              and min(abs(x - SX(180)) + abs(y - SY(-1)) for x, y in zip(sg["xs"][0], sg["ys"][0])) < 0.6, sg["runs"])
+        check("... the stamp stays selected; the panel closed", sel(pg) and sel(pg)["ids"] == [sid] and not panel_shown(pg))
+        undo(pg)
+        check("ONE undo takes the curve off her stamp (the stamp as placed)", len(recs(pg)) == 1 and axrecs()[0]["data"] == sd and el(pg, sid)["parts"] == e_before["parts"])
+        pg.click("#redoBtn"); pg.wait_for_timeout(60)
+        check("... redo puts it back", axrecs()[0]["data"] == sd1)
+        if not (sel(pg) and sel(pg)["ids"] == [sid]): pick(sgeo(sid)["box"])
+        tap("cos")
+        check("cos tapped again: nothing changes", axrecs()[0]["data"] == sd1 and len(recs(pg)) == 1)
+        undo(pg)
+        check("... and no undo step was made (the next undo takes the curve off)", axrecs()[0]["data"] == sd)
+        pg.click("#redoBtn"); pg.wait_for_timeout(60)
+        if not (sel(pg) and sel(pg)["ids"] == [sid]): pick(sgeo(sid)["box"])
+        shot2("b1-stamp-cos.png", sel(pg)["box"])
+        clear_sel(pg); pen_colour(BLUE); pick(sgeo(sid)["box"]); tap("tan")
+        sd2 = axrecs()[0]["data"]; sg2 = sgeo(sid)
+        check("a second block tap with the stamp still selected adds a second curve (tan in Blue), same rules",
+              [(c["kind"], c["colour"]) for c in sd2["curves"]] == [("cos", sd1["curves"][0]["colour"]), ("tan", BLUE)] and len(recs(pg)) == 1, sd2["curves"])
+        check("... tan brings its dashed black asymptotes at 90° and 270°, cut to the stamp's drawn height (-2 to 2)",
+              sg2["asym"] == [SX(90), SX(270)] and all(SY(2) - 0.02 <= y <= SY(-2) + 0.02 for y in sg2["ys"][1]) and len(sg2["runs"][1]) == 3, [sg2["asym"], len(sg2["runs"][1])])
+        e2 = el(pg, sid)
+        check("... drawn: the stamp's own parts, then the asymptotes, then cos, then tan (newest on top)",
+              e2["parts"][:len(e_before["parts"])] == e_before["parts"] and [p["cls"] for p in e2["parts"][len(e_before["parts"]):]] == ["asym", "curve", "curve"]
+              and e2["parts"][-1]["stroke"] == BLUE and e2["parts"][-3]["dash"] and e2["parts"][-3]["stroke"] == "#000000", [p["cls"] for p in e2["parts"]])
+        sb = sel(pg)["box"]; st = [SX(45), SY(-1.5)]
+        pen(pg, [st, addv(st, [20, 15]), addv(st, [40, 30])]); pg.wait_for_timeout(60)
+        sdm = axrecs()[0]["data"]; sgm = sgeo(sid)
+        check("a move carries the stamp AND its curves as one thing (x0, y0 + (40, 30); the curves' data unchanged; cos drawn from the new (0°, 1))",
+              abs(sdm["x0"] - sd["x0"] - 40) < 0.011 and abs(sdm["y0"] - sd["y0"] - 30) < 0.011 and sdm["curves"] == sd2["curves"]
+              and dist(sgm["runs"][0][0][0], [sdm["x0"], sdm["y0"] - sdm["py"]]) < 0.05, [sdm, sgm["runs"][0][0][0]])
+        zz = z(pg); sb = sel(pg)["box"]; pad = 4 / zz
+        o, c = [sb[0] - pad, sb[1] - pad], [sb[2] + pad, sb[3] + pad]
+        u = subv(c, o); L = math.hypot(*u); u = [u[0] / L, u[1] / L]
+        st = addv(c, [u[0] * 5 / zz, u[1] * 5 / zz]); sc = 1.25
+        pen(pg, [st, addv(st, [(c[0] - o[0]) * (sc - 1) / 2, (c[1] - o[1]) * (sc - 1) / 2]), addv(st, [(c[0] - o[0]) * (sc - 1), (c[1] - o[1]) * (sc - 1)])]); pg.wait_for_timeout(60)
+        sdr = axrecs()[0]["data"]; sgr = sgeo(sid)
+        check("a resize scales the stamp and its curves together (px, py x 1.25; cos still from (0°, 1) at the new scale, to 360°)",
+              abs(sdr["px"] / sdm["px"] - sc) < 0.002 and abs(sdr["py"] / sdm["py"] - sc) < 0.002 and sdr["curves"] == sd2["curves"]
+              and dist(sgr["runs"][0][0][0], [sdr["x0"], sdr["y0"] - sdr["py"]]) < 0.05 and abs(sgr["runs"][0][-1][1][0] - (sdr["x0"] + 4 * sdr["px"])) < 0.05, sdr)
+        shot2("b2-stamp-two.png", sel(pg)["box"])
+        sd_keep = sdr
+        undo(pg)
+        check("one undo: the resize back, the curves still on", axrecs()[0]["data"] == sdm)
+        undo(pg)
+        check("one more: the move back", axrecs()[0]["data"] == sd2)
+        pg.click("#redoBtn"); pg.wait_for_timeout(60); pg.click("#redoBtn"); pg.wait_for_timeout(60)
+        check("redo, redo: moved and resized again, curves on", axrecs()[0]["data"] == sd_keep)
+        if not (sel(pg) and sel(pg)["ids"] == [sid]): pick(sgeo(sid)["box"])
+        pg.click(".selChips .chip[data-act='duplicate']"); pg.wait_for_timeout(80)
+        ax2 = axrecs()
+        check("Duplicate copies the stamp WITH its curves (two stamps, both carrying cos and tan)", len(ax2) == 2 and all(x["data"]["curves"] == sd2["curves"] for x in ax2), [len(ax2)])
+        undo(pg)
+        if not (sel(pg) and sel(pg)["ids"] == [sid]): pick(sgeo(sid)["box"])
+        pg.click(".selChips .chip[data-act='delete']"); pg.wait_for_timeout(80)
+        check("Delete takes the stamp and its curves together (nothing left, no curve drawn)", recs(pg) == [] and el(pg, sid) is None)
+        undo(pg)
+        check("... undo brings both back as one", len(recs(pg)) == 1 and axrecs()[0]["data"] == sd_keep and [p["cls"] for p in el(pg, sid)["parts"]][-3:] == ["asym", "curve", "curve"])
+        clear_sel(pg); pg.click("#tool-select"); pg.wait_for_timeout(30)
+        sgk = sgeo(sid); q = [x for x in zip(sgk["xs"][0], sgk["ys"][0])][len(sgk["xs"][0]) // 3]
+        pen(pg, [[q[0] - 6, q[1] - 6], [q[0] + 6, q[1] + 6]]); pg.wait_for_timeout(60)
+        check("a small box over the curve alone (no axis line in it) picks the stamp", sel(pg) and sel(pg)["ids"] == [sid], sel(pg))
+        clear_sel(pg)
+
+        # a stamp with no Degrees (no scale for degrees): one full wave fits the positive x-axis; 1 sits at 1/1.35 of the positive y-axis
+        pg.evaluate("window.__T.clear('s0')"); pen_colour("#000000")
+        st3 = place_stamp([-5, 5, 1, -5, 5, 1], False); sid3 = st3["id"]; s3 = st3["data"]
+        pen_colour(PINK); pick(sgeo(sid3)["box"]); tap("sin")
+        s3b = axrecs()[0]["data"]; g3 = sgeo(sid3)
+        UX = lambda deg: s3["x0"] + deg / 360 * 5 * s3["px"]; UY = lambda v: s3["y0"] - v * 5 / 1.35 * s3["py"]
+        check("Degrees off (-5 to 5): the curve is added to the stamp; 0° to 360° fills the positive x-axis (0 to 5), so it runs -360° to 360° across the whole stamp",
+              [c["kind"] for c in s3b["curves"]] == ["sin"] and dist(g3["runs"][0][0][0], [UX(-360), UY(0)]) < 0.05 and dist(g3["runs"][0][-1][1], [UX(360), UY(0)]) < 0.05, g3["runs"])
+        check("... height 1 at the quick graph's share of the positive y-axis (1 / 1.35 of 5 units): sin's top at 90°",
+              min(abs(x - UX(90)) + abs(y - UY(1)) for x, y in zip(g3["xs"][0], g3["ys"][0])) < 0.6 and abs(min(g3["ys"][0]) - UY(1)) < 0.05, [min(g3["ys"][0]), UY(1)])
+        # a number line is no place for a curve: a new graph lands
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour("#000000")
+        st4 = place_stamp([-5, 5, 1, -5, 5, 1], False, line=True)
+        pick(pg.evaluate("(i) => window.__pw.ink.axesGeom(window.__T.recs('s0').find((x) => x.id === i)).box", st4["id"]))
+        nl = sel(pg); tap("cos")
+        check("a number line selected: a NEW graph lands, the number line unchanged", nl and nl["ids"] == [st4["id"]] and len(graphs(pg)) == 1 and axrecs()[0]["data"] == st4["data"], [nl, len(graphs(pg))])
+
+        # ------------------------------------------------------------ thumb, PDF, shared picture for both
+        group[0] = "H. 2b: thumb + PDF + share"
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        show(pg, [W / 2, 260]); land(pg, "sin"); gid = graphs(pg)[0]["id"]
+        pen_colour(PINK); pick(geo(pg, gid)["box"]); tap("cos"); clear_sel(pg)
+        gd = graphs(pg)[0]["data"]
+        show(pg, [W / 2, 800]); pen_colour("#000000")
+        stc = place_stamp([0, 360, 90, -2, 2, 1], True); close_panel(pg); sid = stc["id"]
+        pen_colour(PINK); pick(sgeo(sid)["box"]); tap("cos"); clear_sel(pg); pg.click("#tool-pen"); pg.wait_for_timeout(30)
+        sdd = axrecs()[0]["data"]
+        gb, sbx = geo(pg, gid)["box"], sgeo(sid)["box"]
+        check("the page holds a two-curve graph and a stamp carrying a curve, apart", len(graphs(pg)) == 1 and len(gd["curves"]) == 2 and len(sdd["curves"]) == 1 and gb[3] < sbx[1], [gb, sbx])
+        ts = pg.evaluate("(i) => window.__T.el(i, window.__pw.ink.thumbSvg('s0'))", sid)
+        tg = pg.evaluate("(i) => window.__T.el(i, window.__pw.ink.thumbSvg('s0'))", gid)
+        check("thumbSvg: the graph with both curves, the stamp with its curve last in pink",
+              tg and [p["cls"] for p in tg["parts"]].count("curve") == 2 and ts and ts["parts"][-1]["cls"] == "curve" and ts["parts"][-1]["stroke"].lower() == PINK.lower(), [tg and len(tg["parts"]), ts and ts["parts"][-1]])
+        pg.click("#listBtn"); pg.wait_for_selector("#pageList:not([hidden])"); pg.wait_for_timeout(300)
+        okth = pg.evaluate("([a, b]) => !!document.querySelector(`#plThumbs .thumbP[data-index='1'] [data-id='${a}'] path.curve`) && document.querySelectorAll(`#plThumbs .thumbP[data-index='1'] [data-id='${b}'] path.curve`).length === 2", [sid, gid])
+        check("the page list's thumb of page 1 draws the stamp's curve and both graph curves", okth)
+        tb = rect(pg, "#plThumbs .thumbP[data-index='1']")
+        thumb_png = SH2 / "_thumb.png"
+        pg.screenshot(path=str(thumb_png), clip={"x": tb["l"] - 6, "y": tb["t"] - 6, "width": tb["w"] + 12, "height": tb["h"] + 12})
+        doc = pdf_of(pg, "Graph 2b"); p0 = doc[0]; k = p0.rect.width / W
+        drs = p0.get_drawings()
+        pinks = [dr for dr in drs if dr.get("color") is not None and dr["color"][0] > 0.9 and 0.0 < dr["color"][1] < 0.1 and dr["color"][2] > 0.45]
+        check("the PDF strokes the pink curves (the graph's cos and the stamp's cos) at the pen's width", len(pinks) >= 2 and all(abs(dr["width"] - pen_w * k) < 0.05 for dr in pinks), [len(pinks), [dr["width"] for dr in pinks]])
+        pix = p0.get_pixmap(dpi=144); img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB"); sk = pix.width / W
+        def pinkish(p): return p[0] > 180 and p[1] < 110 and p[2] > 70
+        on_g = [gd["x0"] + 2 * gd["px"], gd["y0"] + gd["py"]]                        # the graph's cos at 180° (-1)
+        on_s = [sdd["x0"] + 2 * sdd["px"], sdd["y0"] + sdd["py"]]                    # the stamp's cos at 180° (-1 on its own scale)
+        on_s0 = [sdd["x0"] + 0.02 * sdd["px"], sdd["y0"] - sdd["py"]]                # and at 0° (1)
+        check("... the PDF page shows pink on the graph's cos at 180° and on the stamp's cos at 180° and at 0°",
+              any_px(img, on_g[0] * sk, on_g[1] * sk, 2, pinkish) and any_px(img, on_s[0] * sk, on_s[1] * sk, 2, pinkish) and any_px(img, on_s0[0] * sk, on_s0[1] * sk, 3, pinkish))
+        check("... the stamp's numbers are still Helvetica text in the PDF (its own look), the graph's marks still glyph outlines",
+              "90°" in p0.get_text() and "180°" in p0.get_text() and any("Helvetica" in f[3] for f in p0.get_fonts()), [p0.get_text()[:60], p0.get_fonts()])
+        pdf_img = img
+        doc.close()
+        th_img = Image.open(str(thumb_png)).convert("RGB")
+        hh = 800; t2 = th_img.resize((round(th_img.width * hh / th_img.height), hh)); p2i = pdf_img.resize((round(pdf_img.width * hh / pdf_img.height), hh))
+        comp = Image.new("RGB", (t2.width + p2i.width + 30, hh + 20), (210, 210, 210)); comp.paste(t2, (10, 10)); comp.paste(p2i, (t2.width + 20, 10))
+        if comp.width > 900: comp = comp.resize((900, round(comp.height * 900 / comp.width)))
+        comp.save(str(SH2 / "c1-thumb-pdf.png")); thumb_png.unlink()
+        pg.click("#plSelect"); pg.wait_for_timeout(40)
+        pg.locator("#plThumbs .thumbP[data-index='1']").click(); pg.wait_for_timeout(40)
+        pg.click("#plBar button[data-act='share']"); pg.wait_for_selector("#shareDlg")
+        pg.evaluate("window.__shared = null")
+        pg.click("#shareDlg button[data-share='images']"); pg.wait_for_selector("#shareReady", timeout=30000)
+        pg.click("#shareDlg button[data-share='send']"); pg.wait_for_function("window.__shared", timeout=10000)
+        png = pg.evaluate("""async () => { const f = window.__shared.files[0]; const u = new Uint8Array(await f.arrayBuffer()); let s = '';
+          for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000)); return [f.type, btoa(s)]; }""")
+        si = Image.open(io.BytesIO(base64.b64decode(png[1]))).convert("RGB"); ss = si.width / W
+        check("a shared picture shows pink on the graph's cos and on the stamp's cos",
+              any_px(si, on_g[0] * ss, on_g[1] * ss, 2, pinkish) and any_px(si, on_s[0] * ss, on_s[1] * ss, 2, pinkish))
+        if pg.evaluate("window.__pw.tick()") is not None: pg.click("#plDone"); pg.wait_for_timeout(40)
+        if not pg.locator("#pageList").is_hidden(): pg.click("#plClose"); pg.wait_for_timeout(40)
+        keep_g, keep_s = graphs(pg)[0], axrecs()[0]
+        pg.evaluate("window.__pw.idle()"); pg.wait_for_timeout(200)
+        pg.click("#backBtn"); pg.wait_for_selector("#listView:not([hidden])"); pg.wait_for_timeout(80)
+        pg.reload(); ready(pg); open_note(pg); pg.evaluate(HELP)
+        check("after a reload the two-curve graph and the stamp with its curve are back exactly",
+              graphs(pg) and graphs(pg)[0]["data"] == keep_g["data"] and axrecs() and axrecs()[0]["data"] == keep_s["data"] and el(pg, keep_s["id"])["parts"][-1]["cls"] == "curve")
+
         # ------------------------------------------------------------ G: Caveat from the app's own files
         group[0] = "G. Caveat offline"
         open_gcard(pg); pg.wait_for_timeout(300); close_panel(pg)
@@ -511,8 +831,8 @@ try:
         g_req = [u for u in reqs if "caveat" in u.lower() and ("googleapis" in u or "gstatic" in u)]
         own = [u for u in reqs if u.endswith("/fonts/caveat-500.woff2")]
         check("no request ever asked Google for Caveat; the app's own file was fetched", g_req == [] and own, [g_req, own[:2]])
-        check("sw.js: CACHE pw-v9j, its version line, and graph.js, caveat-glyphs.js and the font in the shell",
-              'const CACHE = "pw-v9j";' in swt and "   pw-v9j (15 Nov): " in swt and all(f in swt for f in ['"./js/graph.js"', '"./js/caveat-glyphs.js"', '"./fonts/caveat-500.woff2"']))
+        check("sw.js: CACHE pw-v9k, its version line, and graph.js, caveat-glyphs.js and the font in the shell",
+              'const CACHE = "pw-v9k";' in swt and "   pw-v9k (16 Nov): " in swt and all(f in swt for f in ['"./js/graph.js"', '"./js/caveat-glyphs.js"', '"./fonts/caveat-500.woff2"']))
         check("no page errors", not errs, errs)
         ctx.close()
         b.close()

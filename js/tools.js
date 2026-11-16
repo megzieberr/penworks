@@ -1035,7 +1035,11 @@ function closeGraphCard() {
   if (rowBtn.graph) { rowBtn.graph.setAttribute('aria-expanded', 'false'); rowBtn.graph.setAttribute('aria-pressed', 'false'); }
 }
 function toggleGraphCard() { if (gcard && !gcard.hidden) closeGraphCard(); else openGraphCard(); }
+// pw-v9k (unit 2b): first, exactly ONE quick graph or ONE axes stamp selected: the block's curve joins it (ink.addCurveSel:
+// in the pen's colour at the tap, the window, size and place unchanged, one undo step, it stays selected; the same curve
+// already there: nothing happens). Anything else selected, or nothing: a new graph lands, as before
 function placeGraph(kind) {
+  if (ink.addCurveSel(kind, trayState().pen)) { closePanel(); return; }
   const sheet = curSheet();
   if (!sheet) { closePanel(); return; }
   const W = parseFloat(sheet.style.width), H = parseFloat(sheet.style.height), idx = +sheet.dataset.index - 1;

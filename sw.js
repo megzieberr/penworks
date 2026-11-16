@@ -31,9 +31,10 @@
    pw-v9h (13 Nov): the login lock: a short code is checked by the database first (migration 0008), 5 wrong tries lock the login for a while, a right code signs in with the long secret.
    pw-v9i (14 Nov): calculator.js refreshed from Blipwork: on a long line the cursor stays clear of the ◀ marker when the card is zoomed.
    pw-v9j (15 Nov): the quick graph, unit 2: Tools, Graph… lands sin, cos or tan (and their minus) on the page; Caveat carried in fonts/.
+   pw-v9k (16 Nov): the quick graph, unit 2b: a block tap with one graph selected adds its curve to those axes; with one axes stamp selected, the curve lands on her stamp.
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v9j";
+const CACHE = "pw-v9k";
 const SHARE_DB = "penworks.share";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",

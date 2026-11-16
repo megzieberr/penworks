@@ -38,7 +38,7 @@
 // its axis lines, ticks and heads stroked black, its degree marks and letters x and y FILLED as Caveat glyph outlines (the
 // same shapes as the page; no font is embedded), tan's asymptotes dashed, the curve last in its colour.
 import * as ink from './ink.js';
-import { graphParts } from './graph.js';
+import { graphParts, stampCurveParts } from './graph.js';
 import { pageSize, pdfShape, A4, CM, GRID, GRID_TOP, LINE_GAP, LINE_TOP, SK_COLOURS, SK_STRIP } from './page.js';
 import * as pdfin from './pdfin.js';
 import * as pdfview from './pdfview.js';
@@ -225,6 +225,23 @@ async function axesText(L, doc, page, recs, k, H, fonts) {
       page.drawText(l.t, { x, y: H - l.y * k, size, font, color });
     }
   }
+}
+
+// pw-v9k (unit 2b): the curves an axes stamp carries (js/graph.js stampCurveParts: tan's dashed black asymptotes, then the
+// curves in the order added), as their own stream after the stamps' text, so a curve lies over the stamp's numbers where
+// they meet, as on the screen (the stamp's own lines and text are drawn as before). '' when no stamp on the page has one
+export function stampCurveOps(recs, k, H) {
+  const ops = [];
+  for (const rec of recs) {
+    if (rec.kind !== 'axes') continue;
+    for (const p of stampCurveParts(rec)) {
+      if (!p.d) continue;
+      ops.push(rgOf(p.stroke) + ' ' + n2(p.width) + ' w 1 J ' + (p.dash ? '[' + p.dash.map(n2).join(' ') + '] 0 d' : '[] 0 d'), pdfPath(p.d), 'S');
+    }
+  }
+  if (!ops.length) return '';
+  const kk = String(Math.round(k / U * 1e8) / 1e8);
+  return ['q', kk + ' 0 0 -' + kk + ' 0 ' + String(Math.round(H * 100) / 100) + ' cm', '1 j', ...ops, 'Q'].join('\n');
 }
 
 // one page's paper and ink as content stream text. gsOf(opacity) = the page's ExtGState name for that opacity;
@@ -434,6 +451,8 @@ export async function buildPdf(pages, name, progress = () => {}, recsOf = (p) =>
     const text = pageOps(sz, p.pdf_path ? '' : p.background, recs, k, H, gsOf, (path) => xo.get(path) || null, sks);
     page.node.addContentStream(doc.context.register(await flate(doc, text)));
     await axesText(L, doc, page, recs, k, H, fonts);              // U5e: after the ink's stream, the stamps' numbers as text
+    const sc = stampCurveOps(recs, k, H);                          // pw-v9k: then the stamps' curves, over their numbers as on screen
+    if (sc) page.node.addContentStream(doc.context.register(await flate(doc, sc)));
   }
   doc.setTitle(name);
   const bytes = await doc.save({ useObjectStreams: true });

@@ -167,7 +167,7 @@ import * as store from './store.js';
 import { pageAt, pagePoint, view, pageSize, CM, surfaceAt, surfacePoint, SK_COLOURS, SK_STRIP } from './page.js';
 import { bytesOf } from './pdfin.js';
 import { alignDir, segsOf, markOf, markPaths, roundAlong, lineCross, distToSeg as segGap, segCross, MEET, FADE_MS } from './align.js';
-import { graphGeom, graphParts, XL_MIN } from './graph.js';
+import { graphGeom, graphParts, XL_MIN, withCurve, stampCurveParts, stampCurveSegs } from './graph.js';
 export { graphGeom };
 
 // snap: the pen held still this long (ms) at the end of a stroke; ?hold=400 in the address overrides it.
@@ -641,14 +641,13 @@ function setAxes(g, rec) {                                         // the stamp'
       e.textContent = l.t;
       kids.push(e);
     }
+    kids.push(...partEls(stampCurveParts(rec)));                   // pw-v9k: her stamp's curves (and tan's asymptotes) on top
   }
   g.replaceChildren(...kids);
 }
-// pw-v9j: the quick graph's parts in drawing order (axes and ticks, heads, the marks and letters, asymptotes, curves), so a
-// number is BEHIND the curve where they meet, with no halo. The glyphs are filled outlines (never <text>), so the thumbs and
-// the shared pictures (an SVG drawn through an <img>) need no font
-function setGraph(g, rec) {
-  const kids = graphParts(rec).map((p) => {
+// pw-v9j/v9k: graph.js parts as <path>s, each with its own stroke or fill (so nothing is taken from the <g>)
+function partEls(parts) {
+  return parts.map((p) => {
     const e = document.createElementNS(SVGNS, 'path');
     e.setAttribute('class', p.cls); e.setAttribute('d', p.d || 'M0 0');
     if (p.fill) { e.setAttribute('fill', p.fill); e.setAttribute('stroke', 'none'); }
@@ -661,7 +660,12 @@ function setGraph(g, rec) {
     if (p.i !== undefined) e.dataset.curve = String(p.i);
     return e;
   });
-  g.replaceChildren(...kids);
+}
+// pw-v9j: the quick graph's parts in drawing order (axes and ticks, heads, the marks and letters, asymptotes, curves), so a
+// number is BEHIND the curve where they meet, with no halo. The glyphs are filled outlines (never <text>), so the thumbs and
+// the shared pictures (an SVG drawn through an <img>) need no font
+function setGraph(g, rec) {
+  g.replaceChildren(...partEls(graphParts(rec)));
 }
 function arrowHeadPts(d, w) {                                    // an arrow along its chord, a curved arrow along its end tangent
   if (d.type === 'carrow') { const { u, L } = carrowDir(d); return headPts([d.x2, d.y2], u[0], u[1], L, w); }
@@ -984,7 +988,7 @@ function near(rec, x, y, reach) {
   if (x < b[0] - reach || x > b[2] + reach || y < b[1] - reach || y > b[3] + reach) return false;
   const r2 = reach * reach;
   if (rec.kind === 'image') return inImg(rec, x, y, reach);       // U4c: inside its turned box (grown by reach)
-  if (rec.kind === 'axes') { const a = axesGeom(rec); return !!a && a.lines.some((s) => segDist2(x, y, s[0], s[1]) <= r2); }   // U5e: on an axis line
+  if (rec.kind === 'axes') return stampSegs(rec).some((s) => segDist2(x, y, s[0], s[1]) <= r2);   // U5e: on an axis line; pw-v9k: or on a curve it carries
   if (rec.kind === 'graph') return graphSegs(rec).some((s) => segDist2(x, y, s[0], s[1]) <= r2);   // pw-v9j: on an axis, an asymptote or a curve
   const pts = pointsOf(rec);
   if (pts.length === 1) return (pts[0][0] - x) ** 2 + (pts[0][1] - y) ** 2 <= r2;
@@ -999,6 +1003,11 @@ function graphSegs(rec) {
   for (const a of g.asym) out.push([a.a, a.b]);
   for (const c of g.curves) for (const r of c.runs) for (let i = 1; i < r.length; i++) out.push([r[i - 1], r[i]]);
   return out;
+}
+// pw-v9k: an axes stamp's axis lines, then the curves it carries and tan's asymptotes (graph.js stampCurveSegs)
+function stampSegs(rec) {
+  const a = axesGeom(rec);
+  return a ? [...a.lines, ...stampCurveSegs(rec)] : [];
 }
 // where segment a-b crosses the circle (cx, cy, R): t values strictly inside (0, 1)
 function crossings(a, b, cx, cy, R) {
@@ -1990,8 +1999,7 @@ function inBox(id, b) {
       continue;
     }
     if (r.kind === 'axes') {                                       // U5e: an axis's end inside, or an axis line crossing the box
-      const a = axesGeom(r);
-      if (a && a.lines.some((s) => segInBox(s[0], s[1], B))) out.push(r.id);
+      if (stampSegs(r).some((s) => segInBox(s[0], s[1], B))) out.push(r.id);   // pw-v9k: or a curve it carries
       continue;
     }
     if (r.kind === 'graph') {                                      // pw-v9j: an axis, an asymptote or a curve inside or crossing the box
@@ -2038,10 +2046,23 @@ export function recolourSelection(c) {          // colour only: width, dash, opa
   return changeSel((r) => (isImg(r) ? null : r.kind === 'graph' ? graphColour(r, c) : same((r.style || {}).colour, c) ? null : { ...r, style: { ...r.style, colour: c } }));
 }
 // pw-v9j: a graph's axes stay black (her ruling 15 Nov): a new colour goes to its curves only
+// pw-v9k: with more than one curve, only the NEWEST (the last added) takes it
 function graphColour(r, c) {
-  const cs = (r.data && r.data.curves) || [];
-  if (cs.every((k) => same(k.colour, c))) return null;
-  return { ...r, style: { ...r.style }, data: { ...r.data, curves: cs.map((k) => ({ ...k, colour: c })) } };
+  const cs = (r.data && r.data.curves) || [], n = cs.length - 1;
+  if (n < 0 || same(cs[n].colour, c)) return null;
+  return { ...r, style: { ...r.style }, data: { ...r.data, curves: cs.map((k, i) => (i === n ? { ...k, colour: c } : k)) } };
+}
+// pw-v9k (unit 2b): a block tap in the Graph card while exactly ONE quick graph or ONE axes stamp (not a number line) is
+// selected, unlocked: that block's curve is added to it (graph.js withCurve), one undo step, the selection stays. Returns
+// false when the selection is anything else (tools.js then lands a new graph, as before); true when it was taken here,
+// also when that same curve was already on it (then nothing happens at all: no change, no undo step)
+export function addCurveSel(kind, pen) {
+  if (!SEL || SEL.locked || SEL.ids.size !== 1) return false;
+  const r = selRecs()[0];
+  if (!r || !(r.kind === 'graph' || (r.kind === 'axes' && !(r.data && r.data.line) && axesGeom(r)))) return false;
+  const n = withCurve(r, kind, pen);
+  if (n) changeSel((x) => (x.id === r.id ? n : null));
+  return true;
 }
 export function restyleSelection() { return changeSel(restyled); }   // the full restyle rule
 
