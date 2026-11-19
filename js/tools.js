@@ -981,8 +981,9 @@ function placeAxes() {
 
 // ---------------------------------------------------------------- pw-v9j: the quick graph's card (_docs/PENWORKS-GRAPH-PLAN.md, Tool 1)
 // The Graph row ("Graph…", under Axes) opens a card beside the panel on the desk side, its top level with the panel's (the
-// mock's panel 1); the row looks pressed while it is open. ONE family row for now, "sin, cos, tan": six blocks (sin, −sin,
-// cos, −cos, tan, −tan), each a small computed picture with its name. A tap on a block closes the panel and the card and
+// mock's panel 1); the row looks pressed while it is open. One row per family (graph.js FAMILIES): "sin, cos, tan" with six
+// blocks (sin, −sin, cos, −cos, tan, −tan), then (pw-v9l) "Cubic" with two (cubic, −cubic), each a small computed picture
+// with its name. A tap on a block closes the panel and the card and
 // lands that graph on the CURRENT page (js/graph.js newGraph: about a third of the page wide, 0 to 360 degrees, the y-axis at
 // the left, its middle at the middle of the part of the page she sees, kept on the page; the curve in the pen's colour and
 // width, the axes black), through ink.liveShape and its commit: ONE undo step. The card closes on its X, on Escape, with
@@ -998,19 +999,22 @@ function buildGraphCard() {
   x.addEventListener('click', closeGraphCard);
   const title = document.createElement('span');
   title.className = 'gTitle'; title.textContent = 'Graph';
-  const fam = document.createElement('div');
-  fam.className = 'gFam'; fam.textContent = 'sin, cos, tan';
-  const row = document.createElement('div');
-  row.className = 'gBlocks'; row.dataset.family = 'trig';
-  for (const k of graph.KINDS) {
-    const b = document.createElement('button');
-    b.type = 'button'; b.className = 'gBlk'; b.id = 'gblk-' + k.replace('-', 'n'); b.dataset.kind = k;
-    b.setAttribute('aria-label', 'Place ' + graph.LABEL[k]);
-    b.innerHTML = graph.blockSvg(k) + '<b>' + graph.LABEL[k] + '</b>';
-    b.addEventListener('click', () => placeGraph(k));
-    row.append(b);
+  gcard.append(x, title);
+  for (const F of graph.FAMILIES) {                                // pw-v9l: one heading and one row of blocks per family (the mock's rows)
+    const fam = document.createElement('div');
+    fam.className = 'gFam'; fam.textContent = F.name;
+    const row = document.createElement('div');
+    row.className = 'gBlocks'; row.dataset.family = F.id;
+    for (const k of F.kinds) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'gBlk'; b.id = 'gblk-' + k.replace('-', 'n'); b.dataset.kind = k;
+      b.setAttribute('aria-label', 'Place ' + graph.LABEL[k]);
+      b.innerHTML = graph.blockSvg(k) + '<b>' + graph.LABEL[k] + '</b>';
+      b.addEventListener('click', () => placeGraph(k));
+      row.append(b);
+    }
+    gcard.append(fam, row);
   }
-  gcard.append(x, title, fam, row);
   gcard.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); });   // the S Pen's button
   document.body.append(gcard);
 }

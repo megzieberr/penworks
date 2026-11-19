@@ -32,9 +32,11 @@
    pw-v9i (14 Nov): calculator.js refreshed from Blipwork: on a long line the cursor stays clear of the ◀ marker when the card is zoomed.
    pw-v9j (15 Nov): the quick graph, unit 2: Tools, Graph… lands sin, cos or tan (and their minus) on the page; Caveat carried in fonts/.
    pw-v9k (16 Nov): the quick graph, unit 2b: a block tap with one graph selected adds its curve to those axes; with one axes stamp selected, the curve lands on her stamp.
+   pw-v9l (19 Nov): the quick graph's cubic row: cubic and −cubic land on plain axes crossing in the middle, join a cubic graph or land on her axes stamp.
+   pw-v9m (19 Nov): the quick graph, unit 3: a tap on a graph's curve picks that curve alone; it slides and stretches inside its axes (right handle wider, bottom handle taller).
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v9k";
+const CACHE = "pw-v9m";
 const SHARE_DB = "penworks.share";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",

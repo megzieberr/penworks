@@ -14,6 +14,12 @@
 # a reload keeps it; it is in the page thumb, the PDF (glyphs filled, curve stroked) and a shared picture; Caveat comes from
 # the app's own fonts/ folder and nothing asks Google for it.
 # Pictures for the report go to _build/graph/unit2/.
+# pw-v9l (group I): the Cubic row (cubic, −cubic): plain axes crossing in the middle, no marks, no left handle; select,
+# Axes pill, colour, move, resize, a second cubic curve, mismatched families land a new graph, a cubic on her stamp; thumb,
+# PDF, shared picture, reload. Its pictures go to _build/graph/cubic/.
+# pw-v9m (group J, unit 3 "tap the curve"): a select tap on a curve picks that curve alone (two handles, Axes + Delete);
+# slide, squash, widen, taller, the limits, tan's asymptotes travelling, marks staying, two curves (colour, Delete), all
+# eight kinds, thumb, PDF, shared picture, reload. Its pictures go to _build/graph/unit3/.
 import sys, subprocess, time, pathlib, math, base64, io, re
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 import fitz
@@ -28,6 +34,7 @@ W, H = 794, 1123
 BLUE = "#0D0DFF"
 KINDS = ["sin", "-sin", "cos", "-cos", "tan", "-tan"]
 NAMES = ["sin", "−sin", "cos", "−cos", "tan", "−tan"]
+CUBICS = ["cubic", "-cubic"]                                       # pw-v9l
 
 res = []
 group = ["?"]
@@ -175,12 +182,21 @@ try:
           return { title: c.querySelector('.gTitle').textContent, fams: [...c.querySelectorAll('.gFam')].map((e) => e.textContent),
             blocks: [...c.querySelectorAll('.gBlk')].map((b) => [b.dataset.kind, b.querySelector('b').textContent, !!b.querySelector('svg path'), Math.round(b.getBoundingClientRect().width)]),
             text: c.textContent }; }""")
-        check("ONE family row, headed 'sin, cos, tan'", info["title"] == "Graph" and info["fams"] == ["sin, cos, tan"], info["fams"])
-        check("six blocks: sin, −sin, cos, −cos, tan, −tan (the real minus), each a picture and its name, 80 px wide",
-              [x[0] for x in info["blocks"]] == KINDS and [x[1] for x in info["blocks"]] == NAMES and all(x[2] and x[3] == 80 for x in info["blocks"]), info["blocks"])
+        check("TWO family rows (pw-v9l), headed 'sin, cos, tan' then 'Cubic'", info["title"] == "Graph" and info["fams"] == ["sin, cos, tan", "Cubic"], info["fams"])
+        check("six trig blocks then two cubic blocks: sin, −sin, cos, −cos, tan, −tan, cubic, −cubic (the real minus), each a picture and its name, 80 px wide",
+              [x[0] for x in info["blocks"]] == KINDS + CUBICS and [x[1] for x in info["blocks"]] == NAMES + ["cubic", "−cubic"] and all(x[2] and x[3] == 80 for x in info["blocks"]), info["blocks"])
         check("no Parabola, Hyperbola or Exponential row (no dead buttons)", not re.search("Parabola|Hyperbola|Exponential", info["text"]), info["text"])
         tb = pg.evaluate("[...document.querySelectorAll('#graphCard .gBlk')].map((b) => b.querySelectorAll('line[stroke-dasharray]').length)")
-        check("the two tan blocks show their dashed asymptotes, the others none", tb == [0, 0, 0, 0, 2, 2], tb)
+        check("the two tan blocks show their dashed asymptotes, the others none", tb == [0, 0, 0, 0, 2, 2, 0, 0], tb)
+        rws = pg.evaluate("""() => [...document.querySelectorAll('#graphCard .gBlocks')].map((r) => [r.dataset.family, [...r.querySelectorAll('.gBlk')].map((b) => b.dataset.kind),
+          Math.round(r.getBoundingClientRect().top)])""")
+        check("the cubic blocks sit in their own row UNDER the trig row (data-family 'cubic')",
+              [r[0] for r in rws] == ["trig", "cubic"] and rws[1][1] == CUBICS and rws[1][2] > rws[0][2] + 40, rws)
+        cb = pg.evaluate("""() => ['cubic', '-cubic'].map((k) => { const s = document.querySelector('#gblk-' + k.replace('-', 'n') + ' svg'), l = [...s.querySelectorAll('line')];
+          return [l.length, +l[1].getAttribute('x1'), +l[0].getAttribute('y1')]; })""")
+        check("each cubic block: plain axes crossing in the MIDDLE of its picture (x 35, y 25 of 70 x 50)", all(c[0] == 2 and abs(c[1] - 35) < 0.01 and abs(c[2] - 25) < 0.01 for c in cb), cb)
+        SHC = ROOT / "_build" / "graph" / "cubic"; SHC.mkdir(parents=True, exist_ok=True)
+        gr_ = rect(pg, "#graphCard"); pg.screenshot(path=str(SHC / "1-card.png"), clip={"x": gr_["l"] - 10, "y": gr_["t"] - 10, "width": gr_["w"] + 20, "height": gr_["h"] + 20})
         shot(pg, "1-grid.png")
         pg.click("#trow-axes"); pg.wait_for_timeout(60)
         check("opening the Axes card closes the Graph card (one card at a time); the Graph row is not pressed",
@@ -818,6 +834,451 @@ try:
         check("after a reload the two-curve graph and the stamp with its curve are back exactly",
               graphs(pg) and graphs(pg)[0]["data"] == keep_g["data"] and axrecs() and axrecs()[0]["data"] == keep_s["data"] and el(pg, keep_s["id"])["parts"][-1]["cls"] == "curve")
 
+        # ------------------------------------------------------------ I: pw-v9l, the cubic (f(x) = x³ - 3x and its mirror)
+        group[0] = "I. cubic: landing"
+        def shotc(name, bx, top=70, bottom=70, w=700):
+            show(pg, [(bx[0] + bx[2]) / 2, (bx[1] + bx[3]) / 2])
+            tl = pg.evaluate("([x, y]) => window.__T.client('s0', x, y)", [bx[0], bx[1]]); br = pg.evaluate("([x, y]) => window.__T.client('s0', x, y)", [bx[2], bx[3]])
+            y0 = max(0, tl[1] - top); y1 = min(800, br[1] + bottom); x0 = max(0, min(1280 - w, (tl[0] + br[0]) / 2 - w / 2))
+            SHC.mkdir(parents=True, exist_ok=True); pg.screenshot(path=str(SHC / name), clip={"x": x0, "y": y0, "width": w, "height": y1 - y0})
+        def cpts(i):                                               # every curve's points, page px
+            return pg.evaluate("""(i) => { const r = window.__T.recs('s0').find((x) => x.id === i); const g = window.__pw.ink.graphGeom(r);
+              return g.curves.map((c) => c.runs.flat()); }""", i)
+        cub = lambda x: x ** 3 - 3 * x
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        vis = pg.evaluate("window.__T.vis(0)"); mid = [(vis[0] + vis[2]) / 2, (vis[1] + vis[3]) / 2]
+        land(pg, "cubic")
+        gs = graphs(pg)
+        check("cubic: a tap on its block lands ONE 'graph' record on page 1 and closes the panel and the card",
+              len(recs(pg)) == 1 and len(gs) == 1 and not panel_shown(pg) and not gcard_shown(pg), [r["kind"] for r in recs(pg)])
+        cg = gs[0]; cd = cg["data"]; cid = cg["id"]; pxc = round(W / 3 / 5.2, 2)
+        check("... its axes: fam 'cubic', the window x -2.6 to 2.6, y -3.2 to 3.2; px a third of the page over 5.2 units, py 0.8 px; the axes' style black",
+              cd["axes"] == {"on": True, "fam": "cubic", "xl": -2.6, "xr": 2.6, "yh": 3.2} and cd["px"] == pxc and cd["py"] == round(0.8 * pxc, 2)
+              and cg["style"]["colour"] == "#000000", [cd, cg["style"]])
+        check("... ONE curve, an ordinary curves entry: cubic in the pen's colour and width, offset 0, stretch 1",
+              cd["curves"] == [{"kind": "cubic", "colour": BLUE, "width": pen_w, "dx": 0, "dy": 0, "sx": 1, "sy": 1}], cd["curves"])
+        g = geo(pg, cid); bx = g["box"]
+        check("... the origin (where the axes cross) in the middle of the part of the page she sees; the whole graph 8 px inside the page",
+              abs(cd["x0"] - mid[0]) < 1 and abs(cd["y0"] - mid[1]) < 1 and bx[0] >= 8 - 0.01 and bx[1] >= 8 - 0.01 and bx[2] <= W - 8 + 0.01 and bx[3] <= H - 8 + 0.01, [cd["x0"], cd["y0"], mid, bx])
+        xa, ya = g["lines"][0], g["lines"][1]
+        check("... the axes cross in the MIDDLE of the window: the x-axis from x = -2.6 to past 2.6, the y-axis from -3.2 to past 3.2, both through the origin",
+              abs(xa[0][0] - (cd["x0"] - 2.6 * cd["px"])) < 0.02 and xa[1][0] > cd["x0"] + 2.6 * cd["px"] and abs(xa[0][1] - cd["y0"]) < 0.01
+              and abs(ya[0][1] - (cd["y0"] + 3.2 * cd["py"])) < 0.02 and ya[1][1] < cd["y0"] - 3.2 * cd["py"] and abs(ya[0][0] - cd["x0"]) < 0.01, g["lines"])
+        check("... PLAIN axes: no ticks, no numbers, no degrees; only the letters x and y", g["ticks"] == [] and [l["t"] for l in g["labels"]] == ["x", "y"] and all(l["cls"] == "letter" for l in g["labels"]), g["labels"])
+        e = el(pg, cid)
+        check("... drawn: axes, heads and the two letters BLACK (letters filled glyph outlines, no <text>), then the curve in Blue",
+              [p["cls"] for p in e["parts"]] == ["axis", "head", "letter", "letter", "curve"] and all(p["stroke"] == "#000000" for p in e["parts"][:2])
+              and all(p["fill"] == "#000000" and p["tag"] == "path" for p in e["parts"][2:4]) and e["parts"][4]["stroke"] == BLUE and e["texts"] == 0, e["parts"])
+        check("... no round left handle on a cubic (that handle is trig only)", g["left"] is None)
+        P = cpts(cid)[0]; XX = lambda q: (q[0] - cd["x0"]) / cd["px"]; YY = lambda q: (cd["y0"] - q[1]) / cd["py"]
+        check("... the curve is f(x) = x³ - 3x itself (every point within 0.02 of it, or on the cut), and stays inside the window",
+              len(P) > 50 and all(abs(YY(q) - cub(XX(q))) < 0.02 or abs(abs(YY(q)) - 3.2) < 0.02 for q in P) and all(abs(XX(q)) <= 2.6 + 1e-6 and abs(YY(q)) <= 3.2 + 0.01 for q in P), len(P))
+        check("... ONE run from the BOTTOM edge (left arm) to the TOP edge (right arm): both arms carry on to the window's edge",
+              len(g["runs"][0]) == 1 and abs(YY(g["runs"][0][0][0]) + 3.2) < 0.01 and abs(YY(g["runs"][0][0][1]) - 3.2) < 0.01 and XX(g["runs"][0][0][0]) < -2 and XX(g["runs"][0][0][1]) > 2, g["runs"])
+        check("... over a hill at (-1, 2), through the origin, a dip at (1, -2)",
+              min(abs(XX(q) + 1) + abs(YY(q) - 2) for q in P) < 0.06 and min(abs(XX(q)) + abs(YY(q)) for q in P) < 0.06 and min(abs(XX(q) - 1) + abs(YY(q) + 2) for q in P) < 0.06
+              and abs(max(YY(q) for q in P if abs(XX(q)) < 1.5) - 2) < 0.01,
+              [min(abs(XX(q) + 1) + abs(YY(q) - 2) for q in P), min(abs(XX(q)) + abs(YY(q)) for q in P), min(abs(XX(q) - 1) + abs(YY(q) + 2) for q in P), max(YY(q) for q in P if abs(XX(q)) < 1.5)])
+        cubic_box = bx
+        shotc("2-cubic-landed.png", bx)
+        undo(pg)
+        check("ONE undo takes it away", recs(pg) == [])
+        land(pg, "-cubic"); mg = graphs(pg)[0]; md = mg["data"]; mgeo = geo(pg, mg["id"]); P2 = cpts(mg["id"])[0]
+        check("−cubic: its mirror lands the same way (same window): -f(x) itself, from the TOP edge on the left to the BOTTOM edge on the right",
+              md["axes"] == {"on": True, "fam": "cubic", "xl": -2.6, "xr": 2.6, "yh": 3.2} and md["curves"][0]["kind"] == "-cubic"
+              and abs((md["y0"] - mgeo["runs"][0][0][0][1]) / md["py"] - 3.2) < 0.01 and abs((md["y0"] - mgeo["runs"][0][0][1][1]) / md["py"] + 3.2) < 0.01
+              and all(abs((md["y0"] - q[1]) / md["py"] + cub((q[0] - md["x0"]) / md["px"])) < 0.02 or abs(abs((md["y0"] - q[1]) / md["py"]) - 3.2) < 0.02 for q in P2), mgeo["runs"])
+        shotc("3-minus-cubic-landed.png", mgeo["box"])
+        undo(pg); land(pg, "cubic"); cid = graphs(pg)[0]["id"]; cd = graphs(pg)[0]["data"]
+
+        group[0] = "I. cubic: selected"
+        pick(geo(pg, cid)["box"])
+        check("a box picks the whole cubic graph", sel(pg) and sel(pg)["ids"] == [cid], sel(pg))
+        check("... the Axes pill shows; there is NO round left handle", pg.locator(".selChips .chip.gchip").count() == 1 and pg.locator(".sel .selgl").count() == 0)
+        shotc("4-selected.png", sel(pg)["box"], top=110)
+        pg.click(".selChips .chip.gchip"); pg.wait_for_timeout(60)
+        check("the Axes pill hides the axes and letters; the curve stays", graphs(pg)[0]["data"]["axes"]["on"] is False and [p["cls"] for p in el(pg, cid)["parts"]] == ["curve"])
+        pg.click(".selChips .chip.gchip"); pg.wait_for_timeout(60)
+        check("... and shows them again", graphs(pg)[0]["data"]["axes"]["on"] is True and len(el(pg, cid)["parts"]) == 5)
+        undo(pg); undo(pg)
+        check("... one undo step each", graphs(pg)[0]["data"] == cd)
+        if not (sel(pg) and sel(pg)["ids"] == [cid]): pick(geo(pg, cid)["box"])
+        pg.click(f'#tray .sw[data-colour="{THIRD}"]'); pg.wait_for_timeout(60)
+        c3 = graphs(pg)[0]
+        check("a colour tap recolours the curve only (the axes style stays black)", c3["data"]["curves"][0]["colour"].lower() == THIRD.lower() and c3["style"]["colour"] == "#000000"
+              and [p["stroke"] for p in el(pg, cid)["parts"][:2]] == ["#000000", "#000000"], c3["data"]["curves"])
+        undo(pg)
+        check("... one undo step", graphs(pg)[0]["data"] == cd)
+        if not (sel(pg) and sel(pg)["ids"] == [cid]): pick(geo(pg, cid)["box"])
+        st = [cd["x0"] + 1.5 * cd["px"], cd["y0"] + 0.5 * cd["py"]]
+        pen(pg, [st, addv(st, [20, 15]), addv(st, [40, 30])]); pg.wait_for_timeout(60)
+        dm = graphs(pg)[0]["data"]
+        check("a move carries the whole graph (x0, y0 + (40, 30); window and curve unchanged)",
+              abs(dm["x0"] - cd["x0"] - 40) < 0.011 and abs(dm["y0"] - cd["y0"] - 30) < 0.011 and dm["curves"] == cd["curves"] and dm["axes"] == cd["axes"], dm)
+        zz = z(pg); sb = sel(pg)["box"]; pad = 4 / zz
+        o, c = [sb[0] - pad, sb[1] - pad], [sb[2] + pad, sb[3] + pad]
+        u = subv(c, o); L = math.hypot(*u); u = [u[0] / L, u[1] / L]
+        st = addv(c, [u[0] * 5 / zz, u[1] * 5 / zz]); sc = 1.25
+        pen(pg, [st, addv(st, [(c[0] - o[0]) * (sc - 1) / 2, (c[1] - o[1]) * (sc - 1) / 2]), addv(st, [(c[0] - o[0]) * (sc - 1), (c[1] - o[1]) * (sc - 1)])]); pg.wait_for_timeout(60)
+        dr = graphs(pg)[0]["data"]; Pr = cpts(cid)[0]
+        check("a resize scales all of it (px, py x 1.25), the curve still f(x) at the new scale",
+              abs(dr["px"] / dm["px"] - sc) < 0.002 and abs(dr["py"] / dm["py"] - sc) < 0.002 and dr["curves"] == cd["curves"] and dr["axes"] == cd["axes"]
+              and all(abs((dr["y0"] - q[1]) / dr["py"] - cub((q[0] - dr["x0"]) / dr["px"])) < 0.02 or abs(abs((dr["y0"] - q[1]) / dr["py"]) - 3.2) < 0.02 for q in Pr), dr)
+        undo(pg); undo(pg)
+        check("... two undos: back where it landed", graphs(pg)[0]["data"] == cd)
+
+        group[0] = "I. cubic: a second curve"
+        if not (sel(pg) and sel(pg)["ids"] == [cid]): pick(geo(pg, cid)["box"])
+        pen_colour(PINK); pick(geo(pg, cid)["box"]); tap("-cubic")
+        dd = graphs(pg)[0]["data"]
+        check("−cubic tapped with the cubic graph selected: ONE record, −cubic ADDED in pink; window, size and place unchanged",
+              len(recs(pg)) == 1 and [(k["kind"], k["colour"].lower()) for k in dd["curves"]] == [("cubic", BLUE.lower()), ("-cubic", PINK.lower())]
+              and {k: v for k, v in dd.items() if k != "curves"} == {k: v for k, v in cd.items() if k != "curves"}, dd)
+        check("... drawn in the order added: two curves last, −cubic (pink) on top", [p["cls"] for p in el(pg, cid)["parts"]][-2:] == ["curve", "curve"] and el(pg, cid)["parts"][-1]["stroke"].lower() == PINK.lower())
+        if not (sel(pg) and sel(pg)["ids"] == [cid]): pick(geo(pg, cid)["box"])
+        tap("cubic")
+        check("cubic tapped again (already there): nothing changes", graphs(pg)[0]["data"] == dd and len(recs(pg)) == 1)
+        if not (sel(pg) and sel(pg)["ids"] == [cid]): pick(geo(pg, cid)["box"])
+        clear_sel(pg); shotc("5-two-curves.png", geo(pg, cid)["box"])
+        pick(geo(pg, cid)["box"]); tap("sin")
+        check("sin tapped with the cubic graph selected: the axes do not match, so a NEW graph lands; the cubic graph unchanged",
+              len(graphs(pg)) == 2 and [x for x in graphs(pg) if x["id"] == cid][0]["data"] == dd
+              and [k["kind"] for k in [x for x in graphs(pg) if x["id"] != cid][0]["data"]["curves"]] == ["sin"], len(graphs(pg)))
+        tid = [x for x in graphs(pg) if x["id"] != cid][0]["id"]; td = [x for x in graphs(pg) if x["id"] == tid][0]["data"]
+        clear_sel(pg); pg.evaluate("(i) => window.__pw.ink.selectRecs('s0', [i])", tid); pg.wait_for_timeout(40)   # it lies over the cubic: picked by id
+        if sel(pg) and sel(pg)["ids"] == [tid]:
+            tap("cubic")
+            check("cubic tapped with a trig graph selected: a NEW cubic graph lands; the trig graph unchanged",
+                  len(graphs(pg)) == 3 and [x for x in graphs(pg) if x["id"] == tid][0]["data"] == td, len(graphs(pg)))
+            undo(pg)
+        else:
+            check("cubic tapped with a trig graph selected: a NEW cubic graph lands (could not pick the trig graph alone)", False, sel(pg))
+        undo(pg); clear_sel(pg)
+        check("... undo, undo: the two-curve cubic graph alone", len(recs(pg)) == 1 and graphs(pg)[0]["data"] == dd)
+
+        group[0] = "I. cubic: on her axes stamp"
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour("#000000")
+        stc = place_stamp([-5, 5, 1, -5, 5, 1], False); sidc = stc["id"]; sdc = stc["data"]; close_panel(pg)
+        e_before = el(pg, sidc)
+        pen_colour(BLUE); pick(sgeo(sidc)["box"]); tap("cubic")
+        a1 = axrecs(); s1 = a1[0]["data"]
+        check("cubic tapped with her stamp selected: NO new graph; the curve stored in the stamp's data, everything else unchanged",
+              len(recs(pg)) == 1 and a1[0]["id"] == sidc and {k: v for k, v in s1.items() if k != "curves"} == sdc and [k["kind"] for k in s1["curves"]] == ["cubic"], [x["kind"] for x in recs(pg)])
+        e1 = el(pg, sidc)
+        check("... her stamp draws exactly as before, the curve added last in Blue", e1["parts"][:-1] == e_before["parts"] and e1["parts"][-1]["cls"] == "curve" and e1["parts"][-1]["stroke"] == BLUE)
+        sg = sgeo(sidc); kx, ky = 5 / 2.6, 5 / 3.2
+        SXc = lambda x: sdc["x0"] + x * kx / sdc["xd"] * sdc["px"]; SYc = lambda v: sdc["y0"] - v * ky / sdc["yd"] * sdc["py"]
+        check("... centred on the stamp's ORIGIN, the quick graph's window fitted to the stamp (x 2.6 at 5, y 3.2 at 5): through (0, 0), hill at (-1, 2), dip at (1, -2)",
+              max(min(math.hypot(x - SXc(a), y - SYc(v)) for x, y in zip(sg["xs"][0], sg["ys"][0])) for a, v in [(0, 0), (-1, 2), (1, -2)]) < 1.5,
+              [min(math.hypot(x - SXc(a), y - SYc(v)) for x, y in zip(sg["xs"][0], sg["ys"][0])) for a, v in [(0, 0), (-1, 2), (1, -2)]])
+        check("... cut to the stamp's drawn height (-5 to 5), from its bottom edge to its top edge",
+              all(SYc(3.2) - 0.02 <= y <= SYc(-3.2) + 0.02 for y in sg["ys"][0]) and abs(sg["runs"][0][0][0][1] - SYc(-3.2)) < 0.05 and abs(sg["runs"][0][-1][1][1] - SYc(3.2)) < 0.05, sg["runs"])
+        shotc("6-on-stamp.png", sel(pg)["box"])
+        if not (sel(pg) and sel(pg)["ids"] == [sidc]): pick(sgeo(sidc)["box"])
+        tap("cos")
+        check("cos tapped with the cubic-carrying stamp selected: a NEW graph lands; the stamp unchanged", len(graphs(pg)) == 1 and axrecs()[0]["data"] == s1, len(graphs(pg)))
+        undo(pg); undo(pg)
+        check("... undo, undo: the stamp bare again", len(recs(pg)) == 1 and axrecs()[0]["data"] == sdc)
+
+        group[0] = "I. cubic: thumb + PDF + share"
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        show(pg, [W / 2, 260]); land(pg, "cubic"); cid = graphs(pg)[0]["id"]
+        pen_colour(PINK); pick(geo(pg, cid)["box"]); tap("-cubic"); clear_sel(pg)
+        cdd = graphs(pg)[0]["data"]
+        show(pg, [W / 2, 800]); pen_colour("#000000")
+        stc = place_stamp([-5, 5, 1, -5, 5, 1], False); close_panel(pg); sidc = stc["id"]
+        pen_colour(PINK); pg.click("#tool-select"); pg.wait_for_timeout(30)
+        pg.evaluate("(i) => window.__pw.ink.selectRecs('s0', [i])", sidc); pg.wait_for_timeout(40)   # its box reaches the graph's arm: picked by id
+        tap("cubic"); clear_sel(pg); pg.click("#tool-pen"); pg.wait_for_timeout(30)
+        sdd = axrecs()[0]["data"]
+        check("the page holds the two-curve cubic graph and a stamp carrying a cubic (one graph only)", len(graphs(pg)) == 1 and [k["kind"] for k in sdd.get("curves", [])] == ["cubic"], sdd)
+        tg = pg.evaluate("(i) => window.__T.el(i, window.__pw.ink.thumbSvg('s0'))", cid)
+        check("thumbSvg: the cubic graph with both curves, no numbers", tg and [p["cls"] for p in tg["parts"]] == ["axis", "head", "letter", "letter", "curve", "curve"], tg and [p["cls"] for p in tg["parts"]])
+        pg.click("#listBtn"); pg.wait_for_selector("#pageList:not([hidden])"); pg.wait_for_timeout(300)
+        okth = pg.evaluate("([a, b]) => [document.querySelectorAll(`#plThumbs .thumbP[data-index='1'] [data-id='${a}'] path.curve`).length, document.querySelectorAll(`#plThumbs .thumbP[data-index='1'] [data-id='${b}'] path.curve`).length]", [cid, sidc])
+        check("the page list's thumb of page 1 draws both cubic curves and the stamp's cubic", okth == [2, 1], okth)
+        tb = rect(pg, "#plThumbs .thumbP[data-index='1']")
+        thumb_png = SHC / "_thumb.png"
+        pg.screenshot(path=str(thumb_png), clip={"x": tb["l"] - 6, "y": tb["t"] - 6, "width": tb["w"] + 12, "height": tb["h"] + 12})
+        doc = pdf_of(pg, "Cubic"); p0 = doc[0]; k = p0.rect.width / W
+        pix = p0.get_pixmap(dpi=144); img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB"); sk = pix.width / W
+        on_b = [cdd["x0"] + cdd["px"], cdd["y0"] + 2 * cdd["py"]]                 # the cubic's dip (1, -2): Blue
+        on_p = [cdd["x0"] + cdd["px"], cdd["y0"] - 2 * cdd["py"]]                 # the −cubic's hill (1, 2): pink
+        on_s = [sdd["x0"] + 1 * 5 / 2.6 * sdd["px"], sdd["y0"] + 2 * 5 / 3.2 * sdd["py"]]   # the stamp's cubic at (1, -2)
+        on_x = [cdd["x0"] - 2.4 * cdd["px"], cdd["y0"]]                           # the x-axis, black
+        pdf_hits = [any_px(img, on_b[0] * sk, on_b[1] * sk, 2, bluish), any_px(img, on_p[0] * sk, on_p[1] * sk, 2, pinkish), any_px(img, on_s[0] * sk, on_s[1] * sk, 2, pinkish),
+                    any_px(img, on_x[0] * sk, on_x[1] * sk, 2, darkish)]
+        check("the PDF page shows Blue at the cubic's dip, pink at the −cubic's hill and on the stamp's cubic, black on the x-axis", all(pdf_hits), [pdf_hits, cdd, sdd])
+        pt = p0.get_text()
+        check("... no degree marks anywhere in the PDF (the cubic's axes are plain; only the stamp's own numbers are text)", "°" not in pt, pt[:80])
+        doc.close()
+        th_img = Image.open(str(thumb_png)).convert("RGB")
+        hh = 800; t2 = th_img.resize((round(th_img.width * hh / th_img.height), hh)); p2i = img.resize((round(img.width * hh / img.height), hh))
+        comp = Image.new("RGB", (t2.width + p2i.width + 30, hh + 20), (210, 210, 210)); comp.paste(t2, (10, 10)); comp.paste(p2i, (t2.width + 20, 10))
+        if comp.width > 900: comp = comp.resize((900, round(comp.height * 900 / comp.width)))
+        comp.save(str(SHC / "7-thumb-pdf.png")); thumb_png.unlink()
+        pg.click("#plSelect"); pg.wait_for_timeout(40)
+        pg.locator("#plThumbs .thumbP[data-index='1']").click(); pg.wait_for_timeout(40)
+        pg.click("#plBar button[data-act='share']"); pg.wait_for_selector("#shareDlg")
+        pg.evaluate("window.__shared = null")
+        pg.click("#shareDlg button[data-share='images']"); pg.wait_for_selector("#shareReady", timeout=30000)
+        pg.click("#shareDlg button[data-share='send']"); pg.wait_for_function("window.__shared", timeout=10000)
+        png = pg.evaluate("""async () => { const f = window.__shared.files[0]; const u = new Uint8Array(await f.arrayBuffer()); let s = '';
+          for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000)); return [f.type, btoa(s)]; }""")
+        si = Image.open(io.BytesIO(base64.b64decode(png[1]))).convert("RGB"); ss = si.width / W
+        sh_hits = [any_px(si, on_b[0] * ss, on_b[1] * ss, 2, bluish), any_px(si, on_p[0] * ss, on_p[1] * ss, 2, pinkish), any_px(si, on_s[0] * ss, on_s[1] * ss, 2, pinkish)]
+        check("a shared picture shows Blue at the cubic's dip, pink at the −cubic's hill and on the stamp's cubic", all(sh_hits), sh_hits)
+        if pg.evaluate("window.__pw.tick()") is not None: pg.click("#plDone"); pg.wait_for_timeout(40)
+        if not pg.locator("#pageList").is_hidden(): pg.click("#plClose"); pg.wait_for_timeout(40)
+        keep_g, keep_s = graphs(pg)[0], axrecs()[0]
+        pg.evaluate("window.__pw.idle()"); pg.wait_for_timeout(200)
+        pg.click("#backBtn"); pg.wait_for_selector("#listView:not([hidden])"); pg.wait_for_timeout(80)
+        pg.reload(); ready(pg); open_note(pg); pg.evaluate(HELP)
+        check("after a reload the two-curve cubic graph and the stamp with its cubic are back exactly",
+              graphs(pg) and graphs(pg)[0]["data"] == keep_g["data"] and axrecs() and axrecs()[0]["data"] == keep_s["data"])
+
+        # ------------------------------------------------------------ J: pw-v9m, unit 3: tap the curve (slide and stretch inside the axes)
+        group[0] = "J. tap the curve: picking"
+        SH3 = ROOT / "_build" / "graph" / "unit3"; SH3.mkdir(parents=True, exist_ok=True)
+        def shot3(name, bx, top=110, bottom=70, w=700):
+            show(pg, [(bx[0] + bx[2]) / 2, (bx[1] + bx[3]) / 2])
+            tl = pg.evaluate("([x, y]) => window.__T.client('s0', x, y)", [bx[0], bx[1]]); br = pg.evaluate("([x, y]) => window.__T.client('s0', x, y)", [bx[2], bx[3]])
+            y0 = max(0, tl[1] - top); y1 = min(800, br[1] + bottom); x0 = max(0, min(1280 - w, (tl[0] + br[0]) / 2 - w / 2))
+            pg.screenshot(path=str(SH3 / name), clip={"x": x0, "y": y0, "width": w, "height": y1 - y0})
+        def gd(): return graphs(pg)[0]["data"]
+        def selt(): pg.click("#tool-select"); pg.wait_for_timeout(30)
+        def tapp(p): pen(pg, [p]); pg.wait_for_timeout(60)
+        def drag(p, v, n=5): pen(pg, [p] + [addv(p, [v[0] * k / n, v[1] * k / n]) for k in range(1, n + 1)]); pg.wait_for_timeout(70)
+        def fval(kind, t):
+            k = kind.lstrip("-"); s_ = -1 if kind.startswith("-") else 1
+            if k == "cubic": return s_ * (t ** 3 - 3 * t)
+            return s_ * {"sin": math.sin, "cos": math.cos, "tan": math.tan}[k](math.radians(t))
+        def cpt(d, i, u):                                          # the page point of curve i at x = u (degrees, or units for a cubic)
+            c = d["curves"][i]; cub_ = d["axes"].get("fam") == "cubic"
+            v = c.get("sy", 1) * fval(c["kind"], (u - c.get("dx", 0)) / c.get("sx", 1)) + c.get("dy", 0)
+            return [d["x0"] + (u if cub_ else u / 90) * d["px"], d["y0"] - v * d["py"]]
+        def but(d, *ks): return {k: v for k, v in d.items() if k not in ks}
+        def cpts0(i, j=0):
+            return pg.evaluate("""([i, j]) => { const r = window.__T.recs('s0').find((x) => x.id === i); return window.__pw.ink.graphGeom(r).curves[j].runs.flat(); }""", [i, j])
+        XD = lambda d, u: d["x0"] + u / 90 * d["px"]; YD = lambda d, v: d["y0"] - v * d["py"]
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        show(pg, [W / 2, 300]); land(pg, "sin"); gid = graphs(pg)[0]["id"]; d0 = gd(); g0 = geo(pg, gid)
+        selt(); tapp(cpt(d0, 0, 90)); s = sel(pg)
+        check("a select tap on the sine's curve picks the CURVE alone: the one graph, curve 0", s and s["ids"] == [gid] and s["curve"] == 0, s)
+        acts = pg.evaluate("[...document.querySelectorAll('.selChips .chip')].map((b) => b.dataset.act)")
+        check("... its chips: the Axes pill and Delete only (no Copy, Cut, Duplicate, no Dotted copy)", sorted(acts) == ["axes", "delete"], acts)
+        hs = pg.evaluate("[...document.querySelectorAll('.sel circle')].map((c) => c.getAttribute('class'))")
+        check("... TWO round handles only, right and bottom: no corners, no turn ring, no left handle", sorted(hs) == ["selcx", "selcy"], hs)
+        zz = z(pg); pad = 4 / zz; cb = s and s["cbox"]
+        check("... the dashed box hugs what shows of the curve (0 to 360 across, 1 to -1 up), 4 px out; the right handle mid right side, the bottom one mid bottom",
+              cb and abs(cb[0] - (XD(d0, 0) - pad)) < 0.6 and abs(cb[2] - (XD(d0, 360) + pad)) < 0.6 and abs(cb[1] - (YD(d0, 1) - pad)) < 0.6 and abs(cb[3] - (YD(d0, -1) + pad)) < 0.6
+              and abs(s["hx"][0] - cb[2]) < 0.01 and abs(s["hx"][1] - (cb[1] + cb[3]) / 2) < 0.01 and abs(s["hy"][0] - (cb[0] + cb[2]) / 2) < 0.01 and abs(s["hy"][1] - cb[3]) < 0.01, [cb, s and s["hx"], s and s["hy"]])
+        check("... the tap changed nothing", gd() == d0)
+        shot3("1-curve-picked.png", g0["box"])
+        tapp([XD(d0, 135), d0["y0"]])
+        s = sel(pg)
+        check("a tap on the x-axis (inside the curve's box) picks the WHOLE graph, as before", s and s["ids"] == [gid] and s["curve"] is None, s)
+        tapp(cpt(d0, 0, 90)); s = sel(pg)
+        check("with the whole graph selected, a tap on its curve picks the curve alone", s and s["ids"] == [gid] and s["curve"] == 0, s)
+        tapp([XD(d0, 45), YD(d0, -0.6)]); s = sel(pg)
+        check("a tap on bare paper inside the curve's box keeps the curve picked", s and s["curve"] == 0, s)
+        tapp([XD(d0, 200), YD(d0, 4)]); s = sel(pg)
+        check("a tap on bare paper outside picks nothing", s is None, s)
+        box_select(pg, g0["box"]); s = sel(pg)
+        check("a box still picks the WHOLE graph (corners, turn ring, left handle), exactly as before", s and s["ids"] == [gid] and s["curve"] is None
+              and pg.locator(".sel .selh").count() == 4 and pg.locator(".sel .selgl").count() == 1, s)
+        clear_sel(pg); selt(); tapp(cpt(d0, 0, 90))
+
+        group[0] = "J. tap the curve: slide"
+        drag(cpt(d0, 0, 90), [-0.5 * d0["px"], 0])
+        d1 = gd(); c1 = d1["curves"][0]; g1 = geo(pg, gid)
+        check("a drag on the picked curve slides it LEFT 45 degrees: only its dx changes (-45); dy 0, stretches 1; the graph's place, size and window unchanged",
+              abs(c1["dx"] + 45) < 0.05 and c1["dy"] == 0 and c1["sx"] == 1 and c1["sy"] == 1 and but(c1, "dx") == but(d0["curves"][0], "dx") and but(d1, "curves") == but(d0, "curves"), c1)
+        check("... the axes, ticks, 90 degree marks and letters did not move", g1["labels"] == g0["labels"] and g1["lines"] == g0["lines"] and g1["ticks"] == g0["ticks"])
+        r1 = g1["runs"][0]
+        check("... the curve still fills the window, one run 0 to 360; at 360 it reads sin(405): the wave that came in from the right",
+              len(r1) == 1 and abs(r1[0][0][0] - XD(d0, 0)) < 0.01 and abs(r1[0][1][0] - XD(d0, 360)) < 0.01 and abs(r1[0][1][1] - YD(d0, math.sin(math.radians(405)))) < 0.3
+              and abs(r1[0][0][1] - YD(d0, math.sin(math.radians(45)))) < 0.3, r1)
+        s = sel(pg)
+        check("... still picked; its box went with it (the right handle level with the curve's middle)", s and s["curve"] == 0 and abs(s["hx"][1] - (s["cbox"][1] + s["cbox"][3]) / 2) < 0.01, s)
+        shot3("2-slid-left.png", g0["box"])
+        undo(pg)
+        check("ONE undo: back where it landed", gd() == d0, gd()["curves"])
+        pg.click("#redoBtn"); pg.wait_for_timeout(60)
+        check("redo: slid again", gd() == d1)
+        undo(pg)
+        if not (sel(pg) and sel(pg)["curve"] == 0): selt(); tapp(cpt(d0, 0, 90))
+        drag(cpt(d0, 0, 90), [0.25 * d0["px"], -0.3 * d0["py"]]); c = gd()["curves"][0]
+        check("a drag right and up: dx +22.5, dy +0.3 (free values, no snapping)", abs(c["dx"] - 22.5) < 0.05 and abs(c["dy"] - 0.3) < 0.002, c)
+        undo(pg)
+        if not (sel(pg) and sel(pg)["curve"] == 0): selt(); tapp(cpt(d0, 0, 90))
+        drag(cpt(d0, 0, 90), [0, 4 * d0["py"]]); c = gd()["curves"][0]
+        check("dragged far down: it stops with its middle line on the window's bottom (dy -1.35), so it can always be grabbed back", c["dy"] == -1.35, c)
+        undo(pg)
+        lims = pg.evaluate("""(i) => { const r = window.__T.recs('s0').find((x) => x.id === i), GR = window.__GR;
+          const a = GR.curveSet(r, 0, { dx: 1000, dy: 9, sx: 100, sy: 0.001 }).data.curves[0], b = GR.curveSet(r, 0, { dx: -1000, dy: -9, sx: 0.01, sy: 50 }).data.curves[0];
+          return [a, b, GR.SMIN, GR.SMAX]; }""", gid)
+        check("the limits (graph.js curveSet): stretches 1/8 to 8, dy within the window, a trig dx kept to one period about 0 (1000 -> 1000 - 3 x 360 / 8 ...)",
+              lims[2] == 0.125 and lims[3] == 8 and lims[0]["sx"] == 8 and lims[0]["sy"] == 0.125 and lims[0]["dy"] == 1.35 and abs(lims[0]["dx"]) <= 360 * 8 / 2
+              and lims[1]["sx"] == 0.125 and lims[1]["sy"] == 8 and lims[1]["dy"] == -1.35 and abs(lims[1]["dx"]) <= 360 * 0.125 / 2 + 1e-9, lims)
+
+        group[0] = "J. tap the curve: stretch"
+        if not (sel(pg) and sel(pg)["curve"] == 0): selt(); tapp(cpt(d0, 0, 90))
+        s = sel(pg); hx = s["hx"]; lev = hx[0] - d0["x0"]
+        drag(hx, [-lev / 2, 0])
+        d2 = gd(); c2 = d2["curves"][0]; g2 = geo(pg, gid)
+        check("the right handle dragged halfway to the y-axis SQUASHES it: sx 0.5 (dx 0, dy 0, sy 1); the graph unchanged",
+              abs(c2["sx"] - 0.5) < 0.01 and c2["dx"] == 0 and c2["dy"] == 0 and c2["sy"] == 1 and but(d2, "curves") == but(d0, "curves"), c2)
+        P = cpts0(gid)
+        near_ = lambda q: min(math.hypot(a[0] - q[0], a[1] - q[1]) for a in P)
+        check("... more waves in the same axes: peaks at 45 and 225 degrees, troughs at 135 and 315",
+              all(near_([XD(d0, u), YD(d0, v)]) < 0.6 for u, v in [(45, 1), (225, 1), (135, -1), (315, -1)]), [near_([XD(d0, u), YD(d0, v)]) for u, v in [(45, 1), (225, 1), (135, -1), (315, -1)]])
+        check("... the marks stay put (90, 180, 270, 360 where they were)", g2["labels"] == g0["labels"] and g2["ticks"] == g0["ticks"])
+        shot3("3-squashed.png", g0["box"])
+        undo(pg)
+        check("ONE undo: back", gd() == d0)
+        if not (sel(pg) and sel(pg)["curve"] == 0): selt(); tapp(cpt(d0, 0, 90))
+        hx = sel(pg)["hx"]; drag(hx, [lev / 2, 0]); c = gd()["curves"][0]
+        check("dragged out instead: WIDER, each wave longer (sx 1.5)", abs(c["sx"] - 1.5) < 0.01, c)
+        undo(pg)
+        if not (sel(pg) and sel(pg)["curve"] == 0): selt(); tapp(cpt(d0, 0, 90))
+        hx = sel(pg)["hx"]; drag(hx, [-(lev + 150), 0]); c = gd()["curves"][0]
+        check("dragged past the y-axis: it stops at sx 1/8 (8 waves in 360 degrees), never squashed to nothing", c["sx"] == 0.125, c)
+        undo(pg)
+        if not (sel(pg) and sel(pg)["curve"] == 0): selt(); tapp(cpt(d0, 0, 90))
+        s = sel(pg); hy = s["hy"]; levy = hy[1] - d0["y0"]
+        drag(hy, [0, levy / 2]); d3 = gd(); c3 = d3["curves"][0]
+        check("the bottom handle dragged down: TALLER (sy 1.5 about its middle line; dx 0, dy 0, sx 1); the graph unchanged",
+              abs(c3["sy"] - 1.5) < 0.01 and c3["dx"] == 0 and c3["dy"] == 0 and c3["sx"] == 1 and but(d3, "curves") == but(d0, "curves"), c3)
+        P = cpts0(gid)
+        check("... cut at the window's top and bottom (1.35 up and down)", abs(min(q[1] for q in P) - YD(d0, 1.35)) < 0.05 and abs(max(q[1] for q in P) - YD(d0, -1.35)) < 0.05)
+        shot3("4-taller.png", g0["box"])
+        undo(pg)
+        if not (sel(pg) and sel(pg)["curve"] == 0): selt(); tapp(cpt(d0, 0, 90))
+        hy = sel(pg)["hy"]; drag(hy, [0, -(levy + 150)]); c = gd()["curves"][0]
+        check("dragged up past its middle: it stops at sy 1/8 (shorter, never flat)", c["sy"] == 0.125, c)
+        undo(pg)
+        if not (sel(pg) and sel(pg)["curve"] == 0): selt(); tapp(cpt(d0, 0, 90))
+        tapp(sel(pg)["hx"])
+        check("a tap on a handle changes nothing; the curve stays picked", gd() == d0 and sel(pg) and sel(pg)["curve"] == 0)
+
+        group[0] = "J. tap the curve: two curves"
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        land(pg, "sin"); gid = graphs(pg)[0]["id"]
+        pen_colour(PINK); pick(geo(pg, gid)["box"]); tap("cos")
+        dd = gd(); gb = geo(pg, gid)["box"]
+        check("set up: one graph, sin (Blue) and cos (pink)", [(k["kind"], k["colour"].lower()) for k in dd["curves"]] == [("sin", BLUE.lower()), ("cos", PINK.lower())], dd["curves"])
+        clear_sel(pg); selt(); tapp(cpt(dd, 1, 180)); s = sel(pg)
+        check("a tap on the cos picks the cos alone (curve 1)", s and s["curve"] == 1, s)
+        drag(cpt(dd, 1, 180), [0.5 * dd["px"], 0]); dm = gd()
+        check("a drag slides ONLY the cos (dx +45); the sin untouched", abs(dm["curves"][1]["dx"] - 45) < 0.05 and dm["curves"][0] == dd["curves"][0] and but(dm, "curves") == but(dd, "curves"), dm["curves"])
+        shot3("7-two-curves-one-moved.png", gb)
+        pg.click(f'#tray .sw[data-colour="{THIRD}"]'); pg.wait_for_timeout(60)
+        cs = gd()["curves"]
+        check("a colour tap with the cos picked recolours the COS; the sin stays Blue", cs[1]["colour"].lower() == THIRD.lower() and cs[0]["colour"] == BLUE, cs)
+        undo(pg)
+        if not (sel(pg) and sel(pg)["curve"] is not None): selt()
+        tapp(cpt(dm, 0, 90)); s = sel(pg)
+        check("a tap on the sin picks the sin (curve 0)", s and s["curve"] == 0, s)
+        pg.click(f'#tray .sw[data-colour="{THIRD}"]'); pg.wait_for_timeout(60)
+        cs = gd()["curves"]
+        check("... a colour tap now recolours the SIN (the older curve); the cos stays pink", cs[0]["colour"].lower() == THIRD.lower() and cs[1]["colour"].lower() == PINK.lower(), cs)
+        undo(pg)
+        check("... one undo step", gd() == dm)
+        if not (sel(pg) and sel(pg)["curve"] == 0): selt(); tapp(cpt(dm, 0, 90))
+        pg.click(".selChips .chip[data-act='delete']"); pg.wait_for_timeout(60)
+        check("Delete with the sin picked removes the sin only; the graph stays with its (moved) cos, nothing picked",
+              len(recs(pg)) == 1 and gd()["curves"] == [dm["curves"][1]] and but(gd(), "curves") == but(dm, "curves") and sel(pg) is None, gd()["curves"])
+        dc = gd(); selt(); tapp(cpt(dc, 0, 225))
+        pg.click(".selChips .chip[data-act='delete']"); pg.wait_for_timeout(60)
+        check("Delete with the ONLY curve picked removes the whole graph (no bare axes left behind)", recs(pg) == [], recs(pg))
+        undo(pg)
+        check("undo: the graph with its cos is back", len(graphs(pg)) == 1 and gd() == dc)
+        undo(pg)
+        check("undo again: both curves are back", gd() == dm)
+
+        group[0] = "J. tap the curve: every kind"
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        land(pg, "tan"); gid = graphs(pg)[0]["id"]; dt = gd(); gt = geo(pg, gid)
+        selt(); tapp(cpt(dt, 0, 45))
+        drag(cpt(dt, 0, 45), [-dt["px"] / 3, 0]); gt2 = geo(pg, gid); c = gd()["curves"][0]
+        check("tan slid left 30 degrees: its dashed asymptotes went along (90, 270 -> 60, 240); the marks stayed",
+              abs(c["dx"] + 30) < 0.05 and len(gt2["asym"]) == 2 and abs(gt2["asym"][0] - XD(dt, 60)) < 0.05 and abs(gt2["asym"][1] - XD(dt, 240)) < 0.05 and gt2["labels"] == gt["labels"], [c, gt2["asym"]])
+        shot3("5-tan-slid.png", gt["box"])
+        for k in KINDS + CUBICS:
+            pg.evaluate("window.__T.clear('s0')"); clear_sel(pg)
+            land(pg, k); d = gd(); gid = graphs(pg)[0]["id"]; cub_ = k in CUBICS; u = {"sin": 90, "cos": 180, "tan": 45, "cubic": -1}[k.lstrip("-")]
+            selt(); tapp(cpt(d, 0, u)); s = sel(pg); ok_p = bool(s and s["ids"] == [gid] and s["curve"] == 0)
+            drag(cpt(d, 0, u), [20, -10]); c = gd()["curves"][0]
+            ex = 20 / d["px"] * (1 if cub_ else 90); ey = 10 / d["py"]
+            ok_s = abs(c["dx"] - ex) < 0.02 and abs(c["dy"] - ey) < 0.002 and c["sx"] == 1 and c["sy"] == 1 and but(gd(), "curves") == but(d, "curves")
+            zz = z(pg); s = sel(pg); hx, hy = s["hx"], s["hy"]
+            drag(hx, [max(hx[0] - d["x0"], 40 / zz) * 0.5, 0]); c2 = gd()["curves"][0]
+            ok_w = abs(c2["sx"] - 1.5) < 0.01 and abs(c2["dx"] - c["dx"] * c2["sx"]) < 0.02 and c2["dy"] == c["dy"]
+            hy = sel(pg)["hy"]; drag(hy, [0, max(hy[1] - (d["y0"] - c2["dy"] * d["py"]), 40 / zz) * 0.5]); c3 = gd()["curves"][0]
+            ok_t = abs(c3["sy"] - 1.5) < 0.01 and c3["dy"] == c2["dy"] and c3["sx"] == c2["sx"] and c3["dx"] == c2["dx"]
+            undo(pg); undo(pg); undo(pg)
+            check(f"{k}: a tap picks the curve; it slides (dx, dy), widens (sx 1.5 about the y-axis) and grows taller (sy 1.5); three undos put it back",
+                  ok_p and ok_s and ok_w and ok_t and gd() == d, [ok_p, ok_s, ok_w, ok_t, c, c2, c3])
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg)
+        land(pg, "cubic"); gid = graphs(pg)[0]["id"]; dcub = gd(); gcub = geo(pg, gid)
+        selt(); tapp(cpt(dcub, 0, -1))
+        drag(cpt(dcub, 0, -1), [0.4 * dcub["px"], -0.5 * dcub["py"]])
+        hx = sel(pg)["hx"]; drag(hx, [(hx[0] - dcub["x0"]) * 0.3, 0]); c = gd()["curves"][0]
+        check("a cubic slid up and right (dx 0.4, dy 0.5) then stretched wider (sx 1.3, its centre carried out from the y-axis to 0.52)",
+              abs(c["sx"] - 1.3) < 0.01 and abs(c["dx"] - 0.52) < 0.02 and abs(c["dy"] - 0.5) < 0.003, c)
+        check("... the cubic's axes did not move", geo(pg, gid)["lines"] == gcub["lines"] and geo(pg, gid)["labels"] == gcub["labels"])
+        shot3("6-cubic-slid-stretched.png", gcub["box"])
+        undo(pg); undo(pg)
+        if not (sel(pg) and sel(pg)["curve"] == 0): selt(); tapp(cpt(dcub, 0, -1))
+        drag(cpt(dcub, 0, -1), [5 * dcub["px"], 0]); c = gd()["curves"][0]
+        check("a cubic dragged far right stops with its centre on the window's edge (dx 2.6)", c["dx"] == 2.6, c)
+        undo(pg)
+
+        group[0] = "J. tap the curve: thumb + PDF + share + reload"
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        show(pg, [W / 2, 300]); land(pg, "sin"); gid = graphs(pg)[0]["id"]; d = gd()
+        selt(); tapp(cpt(d, 0, 90)); hx = sel(pg)["hx"]; drag(hx, [-(hx[0] - d["x0"]) / 2, 0])
+        dsq = gd(); clear_sel(pg); pg.click("#tool-pen"); pg.wait_for_timeout(30)
+        check("set up: a squashed sine (sx 0.5)", abs(dsq["curves"][0]["sx"] - 0.5) < 0.01, dsq["curves"])
+        same_d = pg.evaluate("""(i) => { const a = document.querySelector(`#stack .sheet[data-id='s0'] svg.ink [data-id='${i}'] path.curve`);
+          const t = window.__pw.ink.thumbSvg('s0').querySelector(`[data-id='${i}'] path.curve`); return !!a && !!t && a.getAttribute('d') === t.getAttribute('d'); }""", gid)
+        check("thumbSvg draws exactly the page's moved curve (the same path)", same_d)
+        pg.click("#listBtn"); pg.wait_for_selector("#pageList:not([hidden])"); pg.wait_for_timeout(300)
+        thd = pg.evaluate("""(i) => { const a = document.querySelector(`#stack .sheet[data-id='s0'] svg.ink [data-id='${i}'] path.curve`);
+          const t = document.querySelector(`#plThumbs .thumbP[data-index='1'] [data-id='${i}'] path.curve`); return !!t && a.getAttribute('d') === t.getAttribute('d'); }""", gid)
+        check("the page list's thumb of page 1 draws the moved curve", thd)
+        tb = rect(pg, "#plThumbs .thumbP[data-index='1']"); thumb_png = SH3 / "_thumb.png"
+        pg.screenshot(path=str(thumb_png), clip={"x": tb["l"] - 6, "y": tb["t"] - 6, "width": tb["w"] + 12, "height": tb["h"] + 12})
+        on_new = [XD(dsq, 45), YD(dsq, 1)]; on_old = [XD(dsq, 90), YD(dsq, 1)]
+        doc = pdf_of(pg, "Unit3"); p0 = doc[0]
+        pix = p0.get_pixmap(dpi=144); img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB"); sk = pix.width / W
+        check("the PDF shows the squashed sine: Blue at its new peak (45 degrees), nothing at the old one (90 degrees)",
+              any_px(img, on_new[0] * sk, on_new[1] * sk, 2, bluish) and not any_px(img, on_old[0] * sk, on_old[1] * sk, 2, bluish))
+        doc.close()
+        th_img = Image.open(str(thumb_png)).convert("RGB")
+        hh = 800; t2 = th_img.resize((round(th_img.width * hh / th_img.height), hh)); p2i = img.resize((round(img.width * hh / img.height), hh))
+        comp = Image.new("RGB", (t2.width + p2i.width + 30, hh + 20), (210, 210, 210)); comp.paste(t2, (10, 10)); comp.paste(p2i, (t2.width + 20, 10))
+        if comp.width > 900: comp = comp.resize((900, round(comp.height * 900 / comp.width)))
+        comp.save(str(SH3 / "8-thumb-pdf.png")); thumb_png.unlink()
+        pg.click("#plSelect"); pg.wait_for_timeout(40)
+        pg.locator("#plThumbs .thumbP[data-index='1']").click(); pg.wait_for_timeout(40)
+        pg.click("#plBar button[data-act='share']"); pg.wait_for_selector("#shareDlg")
+        pg.evaluate("window.__shared = null")
+        pg.click("#shareDlg button[data-share='images']"); pg.wait_for_selector("#shareReady", timeout=30000)
+        pg.click("#shareDlg button[data-share='send']"); pg.wait_for_function("window.__shared", timeout=10000)
+        png = pg.evaluate("""async () => { const f = window.__shared.files[0]; const u = new Uint8Array(await f.arrayBuffer()); let s = '';
+          for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000)); return [f.type, btoa(s)]; }""")
+        si = Image.open(io.BytesIO(base64.b64decode(png[1]))).convert("RGB"); ss = si.width / W
+        check("a shared picture shows it the same: Blue at the new peak, nothing at the old one",
+              any_px(si, on_new[0] * ss, on_new[1] * ss, 2, bluish) and not any_px(si, on_old[0] * ss, on_old[1] * ss, 2, bluish))
+        if pg.evaluate("window.__pw.tick()") is not None: pg.click("#plDone"); pg.wait_for_timeout(40)
+        if not pg.locator("#pageList").is_hidden(): pg.click("#plClose"); pg.wait_for_timeout(40)
+        pg.evaluate("window.__pw.idle()"); pg.wait_for_timeout(200)
+        pg.click("#backBtn"); pg.wait_for_selector("#listView:not([hidden])"); pg.wait_for_timeout(80)
+        pg.reload(); ready(pg); open_note(pg); pg.evaluate(HELP)
+        check("after a reload the squashed sine is back exactly", graphs(pg) and gd() == dsq)
+
         # ------------------------------------------------------------ G: Caveat from the app's own files
         group[0] = "G. Caveat offline"
         open_gcard(pg); pg.wait_for_timeout(300); close_panel(pg)
@@ -831,8 +1292,8 @@ try:
         g_req = [u for u in reqs if "caveat" in u.lower() and ("googleapis" in u or "gstatic" in u)]
         own = [u for u in reqs if u.endswith("/fonts/caveat-500.woff2")]
         check("no request ever asked Google for Caveat; the app's own file was fetched", g_req == [] and own, [g_req, own[:2]])
-        check("sw.js: CACHE pw-v9k, its version line, and graph.js, caveat-glyphs.js and the font in the shell",
-              'const CACHE = "pw-v9k";' in swt and "   pw-v9k (16 Nov): " in swt and all(f in swt for f in ['"./js/graph.js"', '"./js/caveat-glyphs.js"', '"./fonts/caveat-500.woff2"']))
+        check("sw.js: CACHE pw-v9m, its version line, and graph.js, caveat-glyphs.js and the font in the shell",
+              'const CACHE = "pw-v9m";' in swt and "   pw-v9m (19 Nov): " in swt and all(f in swt for f in ['"./js/graph.js"', '"./js/caveat-glyphs.js"', '"./fonts/caveat-500.woff2"']))
         check("no page errors", not errs, errs)
         ctx.close()
         b.close()

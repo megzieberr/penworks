@@ -104,6 +104,15 @@
 // when the opened graph would cross the page's left edge the whole graph slides right just enough to stay PAGE_M inside
 // (worked out from where the drag started, so pushing back brings it back), and where sliding would push its right end off
 // the page the handle stops opening (openStart, openedTo); the window and the slide are the same one undo step.
+// pw-v9m (unit 3, "tap the curve"): a select TAP on a quick graph's curve picks that curve alone (SEL.curve = its index;
+// SEL.ids still holds the one graph): a dashed box round what shows of the curve and two round handles only, right (wider
+// and narrower) and bottom (taller and shorter), the mock's panel 3; chips Axes and Delete. A drag that lands inside that
+// box or on the curve slides it (data.curves[i].dx, dy); a handle stretches it (sx about the y-axis, so dx goes along;
+// sy about the curve's own middle line). The axes, marks, letters and the graph's size never move; graph.js curveSet keeps
+// the limits. Each drag is one undo step (same id and seq). A tap inside the box picks again (another curve, the axes = the
+// whole graph, bare paper = stays). With the whole graph selected, a tap on one of its curves picks that curve. A colour or
+// restyle tap recolours the picked curve; Delete removes it (its graph stays), or the whole graph when it was the only one.
+// A box still picks the whole graph, exactly as before.
 // Regular shapes (pw-v8g, her ask 2 Nov 16:54: "squares and triangles to come out as proper shapes ... PERFECT equalateral
 // triangles"). A held ring's corners are fitted, still a 'triangle' with 3 points or a 'rect' with 4 (fitTriangle, fitQuad):
 // a triangle with exactly one angle within 12 degrees of 90 becomes a true right triangle (the right-angle corner stays, the
@@ -167,7 +176,7 @@ import * as store from './store.js';
 import { pageAt, pagePoint, view, pageSize, CM, surfaceAt, surfacePoint, SK_COLOURS, SK_STRIP } from './page.js';
 import { bytesOf } from './pdfin.js';
 import { alignDir, segsOf, markOf, markPaths, roundAlong, lineCross, distToSeg as segGap, segCross, MEET, FADE_MS } from './align.js';
-import { graphGeom, graphParts, XL_MIN, withCurve, stampCurveParts, stampCurveSegs } from './graph.js';
+import { graphGeom, graphParts, XL_MIN, withCurve, curveFits, stampCurveParts, stampCurveSegs, curveSet, curveBox, curveAt, SMIN, SMAX } from './graph.js';
 export { graphGeom };
 
 // snap: the pen held still this long (ms) at the end of a stroke; ?hold=400 in the address overrides it.
@@ -1554,14 +1563,14 @@ function hideHandle() { if (hring) hring.hidden = true; }
 const barrel = (e) => !!(e.buttons & 2) || e.button === 2;
 // pw-v7m: page point `at` is inside the selection box (the closed rectangle: on the dashed line counts as inside)
 function inSel(at) {
-  if (!SEL || SEL.page !== at.id || !SEL.box) return false;
+  if (!SEL || SEL.page !== at.id || !SEL.box || SEL.curve != null) return false;   // pw-v9m: a picked curve has its own grips (down)
   const b = SEL.box;
   return at.x >= b[0] && at.x <= b[2] && at.y >= b[1] && at.y <= b[3];
 }
 // the selection's own grips at page point `at` (page at.id): 'rot' on its turn ring, a corner index 0..3, else null.
 // pw-v7m: a corner only from OUTSIDE the box (within GRAB of it); inside the box is always a move
 function selGrip(at, z) {
-  if (!SEL || SEL.page !== at.id || !SEL.box || SEL.locked) return null;   // U4c: a locked picture has no grips
+  if (!SEL || SEL.page !== at.id || !SEL.box || SEL.locked || SEL.curve != null) return null;   // U4c: a locked picture has no grips; pw-v9m: nor a picked curve
   const reach = GRAB / z;
   if (SEL.rot && Math.hypot(SEL.rot[0] - at.x, SEL.rot[1] - at.y) <= reach) return 'rot';
   if (inSel(at)) return null;
@@ -1574,6 +1583,11 @@ function selGrip(at, z) {
 function hover(e) {
   if (T.tool !== 'select' || G) { hideHandle(); return; }
   const at = surfaceAt(e.clientX, e.clientY), z = view().z;
+  if (at && SEL && SEL.curve != null && SEL.page === at.id) {      // pw-v9m: a picked curve's two handles
+    const q = [SEL.hx, SEL.hy].find((p) => p && Math.hypot(p[0] - at.x, p[1] - at.y) <= HANDLE_REACH / z);
+    if (q) showHandle(e.clientX + (q[0] - at.x) * z, e.clientY + (q[1] - at.y) * z); else hideHandle();
+    return;
+  }
   const h = at && selGrip(at, z) === null && !inSel(at) && handleAt(at.id, at.x, at.y, HANDLE_REACH / z);
   if (!h) { hideHandle(); return; }
   showHandle(e.clientX + (h.at[0] - at.x) * z, e.clientY + (h.at[1] - at.y) * z);
@@ -1636,9 +1650,42 @@ export function clearSelection() {
   SEL.g.remove(); SEL.chips.remove(); SEL.deg.remove();
   SEL = null;
 }
-export function selection() { return SEL ? { page: SEL.page, ids: [...SEL.ids], box: selBox(selRecs()) } : null; }
+export function selection() {                    // pw-v9m: curve, the picked curve's index (null: the records whole); cbox its box, hx, hy its handles
+  if (!SEL) return null;
+  const s = { page: SEL.page, ids: [...SEL.ids], box: selBox(selRecs()), curve: SEL.curve != null ? SEL.curve : null };
+  if (SEL.curve != null) { s.cbox = SEL.box && SEL.box.slice(); s.hx = SEL.hx && SEL.hx.slice(); s.hy = SEL.hy && SEL.hy.slice(); }
+  return s;
+}
 function setAttrs(el, at) { for (const k in at) el.setAttribute(k, typeof at[k] === 'number' ? f1(at[k]) : at[k]); }
+// pw-v9m: a picked curve's look (the mock's panel 3): the app's dashed box round what shows of the curve (4 px out), a round
+// handle in the middle of its right side (wider) and of its bottom (taller); no corners, no turn ring. SEL.over: the record
+// while a slide or a stretch is live (the box and handles follow it)
+function renderCurveSel(d, z) {
+  if (!SEL.g.parentNode) d.svg.appendChild(SEL.g);
+  if (!SEL.chips.parentNode) d.svg.parentNode.appendChild(SEL.chips);
+  if (!SEL.deg.parentNode) d.svg.parentNode.appendChild(SEL.deg);
+  SEL.g.textContent = ''; SEL.g.removeAttribute('transform');
+  SEL.rot = null; SEL.gl = null; SEL.hx = null; SEL.hy = null;
+  fillChips();
+  const r = SEL.over || selRecs()[0], b = r && curveBox(r, SEL.curve), gg = r && graphGeom(r);
+  if (!b) { SEL.box = null; return; }
+  const pad = 4 / z, x0 = b[0] - pad, y0 = b[1] - pad, x1 = b[2] + pad, y1 = b[3] + pad;
+  const box = document.createElementNS(SVGNS, 'rect');
+  setAttrs(box, { class: 'selbox', x: x0, y: y0, width: x1 - x0, height: y1 - y0, fill: 'none', stroke: SEL_BLUE,
+    'stroke-width': 1.5 / z, 'stroke-dasharray': f1(6 / z) + ' ' + f1(4 / z) });
+  SEL.g.appendChild(box);
+  SEL.hx = [x1, (y0 + y1) / 2]; SEL.hy = [(x0 + x1) / 2, y1];
+  for (const [k, q] of [['x', SEL.hx], ['y', SEL.hy]]) {
+    const c = document.createElementNS(SVGNS, 'circle');
+    setAttrs(c, { class: 'selc' + k, cx: q[0], cy: q[1], r: 6 / z, fill: '#FFFFFF', stroke: SEL_BLUE, 'stroke-width': 1.5 / z });
+    SEL.g.appendChild(c);
+  }
+  SEL.box = [x0, y0, x1, y1];
+  SEL.ax = gg ? gg.cross[0] : null;
+  placeChips(null);
+}
 function renderSel(t) {                          // t: a live transform while dragging the selection
+  if (SEL.curve != null) { const z = view().z; SEL.z = z; renderCurveSel(data(SEL.page), z); return; }
   const d = data(SEL.page), z = view().z, b = selBox(selRecs());
   SEL.z = z;
   if (!SEL.g.parentNode) d.svg.appendChild(SEL.g);
@@ -1675,7 +1722,7 @@ function renderSel(t) {                          // t: a live transform while dr
   SEL.g.append(stem, knob);
   SEL.rot = [cx, ry];
   const gr = soloGraph(), gg = gr && graphGeom(gr);                 // pw-v9j: one graph: a round handle on the x-axis's left end
-  SEL.gl = gg ? gg.left.slice() : null;
+  SEL.gl = gg && gg.left ? gg.left.slice() : null;               // pw-v9l: a cubic graph has none (left null)
   if (SEL.gl) {
     const h = document.createElementNS(SVGNS, 'circle');
     setAttrs(h, { class: 'selgl', cx: SEL.gl[0], cy: SEL.gl[1], r: 6 / z, fill: '#FFFFFF', stroke: SEL_BLUE, 'stroke-width': 1.5 / z });
@@ -1690,6 +1737,7 @@ function placeChips(m) {                         // m: [s, ox, oy, dx, dy] while
   if (m) { const [s, ox, oy, dx, dy] = m; x0 = ox + (x0 - ox) * s + dx; y0 = oy + (y0 - oy) * s + dy; rx = ox + (rx - ox) * s + dx; }
   const c = SEL.chips, z = SEL.z, gap = 14 / z, w = c.offsetWidth / z;
   if (x0 + w > rx - gap) x0 = rx + gap;      // they would cover the turn ring: they start just right of it
+  if (SEL.curve != null && SEL.ax != null && x0 < SEL.ax + 22 / z && x0 + w > SEL.ax - 30 / z) x0 = SEL.ax + 22 / z;   // pw-v9m: chips that would cover the y-axis start just right of it (the mock), its arrow and letter in sight
   c.style.left = f1(x0) + 'px'; c.style.top = f1(y0) + 'px';
   c.style.transform = `scale(${1 / z}) translateY(calc(-100% - 8px))`;
   // pw-v7l: the four chips are 170 px wide on screen, so on a phone they would run off the desk beside a selection near the
@@ -1707,14 +1755,19 @@ function syncSel() {
   const d = data(SEL.page);
   for (const id of [...SEL.ids]) if (!d.byId.has(id)) SEL.ids.delete(id);
   if (!SEL.ids.size || !d.svg) { clearSelection(); return; }
+  if (SEL.curve != null) {                         // pw-v9m: the picked curve gone (an undo, a delete elsewhere): nothing picked
+    const r = selRecs()[0];
+    if (!isGraph(r) || !Array.isArray(r.data.curves) || !r.data.curves[SEL.curve]) { clearSelection(); return; }
+  }
   renderSel();
 }
-function makeSel(page, ids) {
+function makeSel(page, ids, curve = null) {      // pw-v9m: curve, the index of the one graph's picked curve
   clearSelection();
   const g = document.createElementNS(SVGNS, 'g'); g.setAttribute('class', 'sel');
   const chips = document.createElement('div'); chips.className = 'selChips';
   const deg = document.createElement('div'); deg.className = 'selDeg';   // the turn's degrees, shown only while turning
-  SEL = { page, ids: new Set(ids), g, chips, deg, z: 0, box: null, rot: null, live: null, locked: false, ckey: null };
+  SEL = { page, ids: new Set(ids), g, chips, deg, z: 0, box: null, rot: null, live: null, locked: false, ckey: null,
+          curve: curve != null && ids.length === 1 ? curve : null, hx: null, hy: null, ax: null, over: null };
   renderSel();
 }
 // the chips for what is selected now (renderSel calls it; they are made again only when that changes): Copy, Cut, Duplicate,
@@ -1726,7 +1779,8 @@ function fillChips() {
   const recs = selRecs(), pic = recs.some(isImg), locked = recs.some(isLocked), solo = recs.length === 1 && pic && !locked;
   const one = solo && !!cutOut, crop = solo && !!cropIt;
   const graphs = recs.filter(isGraph), axesOn = graphs.some(graphAxesOn);   // pw-v9j: the Axes pill while a graph is selected
-  const key = (pic ? 'p' : '-') + (locked ? 'l' : '-') + (one ? 'c' : '-') + (crop ? 'k' : '-') + (graphs.length ? (axesOn ? 'A' : 'a') : '-');
+  const cm = SEL.curve != null;                    // pw-v9m: a picked curve: Axes and Delete only
+  const key = (pic ? 'p' : '-') + (locked ? 'l' : '-') + (one ? 'c' : '-') + (crop ? 'k' : '-') + (graphs.length ? (axesOn ? 'A' : 'a') : '-') + (cm ? 'C' : '-');
   SEL.locked = locked;
   if (SEL.ckey === key) return;
   SEL.ckey = key;
@@ -1739,7 +1793,7 @@ function fillChips() {
     btn.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
     chips.appendChild(btn);
   };
-  if (!locked) { chip('copy', 'Copy', SVG_COPY, copySel); chip('cut', 'Cut', SVG_CUT, cutSel); chip('duplicate', 'Duplicate', SVG_PLUS, duplicateSel); }
+  if (!locked && !cm) { chip('copy', 'Copy', SVG_COPY, copySel); chip('cut', 'Cut', SVG_CUT, cutSel); chip('duplicate', 'Duplicate', SVG_PLUS, duplicateSel); }
   chip('delete', 'Delete', SVG_BIN, deleteSel);
   if (pic) chip('lock', locked ? 'Unlock' : 'Lock', locked ? SVG_UNLOCK : SVG_LOCK, lockSel);
   if (one) chip('cutout', 'Cut out', SVG_WAND, cutoutSel);
@@ -1968,8 +2022,12 @@ function holdMenu(cx, cy) {
 }
 function deleteSel() {
   if (!SEL) return;
-  const page = SEL.page, recs = selRecs();
+  const page = SEL.page, recs = selRecs(), ci = SEL.curve;
   clearSelection();
+  if (ci != null && isGraph(recs[0])) {            // pw-v9m: a picked curve goes alone, its graph stays; the only curve: the whole graph goes
+    const r = recs[0], cs = r.data.curves || [];
+    if (cs.length > 1) { doOp(changeOp([{ page, removed: [r], added: [{ ...r, style: { ...r.style }, data: { ...r.data, curves: cs.filter((_, j) => j !== ci) } }] }])); return; }
+  }
   if (recs.length) doOp(changeOp([{ page, removed: recs, added: [] }]));
 }
 // does segment a-b touch the box B (inside it or crossing an edge)? Liang-Barsky clipping
@@ -2043,12 +2101,14 @@ function changeSel(fn) {
   return true;
 }
 export function recolourSelection(c) {          // colour only: width, dash, opacity and geometry stay (U4c: never a picture)
-  return changeSel((r) => (isImg(r) ? null : r.kind === 'graph' ? graphColour(r, c) : same((r.style || {}).colour, c) ? null : { ...r, style: { ...r.style, colour: c } }));
+  return changeSel((r) => (isImg(r) ? null : r.kind === 'graph' ? graphColour(r, c, pickedCurve(r)) : same((r.style || {}).colour, c) ? null : { ...r, style: { ...r.style, colour: c } }));
 }
+// pw-v9m: the index of r's picked curve when the selection is that one curve, else null
+const pickedCurve = (r) => (SEL && SEL.curve != null && SEL.ids.has(r.id) ? SEL.curve : null);
 // pw-v9j: a graph's axes stay black (her ruling 15 Nov): a new colour goes to its curves only
-// pw-v9k: with more than one curve, only the NEWEST (the last added) takes it
-function graphColour(r, c) {
-  const cs = (r.data && r.data.curves) || [], n = cs.length - 1;
+// pw-v9k: with more than one curve, only the NEWEST (the last added) takes it; pw-v9m: a picked curve (i) takes it instead
+function graphColour(r, c, i = null) {
+  const cs = (r.data && r.data.curves) || [], n = i != null && cs[i] ? i : cs.length - 1;
   if (n < 0 || same(cs[n].colour, c)) return null;
   return { ...r, style: { ...r.style }, data: { ...r.data, curves: cs.map((k, i) => (i === n ? { ...k, colour: c } : k)) } };
 }
@@ -2060,16 +2120,17 @@ export function addCurveSel(kind, pen) {
   if (!SEL || SEL.locked || SEL.ids.size !== 1) return false;
   const r = selRecs()[0];
   if (!r || !(r.kind === 'graph' || (r.kind === 'axes' && !(r.data && r.data.line) && axesGeom(r)))) return false;
+  if (!curveFits(r, kind)) return false;                           // pw-v9l: a cubic and a trig curve never share axes: a new graph lands
   const n = withCurve(r, kind, pen);
   if (n) changeSel((x) => (x.id === r.id ? n : null));
   return true;
 }
-export function restyleSelection() { return changeSel(restyled); }   // the full restyle rule
+export function restyleSelection() { return changeSel((r) => restyled(r, pickedCurve(r))); }   // the full restyle rule
 
 // ---------------------------------------------------------------- restyle: its own colour, the matching tool's width and opacity; restyle never changes the dash
-function restyled(r) {
+function restyled(r, ci = null) {
   if (isImg(r)) return null;                                       // U4c: restyle never touches a picture
-  if (r.kind === 'graph') return graphColour(r, (ST.restyle && ST.restyle.colour) || ST.pen.colour);   // pw-v9j: its curves' colour only
+  if (r.kind === 'graph') return graphColour(r, (ST.restyle && ST.restyle.colour) || ST.pen.colour, ci);   // pw-v9j: its curves' colour only (pw-v9m: the picked one)
   if (r.kind === 'axes') {                                         // U5e: colour only; an axes stays thin, solid and opaque
     const c2 = (ST.restyle && ST.restyle.colour) || ST.pen.colour;
     return same((r.style || {}).colour, c2) ? null : { ...r, style: { ...r.style, colour: c2 } };
@@ -2320,8 +2381,44 @@ export function liveShape(pageId, rec) {
   };
 }
 
+// pw-v9m: how far (x, y) is from what shows of curve i of the graph rec (page px; Infinity when nothing shows)
+function curveDist(rec, i, x, y) {
+  const g = graphGeom(rec), c = g && g.curves[i];
+  let best = Infinity;
+  if (!c) return best;
+  for (const run of c.runs) for (let k = 1; k < run.length; k++) best = Math.min(best, segDist2(x, y, run[k - 1], run[k]));
+  return Math.sqrt(best);
+}
+// pw-v9m: a select tap at (x, y) on page `page`: the topmost record under it alone, as before, except that a tap on a quick
+// graph's CURVE picks that curve alone. keep: a tap inside a picked curve's box: bare paper keeps what is picked
+function tapPick(page, x, y, z, keep) {
+  const id = topAt(page, x, y, GRAB / z);
+  if (!id) { if (keep && SEL) renderSel(); return; }
+  const r = data(page).byId.get(id), i = isGraph(r) ? curveAt(r, x, y, GRAB / z) : null;
+  if (keep && SEL && SEL.ids.size === 1 && SEL.ids.has(id) && SEL.curve === i) { renderSel(); return; }
+  makeSel(page, [id], i);
+}
+// pw-v9m: the graph g.rec with its picked curve (g.i) slid or stretched by the pen at page (x, y), from where the drag began
+// (worked out from g.rec every time, no snapping; graph.js curveSet keeps the limits).
+//   cslide: dx, dy follow the pen (page px over px per 90 degrees, or per unit for a cubic; over py up)
+//   cwide (the right handle): sx x k, about the y-axis (dx x k too, so what sits on the y-axis stays there)
+//   ctall (the bottom handle): sy x k, about the curve's own middle line (dy stays)
+//   k = 1 + how far the handle went / the lever (from the anchor to the handle where it began, 40 screen px at least)
+function curveDragged(g, x, y) {
+  const r = g.rec, d = r.data, c = d.curves[g.i], cub = !!(d.axes && d.axes.fam === 'cubic');
+  const dx0 = +c.dx || 0, dy0 = +c.dy || 0, sx0 = +c.sx || 1, sy0 = c.sy === undefined ? 1 : +c.sy;
+  if (g.kind === 'cslide') {
+    return curveSet(r, g.i, { dx: dx0 + (x - g.p0[0]) / d.px * (cub ? 1 : 90), dy: dy0 - (y - g.p0[1]) / d.py, sx: sx0, sy: sy0 });
+  }
+  if (g.kind === 'cwide') {
+    const k = 1 + (x + g.off[0] - g.h0[0]) / g.lever, sx = Math.max(SMIN, Math.min(SMAX, sx0 * k));
+    return curveSet(r, g.i, { dx: dx0 * sx / sx0, dy: dy0, sx, sy: sy0 });
+  }
+  const k = 1 + (y + g.off[1] - g.h0[1]) / g.lever;
+  return curveSet(r, g.i, { dx: dx0, dy: dy0, sx: sx0, sy: Math.max(SMIN, Math.min(SMAX, sy0 * k)) });
+}
 function down(e) {
-  if (e.button === 2) return false;                               // the right button / pen button press: never a gesture (page.js flips the tool on its contextmenu)
+  if (e.button === 2) return false;                              // the right button / pen button press: never a gesture (page.js flips the tool on its contextmenu)
   if (T.tool === 'pen' && barrel(e)) return false;                 // the pen tip down with the button held: a harmless miss, as before
   const at = surfaceAt(e.clientX, e.clientY);
   if (!at) { if (T.tool === 'select') clearSelection(); return false; }
@@ -2351,6 +2448,31 @@ function down(e) {
     return true;
   }
   if (T.tool === 'select') {                                       // first match wins (pw-v7m): ring, corner (from outside), inside the box, shape handle, a new box
+    // pw-v9m: a picked curve first: its right or bottom handle (within HANDLE_REACH, and nearer the handle than the curve,
+    // so a cos's trough under the bottom handle still slides) stretches it; inside its box or on the curve itself (within
+    // GRAB) slides it; anywhere else falls through (a new box, a tap picks again)
+    if (SEL && SEL.curve != null && SEL.page === at.id && SEL.box) {
+      const rec = selRecs()[0];
+      if (isGraph(rec)) {
+        const hr = HANDLE_REACH / z, b = SEL.box, dc = curveDist(rec, SEL.curve, at.x, at.y);
+        const dx_ = SEL.hx ? Math.hypot(SEL.hx[0] - at.x, SEL.hx[1] - at.y) : Infinity, dy_ = SEL.hy ? Math.hypot(SEL.hy[0] - at.x, SEL.hy[1] - at.y) : Infinity;
+        const hx = dx_ <= hr && dx_ <= dc && dx_ <= dy_;
+        const hy = !hx && dy_ <= hr && dy_ <= dc;
+        const inside = at.x >= b[0] && at.x <= b[2] && at.y >= b[1] && at.y <= b[3];
+        if (hx || hy || inside || dc <= GRAB / z) {
+          G = { kind: hx ? 'cwide' : hy ? 'ctall' : 'cslide', index: at.index, page: at.id, rec, now: rec, el: d.els.get(rec.id), i: SEL.curve,
+                p0: [at.x, at.y], far: 0, z };
+          if (hx || hy) {                                          // the stretch's anchor and lever (page px): see curveDragged
+            const h0 = (hx ? SEL.hx : SEL.hy).slice(), c = rec.data.curves[SEL.curve], dd = rec.data;
+            G.h0 = h0; G.off = [h0[0] - at.x, h0[1] - at.y];
+            const a = hx ? dd.x0 : dd.y0 - (+c.dy || 0) * dd.py;
+            G.lever = Math.max(hx ? h0[0] - a : h0[1] - a, 40 / z);
+          }
+          SEL.chips.style.visibility = 'hidden';
+          return true;
+        }
+      }
+    }
     // pw-v9j: before all of them, the one selected graph's left handle (within GRAB): it opens the x-axis to the left
     if (SEL && SEL.gl && SEL.page === at.id && Math.hypot(SEL.gl[0] - at.x, SEL.gl[1] - at.y) <= GRAB / z) {
       const rec = soloGraph();
@@ -2457,6 +2579,17 @@ function move(events) {
     if (h && gg) h.setAttribute('cx', f1(gg.left[0]));
     return;
   }
+  if (G.kind === 'cslide' || G.kind === 'cwide' || G.kind === 'ctall') {   // pw-v9m: the picked curve slides or stretches live
+    for (const e of events) {                                      // how far the pen ever got from where it landed (the tap rule)
+      const [qx, qy] = surfacePoint(G.index, e.clientX, e.clientY);
+      G.far = Math.max(G.far, Math.hypot(qx - G.p0[0], qy - G.p0[1]));
+    }
+    const [x, y] = surfacePoint(G.index, ev.clientX, ev.clientY);
+    G.now = curveDragged(G, x, y);
+    if (G.el) setGeom(G.el, G.now);
+    if (SEL && SEL.curve != null) { SEL.over = G.now; renderSel(); }
+    return;
+  }
   if (G.kind === 'grab') {
     const [x, y] = surfacePoint(G.index, ev.clientX, ev.clientY);
     for (const e of events) {                                      // how far the pen ever got from where it landed (the tap rule)
@@ -2527,6 +2660,19 @@ function up(e, cancelled) {
     doOp(changeOp([{ page: g.page, removed: [g.rec], added: [g.now] }]));
     return;
   }
+  if (g.kind === 'cslide' || g.kind === 'cwide' || g.kind === 'ctall') {   // pw-v9m: one undo step (same id and seq), the curve stays picked
+    if (SEL) { SEL.over = null; SEL.chips.style.visibility = ''; }
+    if (e && Number.isFinite(e.clientX)) { const [qx, qy] = surfacePoint(g.index, e.clientX, e.clientY); g.far = Math.max(g.far, Math.hypot(qx - g.p0[0], qy - g.p0[1])); }
+    const moved = JSON.stringify(g.now.data) !== JSON.stringify(g.rec.data);
+    if (!cancelled && g.far * g.z < 4) {                           // a tap (under 4 px on screen): no change; inside the box it picks again
+      if (g.el) setGeom(g.el, g.rec);
+      if (g.kind === 'cslide') tapPick(g.page, g.p0[0], g.p0[1], g.z, true); else if (SEL) renderSel();
+      return;
+    }
+    if (cancelled || !moved) { if (g.el) setGeom(g.el, g.rec); if (SEL) renderSel(); return; }
+    doOp(changeOp([{ page: g.page, removed: [g.rec], added: [g.now] }]));
+    return;
+  }
   if (g.kind === 'grab') {
     hideHandle();
     if (g.mark) { fadeAlignMark(g.mark); g.mark = null; }          // U5g: the square fades out
@@ -2545,9 +2691,8 @@ function up(e, cancelled) {
     g.band.remove();
     const b = [Math.min(g.p0[0], g.p1[0]), Math.min(g.p0[1], g.p1[1]), Math.max(g.p0[0], g.p1[0]), Math.max(g.p0[1], g.p1[1])];
     if (cancelled) return;
-    if ((b[2] - b[0]) * g.z < 4 || (b[3] - b[1]) * g.z < 4) {     // a tap: the topmost stroke under it, alone
-      const id = topAt(g.page, g.p0[0], g.p0[1], GRAB / g.z);
-      if (id) makeSel(g.page, [id]);
+    if ((b[2] - b[0]) * g.z < 4 || (b[3] - b[1]) * g.z < 4) {     // a tap: the topmost stroke under it, alone (pw-v9m: a graph's curve alone)
+      tapPick(g.page, g.p0[0], g.p0[1], g.z, false);
       return;
     }
     const ids = inBox(g.page, b);
@@ -2557,6 +2702,10 @@ function up(e, cancelled) {
   if (g.kind === 'smove' || g.kind === 'sresize' || g.kind === 'srotate') {
     unliveSel(g);
     const same = g.kind === 'smove' ? Math.hypot(g.dx, g.dy) < 0.5 : g.kind === 'sresize' ? Math.abs(g.s - 1) < 1e-3 : !g.a;
+    if (!cancelled && same && g.kind === 'smove' && SEL && SEL.ids.size === 1 && !SEL.locked) {   // pw-v9m: a tap on a curve of the one selected graph picks that curve
+      const r = selRecs()[0], i = isGraph(r) ? curveAt(r, g.p0[0], g.p0[1], GRAB / view().z) : null;
+      if (i !== null) { makeSel(g.page, [r.id], i); return; }
+    }
     if (cancelled || same) return;                                 // a tap or a 0 px drag: nothing changes, no reorder
     // the changed selection comes to the front: fresh seq values after every stroke on the page, in its own order
     // U5e: a turn leaves an axes stamp exactly as it was (no new seq either)
