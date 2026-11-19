@@ -1972,13 +1972,33 @@ function flipTray() {
 }
 
 // ---------------------------------------------------------------- start
+// pw-v9n, the 3-second rule: a wifi that is connected but dead never fails a request, it just never answers. The bin
+// purge and the tree read share ONE 3-second budget; past it the device's snapshot is drawn as if the read had failed,
+// and the read, when it does land, is kept as the snapshot and merged in (or left for the next refresh). No snapshot on
+// this device: the read is waited for, as before. The profile gets the same budget and is applied late if it is late.
+const START_MS = 3000, LATE = Symbol('late');
+const budget = (p, until) => Promise.race([p, new Promise((r) => setTimeout(() => r(LATE), Math.max(0, until - Date.now())))]);
 async function load() {
-  try { await api.purgeBin(30); } catch (_) { /* the bin empties itself next time */ }
-  const prof = api.profile().catch(() => null);           // U3c: the tray state, asked for beside the notes
+  const until = Date.now() + START_MS, gen = writeGen;
+  let asked;
+  const prof = new Promise((r) => { asked = r; });       // U3c: the tray state, asked for beside the notes
+  const read = (async () => {
+    try { await api.purgeBin(30); } catch (_) { /* the bin empties itself next time */ }
+    asked(api.profile().catch(() => null));
+    return api.loadAll();
+  })();
+  read.catch(() => { /* handled below; this keeps a late failure from counting as unhandled */ });
   // U3e: the database's tree, kept as this device's snapshot; with no connection, the snapshot. Either way the tree
   // changes still queued go on top, so the screen shows what she last saw.
-  let d = null, fresh = true;
-  try { d = await api.loadAll(); treeq.keepTree(d); }
+  let d = null, fresh = true, late = null;
+  try {
+    d = await budget(read, until);
+    if (d === LATE) {
+      d = await treeq.lastTree();
+      if (d) { fresh = false; late = read; } else d = await read;   // no snapshot: wait for the read
+    }
+    if (fresh) treeq.keepTree(d);
+  }
   catch (_) { fresh = false; d = await treeq.lastTree(); }
   if (!d) { toast('Could not load your notes. Check the connection, then reload.', 8000); return; }
   d = await treeq.overlay(d);
@@ -1992,8 +2012,21 @@ async function load() {
   S.sel = 'all'; remember();
   if (history.state && history.state.note) history.replaceState(null, '');
   render();
-  trayFrom(await prof);
+  const p = await budget(prof, until);
+  if (p === LATE) prof.then(trayFrom); else trayFrom(p);   // trayFrom(null) changes nothing; a late profile is the same choice
   document.body.dataset.ready = '1';
+  if (late) late.then((t) => lateTree(t, gen), () => { /* the next refresh reads again */ });
+}
+// the tree read that missed the 3 seconds, taken exactly as refreshTree takes one: kept as the device's snapshot and
+// merged in only when none of her writes went out meanwhile, nothing is queued and the screen is not busy (the snapshot
+// also holds her landed changes, which this older read lacks). Otherwise it is dropped and the tree is read again in 5 s
+// (treeLater). A refresh that landed first, or is reading now, is newer: the late read is dropped.
+async function lateTree(d, gen) {
+  if (lastLoad || treeBusy) return;                        // a refresh landed or is reading now: it is newer
+  if (gen !== writeGen || treeq.length() || treeBlocked()) { treeLater(); return; }   // as refreshTree: read again in 5 s
+  lastLoad = Date.now();
+  treeq.keepTree(d);
+  await mergeTree(d);
 }
 
 // U3c, once per device: bookmarks from pw-v4r were kept in localStorage (pw.bookmark.<page_id> = '1'). A page that is

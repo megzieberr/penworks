@@ -34,9 +34,10 @@
    pw-v9k (16 Nov): the quick graph, unit 2b: a block tap with one graph selected adds its curve to those axes; with one axes stamp selected, the curve lands on her stamp.
    pw-v9l (19 Nov): the quick graph's cubic row: cubic and −cubic land on plain axes crossing in the middle, join a cubic graph or land on her axes stamp.
    pw-v9m (19 Nov): the quick graph, unit 3: a tap on a graph's curve picks that curve alone; it slides and stretches inside its axes (right handle wider, bottom handle taller).
+   pw-v9n (19 Nov): the 3-second rule: on a wifi that is connected but dead the app opens from what this device kept after 3 s (its files, then its notes), instead of waiting for ever; the sign-in check too (after 3 s the sign-in kept on the tablet, refreshed in the background).
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v9m";
+const CACHE = "pw-v9n";
 const SHARE_DB = "penworks.share";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",
@@ -59,17 +60,36 @@ self.addEventListener("activate", (e) => {
   );
 });
 
-function networkFirst(req, fallback) {
+// pw-v9n, the 3-second rule: a wifi that is connected but dead never fails a request, it just never answers. So the
+// network gets 3 s; then the cached copy answers (when there is one) and the fetch carries on in the background, its
+// answer still kept for next time. After a timeout the worker stays "slow" for 60 s: a request with a cached copy is
+// answered from the cache at once (with the same refresh behind it), so the app's chain of files costs 3 s, not 3 s a
+// link. No cached copy: it waits for the network as before.
+const SLOW_MS = 3000, SLOW_FOR = 60000;
+let slowAt = -Infinity;
+function networkFirst(e, fallback) {
   // same-origin (the app's own files, `fallback` true): past the http cache, revalidated with GitHub each time. A navigation
   // request cannot be re-wrapped (mode "navigate"), so the url is fetched as a plain GET instead.
+  const req = e.request;
   const get = fallback ? fetch(req.url, { cache: "no-cache", credentials: "same-origin" }) : fetch(req);
-  return get.then((res) => {
+  let kept = Promise.resolve();
+  const net = get.then((res) => {
     if (res.ok || res.type === "opaque") {
       const copy = res.clone();
-      caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+      kept = caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
     }
     return res;
-  }).catch(() => caches.match(req, { ignoreSearch: fallback }).then((hit) => hit || (fallback ? caches.match("./index.html") : Response.error())));
+  });
+  e.waitUntil(net.then(() => kept, () => {}));             // the worker stays up until a late answer is in the cache
+  const answer = net.catch(() => caches.match(req, { ignoreSearch: fallback }).then((hit) => hit || (fallback ? caches.match("./index.html") : Response.error())));
+  return caches.match(req, { ignoreSearch: fallback }).then((hit) => {
+    if (!hit) return answer;                                // nothing to fall back on: wait for the network
+    if (Date.now() - slowAt < SLOW_FOR) return hit;         // slow: the cache at once
+    return new Promise((resolve) => {
+      const t = setTimeout(() => { slowAt = Date.now(); resolve(hit); }, SLOW_MS);
+      answer.then((res) => { clearTimeout(t); resolve(res); }, () => { clearTimeout(t); resolve(hit); });
+    });
+  }, () => answer);
 }
 
 // U4b: the shared files, kept before the answer goes (the app may be starting cold and ask for it at once).
@@ -123,7 +143,7 @@ self.addEventListener("fetch", (e) => {
   }
   if (req.method !== "GET") return;
   if (url.origin !== location.origin) {
-    if (CDN.includes(url.hostname)) e.respondWith(networkFirst(req, false));
+    if (CDN.includes(url.hostname)) e.respondWith(networkFirst(e, false));
     return;   // Supabase (its database, /storage/ pictures and the Realtime websocket) and everything else: straight to the network
   }
   if (/\.png$/.test(url.pathname)) {
@@ -134,5 +154,5 @@ self.addEventListener("fetch", (e) => {
     })));
     return;
   }
-  e.respondWith(networkFirst(req, true));
+  e.respondWith(networkFirst(e, true));
 });

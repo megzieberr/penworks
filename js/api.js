@@ -33,10 +33,33 @@ const CHUNK = 100;     // ids per delete and rows per insert, so no request grow
 
 let sb = null;
 let leaving = Promise.resolve();   // U3d: a strokes channel being closed, so the next one never joins on top of it
+// pw-v9n, the sign-in check: where supabase-js keeps her sign-in on this device (its default storage key)
+const SESSION_KEY = 'sb-' + new URL(SB_URL).hostname.split('.')[0] + '-auth-token';
+const SESSION_MS = 3000;           // getSession() gets this long; then the app opens on the kept sign-in
+// the sign-in kept on this device, or null (none, unreadable, or not a whole session): the same test supabase-js makes
+function keptSession() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SESSION_KEY));
+    return s && typeof s === 'object' && s.access_token && s.refresh_token && 'expires_at' in s && s.user && s.user.id ? s : null;
+  } catch (_) { return null; }
+}
+// pw-v9n, rule C: supabase-js sends a data request whose token it could not refresh with NO sign-in (the publishable key
+// as Bearer); the database refuses it (RLS) and the tree queue drops a refusal. Such a request never leaves: it fails
+// like no connection (no code), so both queues wait and try again. Exempt: the auth calls themselves (the refresh, the
+// sign-in) and the login lock's question (login_gate is asked before any sign-in, by design).
+function guardedFetch(input, init) {
+  const url = String((input && input.url) || input);
+  const auth = new Headers((init && init.headers) || (input && input.headers) || {}).get('Authorization');
+  if (auth === 'Bearer ' + SB_KEY && url.startsWith(SB_URL + '/') && !url.startsWith(SB_URL + '/auth/v1/')
+      && !url.startsWith(SB_URL + '/rest/v1/rpc/login_gate')) {
+    return Promise.reject(new TypeError('Failed to fetch: not signed in yet'));
+  }
+  return fetch(input, init);
+}
 async function client() {
   if (!sb) {
     const { createClient } = await import(SB_JS);
-    sb = createClient(SB_URL, SB_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
+    sb = createClient(SB_URL, SB_KEY, { auth: { persistSession: true, autoRefreshToken: true }, global: { fetch: guardedFetch } });
   }
   return sb;
 }
@@ -55,10 +78,23 @@ function userOf(session) {
 const liveApi = {
   mode: 'live',
 
+  // pw-v9n, the sign-in check: an expired token makes getSession() refresh over the network, with no time limit (dead
+  // wifi: never). After SESSION_MS the app opens on the sign-in kept on this device and the refresh carries on in the
+  // background. A refresh that FAILED for a network reason (supabase-js keeps the session then) also opens on the kept
+  // one; a real refusal removes it (supabase-js), so the login shows. Nothing kept: wait for getSession() as before
+  // (with no session it answers at once, without the network).
   async session() {
     const c = await client();
-    const { data } = await c.auth.getSession();
-    return userOf(data.session);
+    const ask = c.auth.getSession().then(({ data, error }) => {
+      if (data.session) return userOf(data.session);
+      if (error && error.name === 'AuthRetryableFetchError') return userOf(keptSession());
+      return null;
+    });
+    const kept = keptSession();
+    if (!kept) return ask;
+    let t;
+    const late = new Promise((ok) => { t = setTimeout(() => ok(userOf(keptSession())), SESSION_MS); });
+    return Promise.race([ask, late]).finally(() => clearTimeout(t));
   },
 
   // username + password; the username becomes <username>@penworks.app. No signup here: accounts are made by SQL.

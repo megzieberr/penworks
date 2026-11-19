@@ -162,6 +162,16 @@ function imports(mode, fn) {
     t.oncomplete = () => ok(out); t.onerror = t.onabort = () => no(t.error);
   }));
 }
+// pw-v9n test hook (tests/test_deadwifi.py): localStorage penworks.local.hang = '["purgeBin","loadAll","profile"]' makes
+// those calls wait like a request on a dead wifi (no answer, no error) until the key no longer names them
+async function hung(call) {
+  for (;;) {
+    let h = [];
+    try { h = JSON.parse(localStorage.getItem('penworks.local.hang') || '[]'); } catch (_) { /* none */ }
+    if (!Array.isArray(h) || !h.includes(call)) return;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
 const calls = [];   // U3e test hook: every write that landed, in order: { call, table, ids }
 function logged(call, table, ids) { calls.push({ call, table, ids }); if (calls.length > 5000) calls.splice(0, calls.length - 5000); }
 
@@ -175,6 +185,7 @@ export const localApi = {
   async signOut() { /* nothing to end */ },
 
   async purgeBin(days = 30) {
+    await hung('purgeBin');
     const d = read(), cut = Date.now() - days * 864e5;
     const old = (r) => r.deleted_at && Date.parse(r.deleted_at) < cut;
     const before = d.folders.length + d.notes.length + d.pages.length;
@@ -193,8 +204,9 @@ export const localApi = {
   },
 
   async loadAll() {
+    const d = read();                                     // pw-v9n: the answer as it was when asked, delivered late if hung
+    await hung('loadAll');
     if (navigator.onLine === false) throw new TypeError('Failed to fetch');   // U3e: no connection, no read
-    const d = read();
     return { folders: clone(d.folders), notes: clone(d.notes), pages: clone(d.pages) };
   },
 
@@ -346,6 +358,7 @@ export const localApi = {
 
   // ---------------------------------------------------------------- her profile row (U3c)
   async profile() {
+    await hung('profile');
     const d = read();
     return clone(Object.fromEntries(PROFILE_KEYS.map((k) => [k, d.profile[k]])));
   },
