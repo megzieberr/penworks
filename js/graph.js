@@ -9,13 +9,16 @@
 //     px, py      page px per 90 degrees across, page px per 1 unit up (a resize multiplies both)
 //     axes: { on, xl, xr, yh }   the window belongs to the axes: on = axes, marks and letters shown; xl the left end in
 //                 degrees (0 down to -360, the left handle), xr the right end (360), yh the height (y from -yh to yh)
+//                 pw-v9l/v9o/v9p/v9q: fam 'cubic', 'parabola', 'hyperbola' or 'exponential' = plain units (see build); yl (optional, pw-v9o) the bottom edge,
+//                 absent = -yh
 //     curves: [ { kind, colour, width, dx, dy, sx, sy } ]   a LIST (pw-v9k: more curves on the same axes, newest last and
 //                 drawn on top; see "unit 2b" below): kind one of KINDS, its own colour and width (the pen's when it landed), offset dx (degrees across)
 //                 and dy (units up), stretch sx (across) and sy (up): y = sy * f((x - dx) / sx) + dy. 0, 0, 1, 1 when it lands;
 //                 pw-v9m (unit 3): a picked curve slides and stretches, see curveSet.
 //   }
 // Drawn, in this order (graphParts): the axis lines and the ticks, the two heads, the marks and the letters (filled glyph
-// outlines, black), then tan's asymptotes (black, dashed), then the curves (their colour). So where a number and the curve
+// outlines, black), then tan's asymptotes (black, dashed; pw-v9p: a hyperbola's too, up-and-down ones first, then the
+// sideways ones { y, a, b } that have no x), then the curves (their colour). So where a number and the curve
 // meet the number is BEHIND the curve, with no halo (her 15 Nov rule). Hidden axes (on false) hide the lines, the ticks,
 // the heads, the marks and the letters together; the asymptotes and the curve stay.
 // The marks: every 90 degrees inside the window and nothing more, never at 0 (90, 180, 270, 360; -90 .. -360 when the
@@ -28,18 +31,60 @@
 import { UPM, GLYPHS } from './caveat-glyphs.js';
 
 export const KINDS = ['sin', '-sin', 'cos', '-cos', 'tan', '-tan'];
-export const LABEL = { sin: 'sin', '-sin': '−sin', cos: 'cos', '-cos': '−cos', tan: 'tan', '-tan': '−tan', cubic: 'cubic', '-cubic': '−cubic' };
+export const LABEL = { sin: 'sin', '-sin': '−sin', cos: 'cos', '-cos': '−cos', tan: 'tan', '-tan': '−tan', cubic: 'cubic', '-cubic': '−cubic',
+  parabola: 'happy', '-parabola': 'sad', hyperbola: '1 and 3', '-hyperbola': '2 and 4',
+  growth: 'growth', decay: 'decay', '-growth': '−growth', '-decay': '−decay' };
 // pw-v9l: the cubic family (f(x) = x³ − 3x: turning points at x = ±1, through the origin; '-cubic' its mirror). The Graph
 // card shows one row per family, in this order. A cubic graph's window is in plain units, not degrees (axes.fam 'cubic', see
 // build); a graph with no axes.fam is a trig graph, as every graph before pw-v9l.
+// pw-v9o (unit 4a): the parabola family (f(x) = x², "happy"; '-parabola' its mirror, "sad"), on the card between the trig
+// row and the cubic. Like the cubic it is a PLAIN-unit family (axes.fam 'parabola'). Every family that is not 'trig' is
+// plain: a plain graph shares its axes with any plain curve, never with a trig one (curveFits). A new family is one entry in
+// FAMILIES, its kinds' windows in WIN, its size unit in SIZE and its shape in base (and later hyperbola sits beside
+// Parabola on the card: tools.js puts a family with `beside: 'parabola'` on the same line).
 export const CUBIC_KINDS = ['cubic', '-cubic'];
-export const FAMILIES = [{ id: 'trig', name: 'sin, cos, tan', kinds: KINDS }, { id: 'cubic', name: 'Cubic', kinds: CUBIC_KINDS }];
-export const family = (kind) => (String(kind).replace(/^-/, '') === 'cubic' ? 'cubic' : 'trig');
-const graphFam = (d) => (d && d.axes && d.axes.fam === 'cubic' ? 'cubic' : 'trig');
+export const PARABOLA_KINDS = ['parabola', '-parabola'];
+// pw-v9p (unit 4b): the hyperbola family (f(x) = 1/x, its branches in quadrants 1 and 3; '-hyperbola' its mirror, 2 and 4),
+// named by quadrants on the card and sitting on the Parabola's line (the mock). Plain units, axes crossing in the middle.
+// Its two asymptotes (x = dx up and down, y = dy sideways) are drawn dashed and black, but only OFF the axis each runs
+// along (plainAsymptotes, build).
+export const HYPERBOLA_KINDS = ['hyperbola', '-hyperbola'];
+// pw-v9q (unit 4c): the exponential family, the four shapes of y = a b^x: 'growth' 2^x and 'decay' 0.5^x (two base shapes:
+// 0 < b < 1 is the x -> -x mirror, not the leading minus), '-growth' -2^x and '-decay' -0.5^x their up-and-down mirrors.
+// On its own line of the card under Parabola and Hyperbola, above Cubic (the mock). Plain units; its one sideways asymptote
+// y = dy is drawn dashed and black only OFF the x-axis (plainAsymptotes, build: the hyperbola's rule as is).
+export const EXPONENTIAL_KINDS = ['growth', 'decay', '-growth', '-decay'];
+export const FAMILIES = [{ id: 'trig', name: 'sin, cos, tan', kinds: KINDS }, { id: 'parabola', name: 'Parabola', kinds: PARABOLA_KINDS },
+  { id: 'hyperbola', name: 'Hyperbola', kinds: HYPERBOLA_KINDS, beside: 'parabola' }, { id: 'exponential', name: 'Exponential', kinds: EXPONENTIAL_KINDS },
+  { id: 'cubic', name: 'Cubic', kinds: CUBIC_KINDS }];
+const FAM_OF = Object.fromEntries(FAMILIES.flatMap((F) => F.kinds.map((k) => [k, F.id])));
+export const family = (kind) => FAM_OF[String(kind)] || 'trig';
+export const isPlain = (fam) => fam !== 'trig';                    // pw-v9o: plain units (not degrees)
+// a curve kind in plain units (cubic, parabola, ...): may share axes with any other plain kind
+export const plainKind = (kind) => isPlain(family(kind));
+const graphFam = (d) => { const f = d && d.axes && d.axes.fam; return f && f !== 'trig' && SIZE[f] ? f : 'trig'; };
+// a graph record's data in plain units (ink.js: a slide's dx in units, not degrees)
+export const plainGraph = (d) => isPlain(graphFam(d));
 // a cubic's window (x -2.6 to 2.6, y -3.2 to 3.2: both turning points well inside, both arms running off the top and the
 // bottom), py 0.8 of px (page px per unit across); CU: a cubic's size unit (heads, letters, the overhang) is 1.3 px, so a
 // cubic and a trig graph of the same width carry the same letters (5.2 units over W / 3 against 4 px over W / 3)
 const CUBIC = { xl: -2.6, xr: 2.6, yh: 3.2, py: 0.8 }, CU = 1.3;
+// pw-v9o: a parabola's window is NOT centred (the mock's blocks): happy x -2.2 to 2.2, y from yl -0.9 (the x-axis low, the
+// turning point on the origin) to yh 3.4 (the arms run off the top at x = ±1.84); sad its mirror (y -3.4 to 0.9). yl is the
+// window's bottom edge; a window with no yl runs from -yh to yh (every graph before pw-v9o). py 0.8 of px, as the cubic;
+// size unit 1.1 px (4.4 units over W / 3 against a trig graph's 4 px over W / 3).
+const HAPPY = { xl: -2.2, xr: 2.2, yl: -0.9, yh: 3.4, py: 0.8 }, SAD = { xl: -2.2, xr: 2.2, yl: -3.4, yh: 0.9, py: 0.8 };
+// pw-v9p: a hyperbola's window is the mock's block: x and y -3.2 to 3.2, centred; py 0.8 of px; size unit 1.6 px (6.4 / 4)
+const HYP = { xl: -3.2, xr: 3.2, yh: 3.2, py: 0.8 };
+// pw-v9q: an exponential's window is NOT centred (the mock's blocks): growth and decay x -3 to 3, y from yl -1.2 (the x-axis
+// low) to yh 5; -growth and -decay its mirror (y -5 to 1.2). The curve runs off the top (or the bottom) on its steep side
+// (2^x at x = 2.32) and hugs the x-axis on the other. py 0.8 of px; size unit 1.5 px (6 / 4)
+const EXUP = { xl: -3, xr: 3, yl: -1.2, yh: 5, py: 0.8 }, EXDN = { xl: -3, xr: 3, yl: -5, yh: 1.2, py: 0.8 };
+const WIN = { cubic: CUBIC, '-cubic': CUBIC, parabola: HAPPY, '-parabola': SAD, hyperbola: HYP, '-hyperbola': HYP,
+  growth: EXUP, decay: EXUP, '-growth': EXDN, '-decay': EXDN };
+const SIZE = { cubic: CU, parabola: 1.1, hyperbola: 1.6, exponential: 1.5 };          // a plain family's size unit, in px
+const FAMWIN = { cubic: CUBIC, parabola: HAPPY, hyperbola: HYP, exponential: EXUP };   // a plain graph's window when its axes lack one
+const ON_AXIS = 1;                                                  // pw-v9p: an asymptote this close (page px) to its axis is not drawn
 export const XL_MIN = -360;                          // the left handle stops here
 const MOCK = 55;                                     // the mock's px (page px per 90 degrees)
 const TK = 9 / MOCK, GAP = 4 / MOCK, FS = 18 / MOCK, FL = 21 / MOCK, DIG = 0.62, HEAD = 14 / MOCK, OVER = 0.6;
@@ -50,11 +95,15 @@ const s2 = (v) => String(r2(v));
 
 // the window a new graph gets: sin and cos 1.35 up and down at 52/55 of px per unit (the mock); tan taller, 2.6 at 0.6 px
 export function startWindow(kind) {
-  if (family(kind) === 'cubic') return { ...CUBIC };
+  if (WIN[kind]) return { ...WIN[kind] };                          // pw-v9l, pw-v9o: a plain kind's own window
   return String(kind).endsWith('tan') ? { yh: 2.6, py: 0.6 } : { yh: 1.35, py: 52 / MOCK };
 }
 const base = (k) => (k === 'sin' ? (u) => Math.sin(u * RAD) : k === 'cos' ? (u) => Math.cos(u * RAD)
   : k === 'cubic' ? (u) => u * u * u - 3 * u
+  : k === 'parabola' ? (u) => u * u
+  : k === 'hyperbola' ? (u) => (u === 0 ? NaN : 1 / u)
+  : k === 'growth' ? (u) => Math.pow(2, u)                         // pw-v9q
+  : k === 'decay' ? (u) => Math.pow(0.5, u)
   : (u) => { const c = Math.cos(u * RAD); return Math.abs(c) < 1e-12 ? NaN : Math.tan(u * RAD); });
 export function curveFn(c) {
   const k = String(c.kind || 'sin'), neg = k[0] === '-', f = base(neg ? k.slice(1) : k);
@@ -68,6 +117,23 @@ function asymptotes(c, a, b) {
   const lo = Math.min((a - dx) / sx, (b - dx) / sx), hi = Math.max((a - dx) / sx, (b - dx) / sx);
   for (let k = Math.ceil((lo - 90) / 180 - 1e-9); 90 + 180 * k <= hi + 1e-9; k++) out.push(dx + sx * (90 + 180 * k));
   return out;
+}
+// pw-v9p: a plain curve's straight asymptotes in its own units: v the x values of the up-and-down ones, h the y values of
+// the sideways ones. A hyperbola has one of each, crossing at its centre (dx, dy); stretching never moves them. pw-v9q: an
+// exponential has one sideways one, y = dy (the bottom handle stretches about it). Drawn by build only, never on her axes stamp.
+function plainAsymptotes(c) {
+  const k = String(c.kind).replace(/^-/, '');
+  if (k === 'hyperbola') return { v: [+c.dx || 0], h: [+c.dy || 0] };
+  if (k === 'growth' || k === 'decay') return { v: [], h: [+c.dy || 0] };
+  return { v: [], h: [] };
+}
+// pw-v9p: the curve's runs over [a, b]; a hyperbola's is cut in two at its up-and-down asymptote first, so the two
+// branches never join across it however squashed (every other kind: curveRuns exactly as before)
+function runsOf(c, a, b, ylo, yhi, X, Y) {
+  const f = curveFn(c), dx = +c.dx || 0;
+  if (String(c.kind).replace(/^-/, '') === 'hyperbola' && dx > a && dx < b)
+    return [...curveRuns(f, a, dx, ylo, yhi, X, Y), ...curveRuns(f, dx, b, ylo, yhi, X, Y)];
+  return curveRuns(f, a, b, ylo, yhi, X, Y);
 }
 
 // a line of text as Caveat glyph outlines: { d (one path, page px), w (advance), b [x0, y0, x1, y1] }; baseline y,
@@ -147,14 +213,18 @@ export function graphGeom(rec) {
 // pw-v9l: a cubic graph (axes.fam 'cubic') reads its window in plain units: px is page px per 1 unit across, xl and xr
 // the window's ends (-2.6, 2.6: the axes cross in the middle), no marks at all, no left handle (left null). Its heads, letters
 // and overhang are sized by u = CU px instead of px. Everything else (the cut, the order, hidden axes) is the trig graph's.
+// pw-v9o: every plain family the same way (fam 'cubic' or 'parabola'); the window's bottom edge is yl when the axes carry
+// one (a parabola's), else -yh as before, and everything that read -yh reads yl (the y-axis's foot, the cut, tan's
+// asymptotes, the empty box, curveSet's dy limit, curveBox).
 function build(d) {
-  const cub = graphFam(d) === 'cubic', px = +d.px, py = +d.py, A = d.axes || {}, on = A.on !== false;
-  const xl = cub ? (Number.isFinite(+A.xl) ? +A.xl : CUBIC.xl) : Math.max(XL_MIN, Math.min(0, Number.isFinite(+A.xl) ? +A.xl : 0));
-  const xr = Number.isFinite(+A.xr) ? +A.xr : cub ? CUBIC.xr : 360, yh = +A.yh > 0 ? +A.yh : cub ? CUBIC.yh : 1.35;
+  const fam = graphFam(d), cub = isPlain(fam), W0 = cub ? FAMWIN[fam] : null, px = +d.px, py = +d.py, A = d.axes || {}, on = A.on !== false;
+  const xl = cub ? (Number.isFinite(+A.xl) ? +A.xl : W0.xl) : Math.max(XL_MIN, Math.min(0, Number.isFinite(+A.xl) ? +A.xl : 0));
+  const xr = Number.isFinite(+A.xr) ? +A.xr : cub ? W0.xr : 360, yh = +A.yh > 0 ? +A.yh : cub ? W0.yh : 1.35;
+  const yl = A.yl !== undefined && A.yl !== null && Number.isFinite(+A.yl) && +A.yl < yh ? +A.yl : -yh;
   if (![d.x0, d.y0, px, py].every(Number.isFinite) || px <= 0 || py <= 0 || !(xr > xl) || !Array.isArray(d.curves)) return null;
-  const u = cub ? CU * px : px;                                    // the size unit (a trig graph's px)
+  const u = cub ? SIZE[fam] * px : px;                             // the size unit (a trig graph's px)
   const X = cub ? (x) => d.x0 + x * px : (deg) => d.x0 + deg / 90 * px, Y = (v) => d.y0 - v * py;
-  const xL = X(xl), xR = X(xr) + OVER * u, yB = Y(-yh), yT = Y(yh) - OVER * 0.945 * u;   // the mock: 0.6 py over the top, py = 52/55 px
+  const xL = X(xl), xR = X(xr) + OVER * u, yB = Y(yl), yT = Y(yh) - OVER * 0.945 * u;   // the mock: 0.6 py over the top, py = 52/55 px
   const lines = [], ticks = [], heads = [], labels = [];
   if (on) {
     lines.push([[xL, d.y0], [xR, d.y0]], [[d.x0, yB], [d.x0, yT]]);
@@ -175,17 +245,22 @@ function build(d) {
   }
   const asym = [], curves = [];
   for (const c of d.curves) {
-    for (const ax of asymptotes(c, xl, xr)) asym.push({ x: X(ax), a: [X(ax), Y(yh)], b: [X(ax), Y(-yh)] });
-    curves.push({ runs: curveRuns(curveFn(c), xl, xr, -yh, yh, X, Y), colour: c.colour || '#000000', width: +c.width || 2.5 });
+    for (const ax of asymptotes(c, xl, xr)) asym.push({ x: X(ax), a: [X(ax), Y(yh)], b: [X(ax), Y(yl)] });
+    if (cub) {                                                     // pw-v9p: a hyperbola's (her default 20 Nov): only OFF its axis
+      const P = plainAsymptotes(c);
+      for (const v of P.v) if (v >= xl && v <= xr && Math.abs(v * px) > ON_AXIS) asym.push({ x: X(v), a: [X(v), Y(yh)], b: [X(v), Y(yl)] });
+      for (const v of P.h) if (v >= yl && v <= yh && Math.abs(v * py) > ON_AXIS) asym.push({ y: Y(v), a: [X(xl), Y(v)], b: [X(xr), Y(v)] });
+    }
+    curves.push({ runs: runsOf(c, xl, xr, yl, yh, X, Y), colour: c.colour || '#000000', width: +c.width || 2.5 });
   }
   const b = [Infinity, Infinity, -Infinity, -Infinity], grow = (q) => { b[0] = Math.min(b[0], q[0]); b[1] = Math.min(b[1], q[1]); b[2] = Math.max(b[2], q[0]); b[3] = Math.max(b[3], q[1]); };
   for (const s of [...lines, ...ticks, ...heads]) s.forEach(grow);
   for (const l of labels) if (Number.isFinite(l.b[0])) { grow([l.b[0], l.b[1]]); grow([l.b[2], l.b[3]]); }
   for (const a of asym) { grow(a.a); grow(a.b); }
   for (const c of curves) for (const r of c.runs) r.forEach(grow);
-  if (!Number.isFinite(b[0])) { grow([xL, Y(yh)]); grow([X(xr), Y(-yh)]); }   // nothing showing at all: the window
+  if (!Number.isFinite(b[0])) { grow([xL, Y(yh)]); grow([X(xr), Y(yl)]); }   // nothing showing at all: the window
   return { on, lines, ticks, heads, labels, asym, curves, box: b, ends: lines.flat().map((q) => q.slice()), left: cub ? null : [xL, d.y0],
-           cross: [d.x0, d.y0], xl, xr, yh, px, py, fam: cub ? 'cubic' : 'trig', dash: DASH.map((v) => v * u) };
+           cross: [d.x0, d.y0], xl, xr, yl, yh, px, py, fam, plain: cub, dash: DASH.map((v) => v * u) };
 }
 
 // what to draw, in order: { d, stroke, width, dash, fill, cls } (stroke and fill are colours or null)
@@ -208,10 +283,15 @@ export function graphParts(rec) {
 // over W / 3); the window 0 to 360 with the y-axis at the left; its middle at (cx, cy)
 export function newGraph(id, pageId, kind, pen, W, cx, cy) {
   const style = { colour: '#000000', width: 1.5, dash: 'solid', opacity: 1 }, w0 = startWindow(kind);
-  if (family(kind) === 'cubic') {                                  // pw-v9l: the window (-2.6 to 2.6) over W / 3, the origin at (cx, cy)
-    const px = r2(W / 3 / (w0.xr - w0.xl)), py = r2(w0.py * px);
+  if (plainKind(kind)) {                                           // pw-v9l: the window (-2.6 to 2.6) over W / 3, the origin at (cx, cy)
+    // pw-v9o: any plain kind; the window's MIDDLE at (cx, cy) (a cubic's middle is its origin; a parabola's sits above or
+    // below it); the window's yl kept only when it has one
+    const px = r2(W / 3 / (w0.xr - w0.xl)), py = r2(w0.py * px), fam = family(kind);
+    const axes = { on: true, fam, xl: w0.xl, xr: w0.xr, yh: w0.yh };
+    if (w0.yl !== undefined) axes.yl = w0.yl;
+    const mx = (w0.xl + w0.xr) / 2, my = w0.yl === undefined ? 0 : (w0.yl + w0.yh) / 2;
     return { id, page_id: pageId, seq: 0, kind: 'graph', style,
-      data: { x0: r2(cx), y0: r2(cy), px, py, axes: { on: true, fam: 'cubic', xl: w0.xl, xr: w0.xr, yh: w0.yh }, curves: [newCurve(kind, pen)] } };
+      data: { x0: r2(cx - mx * px), y0: r2(cy + my * py), px, py, axes, curves: [newCurve(kind, pen)] } };
   }
   const px = r2(W / 3 / 4), py = r2(w0.py * px);
   return { id, page_id: pageId, seq: 0, kind: 'graph', style,
@@ -236,11 +316,13 @@ export function sameCurve(a, b) {
 // pw-v9l: may a curve of kind join rec (a graph or an axes stamp)? Only one of the same family: a cubic on a trig graph's
 // degrees (or a trig curve on a cubic's plain units) does not match, so a new graph lands instead. A stamp takes the family
 // of its first curve; a bare stamp takes any.
+// pw-v9o (her default, 20 Nov): the rule is "same units", not "same family": every plain-unit family (cubic, parabola, and
+// later hyperbola and exponential) shares with every other; trig (degrees) never shares with a plain one, either way.
 export function curveFits(rec, kind) {
   const d = (rec && rec.data) || {};
-  if (rec && rec.kind === 'graph') return graphFam(d) === family(kind);
+  if (rec && rec.kind === 'graph') return plainGraph(d) === plainKind(kind);
   const cs = Array.isArray(d.curves) ? d.curves : [];
-  return !cs.length || family(cs[0].kind) === family(kind);
+  return !cs.length || plainKind(cs[0].kind) === plainKind(kind);
 }
 // rec (a graph or an axes stamp) with the curve of kind added last; null when that curve is already on it
 export function withCurve(rec, kind, pen) {
@@ -265,9 +347,9 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 export function curveSet(rec, i, p) {
   const d = rec && rec.data, cs = d && Array.isArray(d.curves) ? d.curves : [], c = cs[i], g = graphGeom(rec);
   if (!c || !g) return rec;
-  const sx = clamp(num(p.sx, 1), SMIN, SMAX), sy = clamp(num(p.sy, 1), SMIN, SMAX), dy = clamp(num(p.dy, 0), -g.yh, g.yh);
+  const sx = clamp(num(p.sx, 1), SMIN, SMAX), sy = clamp(num(p.sy, 1), SMIN, SMAX), dy = clamp(num(p.dy, 0), g.yl, g.yh);   // pw-v9o: yl, the bottom edge
   let dx = num(p.dx, 0);
-  if (g.fam === 'cubic') dx = clamp(dx, g.xl, g.xr);
+  if (g.plain) dx = clamp(dx, g.xl, g.xr);                         // pw-v9o: every plain family (a parabola's turning point too)
   else { const per = (String(c.kind).endsWith('tan') ? 180 : 360) * sx; dx -= per * Math.round(dx / per); }
   const n = { ...c, dx: r4(dx), dy: r4(dy), sx: r4(sx), sy: r4(sy) };
   return { ...rec, style: { ...rec.style }, data: { ...d, curves: cs.map((k, j) => (j === i ? n : k)) } };
@@ -279,8 +361,8 @@ export function curveBox(rec, i) {
   const b = [Infinity, Infinity, -Infinity, -Infinity];
   for (const r of c.runs) for (const q of r) { b[0] = Math.min(b[0], q[0]); b[1] = Math.min(b[1], q[1]); b[2] = Math.max(b[2], q[0]); b[3] = Math.max(b[3], q[1]); }
   if (Number.isFinite(b[0])) return b;
-  const d = rec.data, X = g.fam === 'cubic' ? (x) => d.x0 + x * g.px : (deg) => d.x0 + deg / 90 * g.px;
-  return [X(g.xl), d.y0 - g.yh * g.py, X(g.xr), d.y0 + g.yh * g.py];
+  const d = rec.data, X = g.plain ? (x) => d.x0 + x * g.px : (deg) => d.x0 + deg / 90 * g.px;
+  return [X(g.xl), d.y0 - g.yh * g.py, X(g.xr), d.y0 - g.yl * g.py];
 }
 // the curve of rec (a quick graph) a tap at (x, y) lands on, within reach: the nearest, the newest when two are as near;
 // null when none is
@@ -313,9 +395,11 @@ export function stampFrame(d) {
   const xT = xs + Math.floor((+d.xe - xs) / xd + 1e-6) * xd, yT = ys + Math.floor((+d.ye - ys) / yd + 1e-6) * yd;
   if (!(xT > xs) || !(yT > ys)) return null;
   let kx = 1, ky = 1;                                              // stamp units per degree, per value
-  if (family(d.curves[0].kind) === 'cubic') {
+  if (plainKind(d.curves[0].kind)) {
     // pw-v9l: a cubic, Degrees on or off: centred on the stamp's origin, the quick graph's window (x 2.6, y 3.2) fitted to
-    // the stamp's SHORTER arm each way when it has both (so both turning points show), else to the one arm it has
+    // the stamp's SHORTER arm each way when it has both (so both turning points show), else to the one arm it has.
+    // pw-v9o: EVERY plain family on a stamp uses these same cubic units (a parabola's turning point on her origin), so a
+    // cubic and a parabola on one stamp agree, whichever came first
     const arm = (lo, hi) => { const p = Math.max(0, hi), n = Math.max(0, -lo); return p > 0 && n > 0 ? Math.min(p, n) : Math.max(p, n); };
     kx = arm(xs, xT) / CUBIC.xr; ky = arm(ys, yT) / CUBIC.yh;
     if (!(kx > 0) || !(ky > 0)) return null;
@@ -338,7 +422,7 @@ export function stampGeom(rec) {
   const asym = [], curves = [];
   for (const c of d.curves) {
     for (const ax of asymptotes(c, F.a, F.b)) asym.push({ x: F.X(ax), a: [F.X(ax), F.Y(F.hi)], b: [F.X(ax), F.Y(F.lo)] });
-    curves.push({ runs: curveRuns(curveFn(c), F.a, F.b, F.lo, F.hi, F.X, F.Y), colour: c.colour || '#000000', width: +c.width || 2.5 });
+    curves.push({ runs: runsOf(c, F.a, F.b, F.lo, F.hi, F.X, F.Y), colour: c.colour || '#000000', width: +c.width || 2.5 });
   }
   const g = { asym, curves, dash: DASH.map((v) => v * F.p90), frame: F };
   SCACHE.set(d, g);
@@ -366,10 +450,13 @@ export function stampCurveSegs(rec) {
 
 // the panel's block picture: tiny plain axes and the one computed shape (the mock's block(), 70 x 50)
 export function blockSvg(kind) {
-  const cub = family(kind) === 'cubic';                            // pw-v9l: a cubic's block: the axes crossing in the middle
-  const BW = 70, BH = 50, M = 5, xa = cub ? CUBIC.xl : -25, xb = cub ? CUBIC.xr : 375, tan = kind.endsWith('tan'), ya = cub ? -CUBIC.yh : tan ? -3.2 : -1.4, yb = -ya;
+  const cub = plainKind(kind), w = cub ? startWindow(kind) : null;  // pw-v9l: a cubic's block: the axes crossing in the middle
+  // pw-v9o: a parabola's block is the mock's (x -2 to 2, its window's height: happy -0.9 to 3.4, sad -3.4 to 0.9)
+  const par = family(kind) === 'parabola';
+  const BW = 70, BH = 50, M = 5, xa = par ? -2 : cub ? w.xl : -25, xb = par ? 2 : cub ? w.xr : 375, tan = kind.endsWith('tan');
+  const ya = cub ? (w.yl === undefined ? -w.yh : w.yl) : tan ? -3.2 : -1.4, yb = cub ? w.yh : -ya;
   const X = (x) => M + (x - xa) / (xb - xa) * (BW - 2 * M), Y = (y) => BH - M - (y - ya) / (yb - ya) * (BH - 2 * M);
-  const f = curveFn({ kind }), runs = curveRuns(f, cub ? xa : 0, cub ? xb : 360, -yb, yb, X, Y).map(runD).join('');
+  const runs = runsOf({ kind }, cub ? xa : 0, cub ? xb : 360, ya, yb, X, Y).map(runD).join('');   // pw-v9p: the hyperbola's block is its window, no asymptotes (the mock); pw-v9q: an exponential's too (x -3 to 3, the mock's)
   const ax = 'stroke="#8E939B" stroke-width="1" stroke-linecap="round"';
   let as = '';
   if (tan) for (const a of [90, 270]) as += `<line x1="${s2(X(a))}" y1="${s2(Y(ya))}" x2="${s2(X(a))}" y2="${s2(Y(yb))}" stroke="currentColor" stroke-width="1" stroke-dasharray="2.5 2"/>`;

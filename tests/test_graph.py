@@ -20,6 +20,14 @@
 # pw-v9m (group J, unit 3 "tap the curve"): a select tap on a curve picks that curve alone (two handles, Axes + Delete);
 # slide, squash, widen, taller, the limits, tan's asymptotes travelling, marks staying, two curves (colour, Delete), all
 # eight kinds, thumb, PDF, shared picture, reload. Its pictures go to _build/graph/unit3/.
+# pw-v9o (group K, unit 4a): the Parabola row (happy, sad): old records draw byte for byte as before; card; landing on a
+# window that is not centred (yl); select, Axes pill, colour; plain units share axes (parabola and cubic both ways, trig
+# never); on her stamp in the cubic's units; picked, slid, stretched, limits; thumb, PDF, shared picture, reload. Its
+# pictures go to _build/graph/unit4a/.
+# pw-v9q (group M, unit 4c): the Exponential row (growth, decay, −growth, −decay) on its own line: old records as before;
+# landing (window x -3 to 3, the x-axis low or high); the sideways asymptote hidden on the x-axis, shown once slid (1 px
+# rule); shares with hyperbola, parabola and cubic, never trig; on her stamp; picked, slid, stretched, limits; thumb, PDF,
+# shared picture, reload. Its pictures go to _build/graph/unit4c/.
 import sys, subprocess, time, pathlib, math, base64, io, re
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 import fitz
@@ -35,6 +43,10 @@ BLUE = "#0D0DFF"
 KINDS = ["sin", "-sin", "cos", "-cos", "tan", "-tan"]
 NAMES = ["sin", "−sin", "cos", "−cos", "tan", "−tan"]
 CUBICS = ["cubic", "-cubic"]                                       # pw-v9l
+PARABOLAS = ["parabola", "-parabola"]                              # pw-v9o
+HYPERBOLAS = ["hyperbola", "-hyperbola"]                           # pw-v9p
+EXPS = ["growth", "decay", "-growth", "-decay"]                     # pw-v9q
+EXPNAMES = ["growth", "decay", "−growth", "−decay"]
 
 res = []
 group = ["?"]
@@ -73,7 +85,7 @@ HELP = """async () => {
   T.recs = (id) => window.__pw.ink.strokesOf(id);
   T.clear = (id) => { const op = window.__pw.ink.erasePageOp(id); if (op) op.redo(); };
   T.geo = (rid) => { const r = T.recs('s0').find((x) => x.id === rid); const g = r ? window.__pw.ink.graphGeom(r) : null;
-    return g && { box: g.box, left: g.left, xl: g.xl, xr: g.xr, yh: g.yh, on: g.on, labels: g.labels.map((l) => ({ t: l.t, x: l.x, y: l.y, size: l.size, cls: l.cls, b: l.b })),
+    return g && { box: g.box, left: g.left, xl: g.xl, xr: g.xr, yl: g.yl, yh: g.yh, fam: g.fam, on: g.on, labels: g.labels.map((l) => ({ t: l.t, x: l.x, y: l.y, size: l.size, cls: l.cls, b: l.b })),
       asym: g.asym.map((a) => a.x), runs: g.curves.map((c) => c.runs.map((r) => [r[0], r[r.length - 1], r.length])), lines: g.lines, ticks: g.ticks }; };
   T.el = (rid, root) => { const g = (root || T.sheet('s0').querySelector('svg.ink')).querySelector(`[data-id="${rid}"]`); if (!g) return null;
     const kids = [...g.children];
@@ -182,16 +194,17 @@ try:
           return { title: c.querySelector('.gTitle').textContent, fams: [...c.querySelectorAll('.gFam')].map((e) => e.textContent),
             blocks: [...c.querySelectorAll('.gBlk')].map((b) => [b.dataset.kind, b.querySelector('b').textContent, !!b.querySelector('svg path'), Math.round(b.getBoundingClientRect().width)]),
             text: c.textContent }; }""")
-        check("TWO family rows (pw-v9l), headed 'sin, cos, tan' then 'Cubic'", info["title"] == "Graph" and info["fams"] == ["sin, cos, tan", "Cubic"], info["fams"])
-        check("six trig blocks then two cubic blocks: sin, −sin, cos, −cos, tan, −tan, cubic, −cubic (the real minus), each a picture and its name, 80 px wide",
-              [x[0] for x in info["blocks"]] == KINDS + CUBICS and [x[1] for x in info["blocks"]] == NAMES + ["cubic", "−cubic"] and all(x[2] and x[3] == 80 for x in info["blocks"]), info["blocks"])
-        check("no Parabola, Hyperbola or Exponential row (no dead buttons)", not re.search("Parabola|Hyperbola|Exponential", info["text"]), info["text"])
+        check("FIVE families (pw-v9l, pw-v9o, pw-v9p, pw-v9q), headed 'sin, cos, tan', 'Parabola', 'Hyperbola', 'Exponential', then 'Cubic'", info["title"] == "Graph" and info["fams"] == ["sin, cos, tan", "Parabola", "Hyperbola", "Exponential", "Cubic"], info["fams"])
+        check("six trig blocks, two parabola, two hyperbola, four exponential, two cubic: sin, −sin, cos, −cos, tan, −tan, happy, sad, 1 and 3, 2 and 4, growth, decay, −growth, −decay, cubic, −cubic (the real minus), each a picture and its name, 80 px wide",
+              [x[0] for x in info["blocks"]] == KINDS + PARABOLAS + HYPERBOLAS + EXPS + CUBICS and [x[1] for x in info["blocks"]] == NAMES + ["happy", "sad", "1 and 3", "2 and 4"] + EXPNAMES + ["cubic", "−cubic"] and all(x[2] and x[3] == 80 for x in info["blocks"]), info["blocks"])
         tb = pg.evaluate("[...document.querySelectorAll('#graphCard .gBlk')].map((b) => b.querySelectorAll('line[stroke-dasharray]').length)")
-        check("the two tan blocks show their dashed asymptotes, the others none", tb == [0, 0, 0, 0, 2, 2, 0, 0], tb)
+        check("the two tan blocks show their dashed asymptotes, the others none (the hyperbola and exponential blocks none, as the mock)", tb == [0, 0, 0, 0, 2, 2] + [0] * 10, tb)
         rws = pg.evaluate("""() => [...document.querySelectorAll('#graphCard .gBlocks')].map((r) => [r.dataset.family, [...r.querySelectorAll('.gBlk')].map((b) => b.dataset.kind),
-          Math.round(r.getBoundingClientRect().top)])""")
-        check("the cubic blocks sit in their own row UNDER the trig row (data-family 'cubic')",
-              [r[0] for r in rws] == ["trig", "cubic"] and rws[1][1] == CUBICS and rws[1][2] > rws[0][2] + 40, rws)
+          Math.round(r.getBoundingClientRect().top), Math.round(r.getBoundingClientRect().left)])""")
+        check("the parabola blocks sit in their own line UNDER the trig row, the hyperbola blocks on the SAME line to their right, the exponential blocks on their OWN line under those, the cubic blocks under that",
+              [r[0] for r in rws] == ["trig", "parabola", "hyperbola", "exponential", "cubic"] and rws[1][1] == PARABOLAS and rws[2][1] == HYPERBOLAS and rws[3][1] == EXPS and rws[4][1] == CUBICS
+              and rws[1][2] > rws[0][2] + 40 and rws[2][2] == rws[1][2] and rws[2][3] >= rws[1][3] + 2 * 80 + 8 + 24
+              and rws[3][2] > rws[1][2] + 40 and rws[3][3] == rws[1][3] and rws[4][2] > rws[3][2] + 40, rws)
         cb = pg.evaluate("""() => ['cubic', '-cubic'].map((k) => { const s = document.querySelector('#gblk-' + k.replace('-', 'n') + ' svg'), l = [...s.querySelectorAll('line')];
           return [l.length, +l[1].getAttribute('x1'), +l[0].getAttribute('y1')]; })""")
         check("each cubic block: plain axes crossing in the MIDDLE of its picture (x 35, y 25 of 70 x 50)", all(c[0] == 2 and abs(c[1] - 35) < 0.01 and abs(c[2] - 25) < 0.01 for c in cb), cb)
@@ -1279,6 +1292,927 @@ try:
         pg.reload(); ready(pg); open_note(pg); pg.evaluate(HELP)
         check("after a reload the squashed sine is back exactly", graphs(pg) and gd() == dsq)
 
+        # ------------------------------------------------------------ K: pw-v9o, unit 4a: the parabola (f(x) = x², "happy", and its mirror, "sad")
+        group[0] = "K. parabola: old records draw as before"
+        # the path strings of fixed old records (a two-curve cubic, a two-curve trig graph opened left, a hidden-axes tan, a
+        # cubic stamp, a trig stamp), hashed BEFORE unit 4a touched graph.js (from the pw-v9n code, 20 Nov)
+        OLD = """async () => {
+          const G = await import('./js/graph.js'), st = { colour: '#000000', width: 1.5, dash: 'solid', opacity: 1 };
+          const cv = (kind, o) => ({ kind, colour: '#0D0DFF', width: 2.5, dx: 0, dy: 0, sx: 1, sy: 1, ...(o || {}) });
+          const recs = {
+            cubic: { kind: 'graph', style: st, data: { x0: 397, y0: 500, px: 50.9, py: 40.72, axes: { on: true, fam: 'cubic', xl: -2.6, xr: 2.6, yh: 3.2 },
+              curves: [cv('cubic'), cv('-cubic', { colour: '#FF0C84', dx: 0.7, dy: -1.1, sx: 1.6, sy: 0.5 })] } },
+            trig: { kind: 'graph', style: st, data: { x0: 300, y0: 400, px: 66.17, py: 62.56, axes: { on: true, xl: -180, xr: 360, yh: 1.35 },
+              curves: [cv('sin'), cv('-cos', { dx: 40, dy: 0.3, sx: 0.5, sy: 1.2 })] } },
+            tan: { kind: 'graph', style: st, data: { x0: 200, y0: 300, px: 66.17, py: 39.7, axes: { on: false, xl: 0, xr: 360, yh: 2.6 },
+              curves: [cv('tan', { dx: 20, sx: 1.5 })] } },
+            stampCubic: { kind: 'axes', style: st, data: { x0: 400, y0: 600, px: 30, py: 30, xs: -5, xe: 5, xd: 1, ys: -5, ye: 5, yd: 1, deg: false, curves: [cv('cubic')] } },
+            stampTrig: { kind: 'axes', style: st, data: { x0: 400, y0: 600, px: 30, py: 30, xs: -5, xe: 5, xd: 1, ys: -5, ye: 5, yd: 1, deg: false, curves: [cv('tan'), cv('sin')] } },
+          };
+          const out = {};
+          for (const [k, r] of Object.entries(recs)) out[k] = JSON.stringify((r.kind === 'graph' ? G.graphParts(r) : G.stampCurveParts(r)).map((p) => [p.cls, p.d, p.stroke, p.fill, p.width, p.dash]));
+          return out; }"""
+        BEFORE = {"cubic": "3795c146a4686a9ba15bc0acea4a09ca8e22e63fe9961a7ab1d2cccdd9b91945", "trig": "cf0c7fcbc94fa5cb83e7abc244cb6f7bbc1e29a240c78b0ddabc5dc01348fde0",
+                  "tan": "8c0028597445f7708d8928636e3bf05a1eb5ac65cb222e3fa5f471e02228cf6b", "stampCubic": "4da01494580a8bbb51c7d9afe144c609bb2a18f027f3a1281f2a446d22f78758",
+                  "stampTrig": "e94c0d22109d5a4d968445c6c178c3ef4b07647e37a9a7ac0953a5bb45c0c8b4"}
+        import hashlib
+        now_ = {k: hashlib.sha256(v.encode()).hexdigest() for k, v in pg.evaluate(OLD).items()}
+        check("an old cubic record, an old trig record (opened left, two curves), a hidden-axes tan and her cubic and trig stamps draw the SAME path strings as before unit 4a",
+              now_ == BEFORE, [k for k in BEFORE if now_.get(k) != BEFORE[k]])
+
+        group[0] = "K. parabola: card + landing"
+        SH4 = ROOT / "_build" / "graph" / "unit4a"; SH4.mkdir(parents=True, exist_ok=True)
+        def shot4(name, bx, top=70, bottom=70, w=700):
+            show(pg, [(bx[0] + bx[2]) / 2, (bx[1] + bx[3]) / 2])
+            tl = pg.evaluate("([x, y]) => window.__T.client('s0', x, y)", [bx[0], bx[1]]); br = pg.evaluate("([x, y]) => window.__T.client('s0', x, y)", [bx[2], bx[3]])
+            y0 = max(0, tl[1] - top); y1 = min(800, br[1] + bottom); x0 = max(0, min(1280 - w, (tl[0] + br[0]) / 2 - w / 2))
+            pg.screenshot(path=str(SH4 / name), clip={"x": x0, "y": y0, "width": w, "height": y1 - y0})
+        sq = lambda x: x * x
+        PU = lambda d, x, v: [d["x0"] + x * d["px"], d["y0"] - v * d["py"]]   # a plain graph's page point of (x, v)
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        open_gcard(pg); pg.wait_for_timeout(60)
+        pb = pg.evaluate("""() => ['parabola', '-parabola'].map((k) => { const s = document.querySelector('#gblk-' + k.replace('-', 'n') + ' svg'), l = [...s.querySelectorAll('line')];
+          return [l.length, +l[1].getAttribute('x1'), +l[0].getAttribute('y1'), s.querySelector('path').getAttribute('d')]; })""")
+        # the mock's block: x -2 to 2 over 60 px (the y-axis at 35); happy y -0.9 to 3.4 over 40 px (the x-axis at 45 - 0.9 / 4.3 x 40 = 36.63), sad mirrored (13.37)
+        check("each parabola block: plain axes, the y-axis in the middle, the x-axis LOW for happy and HIGH for sad (the mock's blocks)",
+              all(c[0] == 2 and abs(c[1] - 35) < 0.01 for c in pb) and abs(pb[0][2] - 36.63) < 0.02 and abs(pb[1][2] - 13.37) < 0.02 and pb[0][3] and pb[1][3], pb)
+        gr_ = rect(pg, "#graphCard"); pg.screenshot(path=str(SH4 / "1-card.png"), clip={"x": gr_["l"] - 10, "y": gr_["t"] - 10, "width": gr_["w"] + 20, "height": gr_["h"] + 20})
+        close_panel(pg)
+        show(pg, [W / 2, 420]); vis = pg.evaluate("window.__T.vis(0)"); mid = [(vis[0] + vis[2]) / 2, (vis[1] + vis[3]) / 2]
+        land(pg, "parabola")
+        gs = graphs(pg)
+        check("happy: a tap on its block lands ONE 'graph' record and closes the panel and the card",
+              len(recs(pg)) == 1 and len(gs) == 1 and not panel_shown(pg) and not gcard_shown(pg), [r["kind"] for r in recs(pg)])
+        hg = gs[0]; hd = hg["data"]; hid = hg["id"]; pxp = round(W / 3 / 4.4, 2)
+        check("... its axes: fam 'parabola', window x -2.2 to 2.2, y from -0.9 (yl) to 3.4; px a third of the page over 4.4 units, py 0.8 px; the axes' style black",
+              hd["axes"] == {"on": True, "fam": "parabola", "xl": -2.2, "xr": 2.2, "yl": -0.9, "yh": 3.4} and hd["px"] == pxp and hd["py"] == round(0.8 * pxp, 2)
+              and hg["style"]["colour"] == "#000000", [hd, hg["style"]])
+        check("... ONE curve: parabola in the pen's colour and width, offset 0, stretch 1",
+              hd["curves"] == [{"kind": "parabola", "colour": BLUE, "width": pen_w, "dx": 0, "dy": 0, "sx": 1, "sy": 1}], hd["curves"])
+        g = geo(pg, hid); bx = g["box"]
+        check("... the window's MIDDLE (not the origin) in the middle of the part of the page she sees; the whole graph 8 px inside the page",
+              abs(hd["x0"] - mid[0]) < 1 and abs(hd["y0"] - 1.25 * hd["py"] - mid[1]) < 1 and bx[0] >= 8 - 0.01 and bx[1] >= 8 - 0.01 and bx[2] <= W - 8 + 0.01 and bx[3] <= H - 8 + 0.01,
+              [hd["x0"], hd["y0"], mid, bx])
+        xa, ya = g["lines"][0], g["lines"][1]
+        check("... the x-axis sits LOW: the y-axis runs from 0.9 under it to past 3.4 over it; the x-axis from -2.2 to past 2.2, through the origin",
+              abs(ya[0][1] - (hd["y0"] + 0.9 * hd["py"])) < 0.02 and ya[1][1] < hd["y0"] - 3.4 * hd["py"] and abs(ya[0][0] - hd["x0"]) < 0.01
+              and abs(xa[0][0] - (hd["x0"] - 2.2 * hd["px"])) < 0.02 and xa[1][0] > hd["x0"] + 2.2 * hd["px"] and abs(xa[0][1] - hd["y0"]) < 0.01 and g["yl"] == -0.9, g["lines"])
+        check("... PLAIN axes: no ticks, no numbers; only the letters x and y, the same size as a cubic's", g["ticks"] == [] and [l["t"] for l in g["labels"]] == ["x", "y"]
+              and all(l["cls"] == "letter" and abs(l["size"] - 21 / 55 * W / 12) < 0.05 for l in g["labels"]), g["labels"])
+        e = el(pg, hid)
+        check("... drawn: axes, heads and the two letters BLACK (glyph outlines, no <text>), then the curve in Blue; no round left handle",
+              [p["cls"] for p in e["parts"]] == ["axis", "head", "letter", "letter", "curve"] and all(p["stroke"] == "#000000" for p in e["parts"][:2])
+              and all(p["fill"] == "#000000" for p in e["parts"][2:4]) and e["parts"][4]["stroke"] == BLUE and e["texts"] == 0 and g["left"] is None, e["parts"])
+        P = cpts(hid)[0]; XX = lambda q: (q[0] - hd["x0"]) / hd["px"]; YY = lambda q: (hd["y0"] - q[1]) / hd["py"]
+        check("... the curve is x² itself (within 0.02, or on the cut) and stays inside the window",
+              len(P) > 50 and all(abs(YY(q) - sq(XX(q))) < 0.02 or abs(YY(q) - 3.4) < 0.02 for q in P) and all(abs(XX(q)) <= 2.2 + 1e-6 and -0.9 - 0.01 <= YY(q) <= 3.4 + 0.01 for q in P), len(P))
+        r0 = g["runs"][0]
+        check("... ONE run, the turning point ON the origin, both arms off the TOP edge (at x = -1.84 and 1.84)",
+              len(r0) == 1 and abs(YY(r0[0][0]) - 3.4) < 0.01 and abs(YY(r0[0][1]) - 3.4) < 0.01 and abs(XX(r0[0][0]) + math.sqrt(3.4)) < 0.01 and abs(XX(r0[0][1]) - math.sqrt(3.4)) < 0.01
+              and min(abs(XX(q)) + abs(YY(q)) for q in P) < 0.03, r0)
+        shot4("2-parabola-landed.png", bx)
+        undo(pg)
+        check("ONE undo takes it away", recs(pg) == [])
+        show(pg, [W / 2, 420]); vis = pg.evaluate("window.__T.vis(0)"); mid = [(vis[0] + vis[2]) / 2, (vis[1] + vis[3]) / 2]
+        land(pg, "-parabola"); sg_ = graphs(pg)[0]; sd_ = sg_["data"]; sgeo_ = geo(pg, sg_["id"]); P2 = cpts(sg_["id"])[0]
+        YS = lambda q: (sd_["y0"] - q[1]) / sd_["py"]; XS = lambda q: (q[0] - sd_["x0"]) / sd_["px"]
+        check("sad: its mirror: window y from -3.4 to 0.9 (the x-axis HIGH), the window's middle where she looks; -x² itself, both arms off the BOTTOM edge",
+              sd_["axes"] == {"on": True, "fam": "parabola", "xl": -2.2, "xr": 2.2, "yl": -3.4, "yh": 0.9} and sd_["curves"][0]["kind"] == "-parabola"
+              and abs(sd_["y0"] + 1.25 * sd_["py"] - mid[1]) < 1 and len(sgeo_["runs"][0]) == 1
+              and abs(YS(sgeo_["runs"][0][0][0]) + 3.4) < 0.01 and abs(YS(sgeo_["runs"][0][0][1]) + 3.4) < 0.01
+              and all(abs(YS(q) + sq(XS(q))) < 0.02 or abs(YS(q) + 3.4) < 0.02 for q in P2)
+              and abs(sgeo_["lines"][1][0][1] - (sd_["y0"] + 3.4 * sd_["py"])) < 0.02, [sd_, sgeo_["runs"]])
+        shot4("3-sad-landed.png", sgeo_["box"])
+        undo(pg)
+        check("... one undo takes it away", recs(pg) == [])
+
+        group[0] = "K. parabola: selected"
+        clear_sel(pg); land(pg, "parabola"); hid = graphs(pg)[0]["id"]; hd = gd()
+        pick(geo(pg, hid)["box"])
+        check("a box picks the whole parabola graph; the Axes pill shows; NO round left handle",
+              sel(pg) and sel(pg)["ids"] == [hid] and pg.locator(".selChips .chip.gchip").count() == 1 and pg.locator(".sel .selgl").count() == 0, sel(pg))
+        shot4("4-selected.png", sel(pg)["box"], top=110)
+        pg.click(".selChips .chip.gchip"); pg.wait_for_timeout(60)
+        check("the Axes pill hides the axes and letters; the curve stays", gd()["axes"]["on"] is False and [p["cls"] for p in el(pg, hid)["parts"]] == ["curve"])
+        pg.click(".selChips .chip.gchip"); pg.wait_for_timeout(60)
+        check("... and shows them again (the window's yl kept)", gd()["axes"]["on"] is True and gd()["axes"]["yl"] == -0.9 and len(el(pg, hid)["parts"]) == 5)
+        undo(pg); undo(pg)
+        check("... one undo step each", gd() == hd)
+        if not (sel(pg) and sel(pg)["ids"] == [hid]): pick(geo(pg, hid)["box"])
+        pg.click(f'#tray .sw[data-colour="{THIRD}"]'); pg.wait_for_timeout(60)
+        check("a colour tap recolours the curve only (the axes stay black)", gd()["curves"][0]["colour"].lower() == THIRD.lower() and graphs(pg)[0]["style"]["colour"] == "#000000")
+        undo(pg)
+        check("... one undo step", gd() == hd)
+
+        group[0] = "K. parabola: shares axes (same units)"
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        show(pg, [W / 2, 420]); land(pg, "cubic"); cid = graphs(pg)[0]["id"]; cd0 = gd()
+        pen_colour(PINK); pick(geo(pg, cid)["box"]); tap("parabola")
+        dd = gd()
+        check("happy tapped with a CUBIC graph selected: ONE record, the parabola JOINS its axes in pink; the cubic's window, size and place unchanged",
+              len(recs(pg)) == 1 and [(k["kind"], k["colour"].lower()) for k in dd["curves"]] == [("cubic", BLUE.lower()), ("parabola", PINK.lower())]
+              and but(dd, "curves") == but(cd0, "curves"), dd)
+        Pp = cpts(cid)[1]
+        check("... drawn on the cubic's units: x² itself, cut at the cubic's top (3.2)",
+              len(Pp) > 30 and all(abs((cd0["y0"] - q[1]) / cd0["py"] - sq((q[0] - cd0["x0"]) / cd0["px"])) < 0.02 or abs((cd0["y0"] - q[1]) / cd0["py"] - 3.2) < 0.02 for q in Pp), len(Pp))
+        clear_sel(pg); shot4("5-parabola-on-cubic-axes.png", geo(pg, cid)["box"])
+        pick(geo(pg, cid)["box"]); tap("parabola")
+        check("happy tapped again (already there): nothing changes", gd() == dd and len(recs(pg)) == 1)
+        undo(pg)
+        check("ONE undo takes the parabola off again; the cubic graph as it landed", len(recs(pg)) == 1 and gd() == cd0, gd()["curves"])
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        land(pg, "parabola"); hid = graphs(pg)[0]["id"]; hd = gd()
+        pen_colour(PINK); pick(geo(pg, hid)["box"]); tap("cubic")
+        dh = gd(); Pc = cpts(hid)[1]
+        check("cubic tapped with a PARABOLA graph selected: it joins the parabola's axes (the window -0.9 to 3.4 and the size unchanged)",
+              len(recs(pg)) == 1 and [k["kind"] for k in dh["curves"]] == ["parabola", "cubic"] and but(dh, "curves") == but(hd, "curves")
+              and all(abs((hd["y0"] - q[1]) / hd["py"] - cub((q[0] - hd["x0"]) / hd["px"])) < 0.02 or min(abs((hd["y0"] - q[1]) / hd["py"] - e_) for e_ in (-0.9, 3.4)) < 0.02 for q in Pc)
+              and all(-0.9 - 0.01 <= (hd["y0"] - q[1]) / hd["py"] <= 3.4 + 0.01 for q in Pc), dh["curves"])
+        undo(pg)
+        if not (sel(pg) and sel(pg)["ids"] == [hid]): pick(geo(pg, hid)["box"])
+        tap("-parabola")
+        check("sad tapped with the happy graph selected: joins it too (the same window)", [k["kind"] for k in gd()["curves"]] == ["parabola", "-parabola"] and but(gd(), "curves") == but(hd, "curves"))
+        undo(pg)
+        if not (sel(pg) and sel(pg)["ids"] == [hid]): pick(geo(pg, hid)["box"])
+        tap("sin")
+        check("sin tapped with the parabola graph selected: trig never shares with plain units, so a NEW graph lands; the parabola graph unchanged",
+              len(graphs(pg)) == 2 and [x for x in graphs(pg) if x["id"] == hid][0]["data"] == hd
+              and [k["kind"] for k in [x for x in graphs(pg) if x["id"] != hid][0]["data"]["curves"]] == ["sin"], len(graphs(pg)))
+        tid = [x for x in graphs(pg) if x["id"] != hid][0]["id"]; td = [x for x in graphs(pg) if x["id"] == tid][0]["data"]
+        clear_sel(pg); pg.click("#tool-select"); pg.wait_for_timeout(30); pg.evaluate("(i) => window.__pw.ink.selectRecs('s0', [i])", tid); pg.wait_for_timeout(40)
+        if sel(pg) and sel(pg)["ids"] == [tid]:
+            tap("parabola")
+            check("happy tapped with a trig graph selected: a NEW parabola graph lands; the trig graph unchanged",
+                  len(graphs(pg)) == 3 and [x for x in graphs(pg) if x["id"] == tid][0]["data"] == td
+                  and any(x["data"]["axes"].get("fam") == "parabola" and x["id"] != hid for x in graphs(pg)), len(graphs(pg)))
+            undo(pg)
+        else:
+            check("happy tapped with a trig graph selected: a NEW parabola graph lands (could not pick the trig graph alone)", False, sel(pg))
+        undo(pg); clear_sel(pg)
+        check("... undo, undo: the parabola graph alone", len(recs(pg)) == 1 and gd() == hd)
+
+        group[0] = "K. parabola: on her axes stamp"
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour("#000000")
+        stp = place_stamp([-5, 5, 1, -5, 5, 1], False); sidp = stp["id"]; sdp = stp["data"]; close_panel(pg)
+        e_before = el(pg, sidp)
+        pen_colour(BLUE); pick(sgeo(sidp)["box"]); tap("parabola")
+        s1 = axrecs()[0]["data"]
+        check("happy tapped with her bare stamp selected: NO new graph; the curve stored in the stamp's data, her stamp draws as before, the curve last in Blue",
+              len(recs(pg)) == 1 and {k: v for k, v in s1.items() if k != "curves"} == sdp and [k["kind"] for k in s1["curves"]] == ["parabola"]
+              and el(pg, sidp)["parts"][:-1] == e_before["parts"] and el(pg, sidp)["parts"][-1]["stroke"] == BLUE, [x["kind"] for x in recs(pg)])
+        kx, ky = 5 / 2.6, 5 / 3.2
+        SXp = lambda x: sdp["x0"] + x * kx / sdp["xd"] * sdp["px"]; SYp = lambda v: sdp["y0"] - v * ky / sdp["yd"] * sdp["py"]
+        sg = sgeo(sidp)
+        near_s = lambda a, v, j=0: min(math.hypot(x - SXp(a), y - SYp(v)) for x, y in zip(sg["xs"][j], sg["ys"][j]))
+        check("... in the cubic's units on that stamp (x 2.6 at 5, y 3.2 at 5): turning point ON her origin, through (1, 1) and (-1, 1), arms cut at her top edge",
+              max(near_s(a, v) for a, v in [(0, 0), (1, 1), (-1, 1)]) < 1.5 and len(sg["runs"][0]) == 1
+              and abs(sg["runs"][0][0][0][1] - SYp(3.2)) < 0.05 and abs(sg["runs"][0][0][1][1] - SYp(3.2)) < 0.05,
+              [[near_s(a, v) for a, v in [(0, 0), (1, 1), (-1, 1)]], sg["runs"]])
+        if not (sel(pg) and sel(pg)["ids"] == [sidp]): pick(sgeo(sidp)["box"])
+        pen_colour(PINK); pick(sgeo(sidp)["box"]); tap("cubic")
+        sg = sgeo(sidp); s2_ = axrecs()[0]["data"]
+        check("cubic tapped with the parabola-carrying stamp selected: it JOINS the stamp, in the same units (hill at (-1, 2), dip at (1, -2)); the parabola unchanged",
+              len(recs(pg)) == 1 and [k["kind"] for k in s2_["curves"]] == ["parabola", "cubic"] and s2_["curves"][0] == s1["curves"][0]
+              and max(near_s(a, v, 1) for a, v in [(0, 0), (-1, 2), (1, -2)]) < 1.5, [near_s(a, v, 1) for a, v in [(0, 0), (-1, 2), (1, -2)]])
+        clear_sel(pg); shot4("6-on-stamp.png", sgeo(sidp)["box"])
+        pick(sgeo(sidp)["box"]); tap("sin")
+        check("sin tapped with that stamp selected: a NEW graph lands; the stamp unchanged", len(graphs(pg)) == 1 and axrecs()[0]["data"] == s2_, len(graphs(pg)))
+        undo(pg); undo(pg); undo(pg)
+        check("... three undos: the stamp bare again", len(recs(pg)) == 1 and axrecs()[0]["data"] == sdp)
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour("#000000")
+        stc = place_stamp([-5, 5, 1, -5, 5, 1], False); close_panel(pg); pen_colour(BLUE); pick(sgeo(stc["id"])["box"]); tap("cubic")
+        pen_colour(PINK); pick(sgeo(stc["id"])["box"]); tap("parabola")
+        sg = sgeo(stc["id"]); sdp = stc["data"]
+        check("... and the other way round: a parabola joins a cubic-carrying stamp, its turning point on her origin in the same units",
+              [k["kind"] for k in axrecs()[0]["data"]["curves"]] == ["cubic", "parabola"] and max(near_s(a, v, 1) for a, v in [(0, 0), (1, 1), (-1, 1)]) < 1.5)
+
+        group[0] = "K. parabola: picked, slid, stretched"
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        show(pg, [W / 2, 420]); land(pg, "parabola"); hid = graphs(pg)[0]["id"]; d = gd(); g0p = geo(pg, hid)
+        P1 = PU(d, 1, 1)
+        selt(); tapp(P1); s = sel(pg)
+        check("a select tap on the parabola picks the CURVE alone (two handles, Axes and Delete)", s and s["ids"] == [hid] and s["curve"] == 0
+              and sorted(pg.evaluate("[...document.querySelectorAll('.sel circle')].map((c) => c.getAttribute('class'))")) == ["selcx", "selcy"], s)
+        drag(P1, [0.5 * d["px"], -0.5 * d["py"]]); c = gd()["curves"][0]; g1p = geo(pg, hid)
+        r1 = g1p["runs"][0]
+        check("a drag slides it right and up (dx 0.5, dy 0.5, free values); the axes and letters stay; both arms still run to the top edge",
+              abs(c["dx"] - 0.5) < 0.02 and abs(c["dy"] - 0.5) < 0.003 and c["sx"] == 1 and c["sy"] == 1 and but(gd(), "curves") == but(d, "curves")
+              and g1p["lines"] == g0p["lines"] and g1p["labels"] == g0p["labels"] and len(r1) == 1
+              and abs((d["y0"] - r1[0][0][1]) / d["py"] - 3.4) < 0.01 and abs((d["y0"] - r1[0][1][1]) / d["py"] - 3.4) < 0.01, [c, r1])
+        zz = z(pg); s = sel(pg); hx = s["hx"]
+        drag(hx, [max(hx[0] - d["x0"], 40 / zz) * 0.5, 0]); c2 = gd()["curves"][0]
+        check("the right handle: WIDER (sx 1.5 about the y-axis, the turning point carried out to 0.75)", abs(c2["sx"] - 1.5) < 0.01 and abs(c2["dx"] - 0.75) < 0.02 and c2["dy"] == c["dy"], c2)
+        hy = sel(pg)["hy"]; drag(hy, [0, max(hy[1] - (d["y0"] - c2["dy"] * d["py"]), 40 / zz) * 0.5]); c3 = gd()["curves"][0]
+        Pq = cpts(hid)[0]; lowp = max(Pq, key=lambda q: q[1])
+        check("the bottom handle: TALLER (sy 1.5) about the line through the turning point (dy stays); the turning point where it was",
+              abs(c3["sy"] - 1.5) < 0.01 and c3["dy"] == c2["dy"] and c3["dx"] == c2["dx"] and c3["sx"] == c2["sx"]
+              and abs((lowp[0] - d["x0"]) / d["px"] - c3["dx"]) < 0.05 and abs((d["y0"] - lowp[1]) / d["py"] - c3["dy"]) < 0.01, [c3, lowp])
+        shot4("7-picked-slid-stretched.png", g0p["box"], top=90)
+        undo(pg); undo(pg); undo(pg)
+        check("three undos put it back as it landed, one step per drag", gd() == d, gd()["curves"])
+        if not (sel(pg) and sel(pg)["curve"] == 0): selt(); tapp(P1)
+        drag(P1, [5 * d["px"], 0]); c = gd()["curves"][0]; undo(pg)
+        if not (sel(pg) and sel(pg)["curve"] == 0): selt(); tapp(P1)
+        drag(P1, [0, 5 * d["py"]]); c_ = gd()["curves"][0]; undo(pg)
+        check("dragged far right it stops with its turning point on the window's edge (dx 2.2); far down, on the BOTTOM edge yl (dy -0.9), not -3.4",
+              c["dx"] == 2.2 and c_["dy"] == -0.9, [c, c_])
+        lims = pg.evaluate("""() => { const GR = window.__GR, out = [];
+          for (const k of ['parabola', '-parabola']) { const r = GR.newGraph('t', 's0', k, { colour: '#000000', width: 2 }, 794, 400, 500);
+            const a = GR.curveSet(r, 0, { dx: 1000, dy: 9, sx: 100, sy: 0.001 }).data.curves[0], b = GR.curveSet(r, 0, { dx: -1000, dy: -9, sx: 0.01, sy: 50 }).data.curves[0];
+            out.push([a.dx, a.dy, a.sx, a.sy, b.dx, b.dy, b.sx, b.sy]); }
+          return out; }""")
+        check("the limits (curveSet): the turning point inside the window (happy dy -0.9 to 3.4, sad -3.4 to 0.9, dx -2.2 to 2.2), stretch 1/8 to 8",
+              lims == [[2.2, 3.4, 8, 0.125, -2.2, -0.9, 0.125, 8], [2.2, 0.9, 8, 0.125, -2.2, -3.4, 0.125, 8]], lims)
+        clear_sel(pg); pen_colour(PINK); pick(geo(pg, hid)["box"]); tap("cubic")
+        dm = gd(); clear_sel(pg); selt(); tapp(P1); s = sel(pg)
+        pg.click(f'#tray .sw[data-colour="{THIRD}"]'); pg.wait_for_timeout(60); cs = gd()["curves"]
+        check("with a cubic beside it: a tap on the parabola picks it (curve 0) and a colour tap recolours the PARABOLA only",
+              s and s["curve"] == 0 and cs[0]["colour"].lower() == THIRD.lower() and cs[1]["colour"].lower() == PINK.lower(), [s, cs])
+        undo(pg); clear_sel(pg); selt(); tapp(P1)
+        pg.click(".selChips .chip[data-act='delete']"); pg.wait_for_timeout(60)
+        check("Delete with the parabola picked removes the parabola only; the cubic stays on the same axes", len(recs(pg)) == 1 and gd()["curves"] == [dm["curves"][1]] and but(gd(), "curves") == but(dm, "curves"), gd()["curves"])
+        undo(pg)
+        check("... one undo: both back", gd() == dm)
+
+        group[0] = "K. parabola: thumb + PDF + share"
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        show(pg, [W / 2, 260]); land(pg, "parabola"); hid = graphs(pg)[0]["id"]; clear_sel(pg)
+        hdd = gd()
+        show(pg, [W / 2, 800]); pen_colour("#000000")
+        stp = place_stamp([-5, 5, 1, -5, 5, 1], False); close_panel(pg); sidp = stp["id"]
+        pen_colour(PINK); pg.click("#tool-select"); pg.wait_for_timeout(30)
+        pg.evaluate("(i) => window.__pw.ink.selectRecs('s0', [i])", sidp); pg.wait_for_timeout(40)
+        tap("parabola"); clear_sel(pg); pg.click("#tool-pen"); pg.wait_for_timeout(30)
+        sdd = axrecs()[0]["data"]
+        check("the page holds the happy graph and a stamp carrying a parabola", len(graphs(pg)) == 1 and [k["kind"] for k in sdd.get("curves", [])] == ["parabola"], sdd)
+        tg = pg.evaluate("(i) => window.__T.el(i, window.__pw.ink.thumbSvg('s0'))", hid)
+        same_d = pg.evaluate("""(i) => { const a = document.querySelector(`#stack .sheet[data-id='s0'] svg.ink [data-id='${i}'] path.curve`);
+          const t = window.__pw.ink.thumbSvg('s0').querySelector(`[data-id='${i}'] path.curve`); return !!a && !!t && a.getAttribute('d') === t.getAttribute('d'); }""", hid)
+        check("thumbSvg: the parabola graph (axes, heads, x, y, curve; no numbers), the same curve path as the page", tg and [p["cls"] for p in tg["parts"]] == ["axis", "head", "letter", "letter", "curve"] and same_d,
+              tg and [p["cls"] for p in tg["parts"]])
+        pg.click("#listBtn"); pg.wait_for_selector("#pageList:not([hidden])"); pg.wait_for_timeout(300)
+        okth = pg.evaluate("([a, b]) => [document.querySelectorAll(`#plThumbs .thumbP[data-index='1'] [data-id='${a}'] path.curve`).length, document.querySelectorAll(`#plThumbs .thumbP[data-index='1'] [data-id='${b}'] path.curve`).length]", [hid, sidp])
+        check("the page list's thumb of page 1 draws the parabola and the stamp's parabola", okth == [1, 1], okth)
+        tb = rect(pg, "#plThumbs .thumbP[data-index='1']"); thumb_png = SH4 / "_thumb.png"
+        pg.screenshot(path=str(thumb_png), clip={"x": tb["l"] - 6, "y": tb["t"] - 6, "width": tb["w"] + 12, "height": tb["h"] + 12})
+        doc = pdf_of(pg, "Parabola"); p0 = doc[0]
+        pix = p0.get_pixmap(dpi=144); img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB"); sk = pix.width / W
+        on_b = PU(hdd, 1.5, 2.25)                                                 # the parabola at (1.5, 2.25): Blue
+        on_s = [sdd["x0"] + 1.5 * 5 / 2.6 * sdd["px"], sdd["y0"] - 2.25 * 5 / 3.2 * sdd["py"]]   # the stamp's parabola at (1.5, 2.25): pink
+        on_x = PU(hdd, -1.8, 0); on_foot = PU(hdd, 0, -0.6)                       # the x-axis, and the y-axis's foot UNDER it: black
+        on_no = PU(hdd, 0, -1.3)                                                  # nothing: under the window's bottom edge (-0.9)
+        pdf_hits = [any_px(img, on_b[0] * sk, on_b[1] * sk, 2, bluish), any_px(img, on_s[0] * sk, on_s[1] * sk, 2, pinkish),
+                    any_px(img, on_x[0] * sk, on_x[1] * sk, 2, darkish), any_px(img, on_foot[0] * sk, on_foot[1] * sk, 2, darkish), not any_px(img, on_no[0] * sk, on_no[1] * sk, 2, darkish)]
+        check("the PDF: Blue on the parabola, pink on the stamp's parabola, black on the x-axis and on the y-axis's short foot under it, nothing lower", all(pdf_hits), [pdf_hits, on_no, sgeo(sidp)["box"]])
+        check("... no degree marks in the PDF", "°" not in p0.get_text())
+        doc.close()
+        th_img = Image.open(str(thumb_png)).convert("RGB")
+        hh = 800; t2 = th_img.resize((round(th_img.width * hh / th_img.height), hh)); p2i = img.resize((round(img.width * hh / img.height), hh))
+        comp = Image.new("RGB", (t2.width + p2i.width + 30, hh + 20), (210, 210, 210)); comp.paste(t2, (10, 10)); comp.paste(p2i, (t2.width + 20, 10))
+        if comp.width > 900: comp = comp.resize((900, round(comp.height * 900 / comp.width)))
+        comp.save(str(SH4 / "8-thumb-pdf.png")); thumb_png.unlink()
+        pg.click("#plSelect"); pg.wait_for_timeout(40)
+        pg.locator("#plThumbs .thumbP[data-index='1']").click(); pg.wait_for_timeout(40)
+        pg.click("#plBar button[data-act='share']"); pg.wait_for_selector("#shareDlg")
+        pg.evaluate("window.__shared = null")
+        pg.click("#shareDlg button[data-share='images']"); pg.wait_for_selector("#shareReady", timeout=30000)
+        pg.click("#shareDlg button[data-share='send']"); pg.wait_for_function("window.__shared", timeout=10000)
+        png = pg.evaluate("""async () => { const f = window.__shared.files[0]; const u = new Uint8Array(await f.arrayBuffer()); let s = '';
+          for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000)); return [f.type, btoa(s)]; }""")
+        si = Image.open(io.BytesIO(base64.b64decode(png[1]))).convert("RGB"); ss = si.width / W
+        check("a shared picture shows Blue on the parabola and pink on the stamp's parabola",
+              any_px(si, on_b[0] * ss, on_b[1] * ss, 2, bluish) and any_px(si, on_s[0] * ss, on_s[1] * ss, 2, pinkish))
+        if pg.evaluate("window.__pw.tick()") is not None: pg.click("#plDone"); pg.wait_for_timeout(40)
+        if not pg.locator("#pageList").is_hidden(): pg.click("#plClose"); pg.wait_for_timeout(40)
+        keep_g, keep_s = graphs(pg)[0], axrecs()[0]
+        pg.evaluate("window.__pw.idle()"); pg.wait_for_timeout(200)
+        pg.click("#backBtn"); pg.wait_for_selector("#listView:not([hidden])"); pg.wait_for_timeout(80)
+        pg.reload(); ready(pg); open_note(pg); pg.evaluate(HELP)
+        check("after a reload the parabola graph (its yl kept) and the stamp with its parabola are back exactly",
+              graphs(pg) and graphs(pg)[0]["data"] == keep_g["data"] and graphs(pg)[0]["data"]["axes"]["yl"] == -0.9 and axrecs() and axrecs()[0]["data"] == keep_s["data"])
+
+        # ------------------------------------------------------------ L: pw-v9p, unit 4b: the hyperbola (f(x) = 1/x, "1 and 3", and its mirror, "2 and 4")
+        group[0] = "L. hyperbola: old records draw as before"
+        # K's five records plus three parabola records from unit 4a (a happy graph carrying sad and a cubic, a hidden-axes sad
+        # slid, a stamp carrying a parabola and a cubic), hashed BEFORE unit 4b touched graph.js (the pw-v9o tree, 20 Nov)
+        OLD4B = """async () => {
+          const G = await import('./js/graph.js'), st = { colour: '#000000', width: 1.5, dash: 'solid', opacity: 1 };
+          const cv = (kind, o) => ({ kind, colour: '#0D0DFF', width: 2.5, dx: 0, dy: 0, sx: 1, sy: 1, ...(o || {}) });
+          const recs = {
+            cubic: { kind: 'graph', style: st, data: { x0: 397, y0: 500, px: 50.9, py: 40.72, axes: { on: true, fam: 'cubic', xl: -2.6, xr: 2.6, yh: 3.2 },
+              curves: [cv('cubic'), cv('-cubic', { colour: '#FF0C84', dx: 0.7, dy: -1.1, sx: 1.6, sy: 0.5 })] } },
+            trig: { kind: 'graph', style: st, data: { x0: 300, y0: 400, px: 66.17, py: 62.56, axes: { on: true, xl: -180, xr: 360, yh: 1.35 },
+              curves: [cv('sin'), cv('-cos', { dx: 40, dy: 0.3, sx: 0.5, sy: 1.2 })] } },
+            tan: { kind: 'graph', style: st, data: { x0: 200, y0: 300, px: 66.17, py: 39.7, axes: { on: false, xl: 0, xr: 360, yh: 2.6 },
+              curves: [cv('tan', { dx: 20, sx: 1.5 })] } },
+            stampCubic: { kind: 'axes', style: st, data: { x0: 400, y0: 600, px: 30, py: 30, xs: -5, xe: 5, xd: 1, ys: -5, ye: 5, yd: 1, deg: false, curves: [cv('cubic')] } },
+            stampTrig: { kind: 'axes', style: st, data: { x0: 400, y0: 600, px: 30, py: 30, xs: -5, xe: 5, xd: 1, ys: -5, ye: 5, yd: 1, deg: false, curves: [cv('tan'), cv('sin')] } },
+            parabola: { kind: 'graph', style: st, data: { x0: 397, y0: 560, px: 60.15, py: 48.12, axes: { on: true, fam: 'parabola', xl: -2.2, xr: 2.2, yl: -0.9, yh: 3.4 },
+              curves: [cv('parabola'), cv('-parabola', { colour: '#FF0C84', dx: 0.5, dy: 2.1, sx: 1.4, sy: 0.6 }), cv('cubic', { dx: -0.3 })] } },
+            sadHidden: { kind: 'graph', style: st, data: { x0: 300, y0: 300, px: 60.15, py: 48.12, axes: { on: false, fam: 'parabola', xl: -2.2, xr: 2.2, yl: -3.4, yh: 0.9 },
+              curves: [cv('-parabola', { dx: -0.4, dy: 0.2 })] } },
+            stampParabola: { kind: 'axes', style: st, data: { x0: 400, y0: 600, px: 30, py: 30, xs: -5, xe: 5, xd: 1, ys: -5, ye: 5, yd: 1, deg: false, curves: [cv('parabola'), cv('cubic')] } },
+          };
+          const out = {};
+          for (const [k, r] of Object.entries(recs)) out[k] = JSON.stringify((r.kind === 'graph' ? G.graphParts(r) : G.stampCurveParts(r)).map((p) => [p.cls, p.d, p.stroke, p.fill, p.width, p.dash]));
+          return out; }"""
+        BEFORE4B = dict(BEFORE, parabola="d684b678aec97e0a87044736e7b2256276893c691649f0b670fff66cf4d4c7bd",
+                        sadHidden="13d2ffef3a0a7f3a0ed795df21c98ccfdefb0095652ed286809d7711b5254185", stampParabola="a4a7994e7ffd750dd191e343e0c206e0860323b7dbb15a749d08c0866f234785")
+        now_ = {k: hashlib.sha256(v.encode()).hexdigest() for k, v in pg.evaluate(OLD4B).items()}
+        check("the five old records of group K and three parabola records (happy with sad and a cubic, a hidden-axes sad slid, a stamp with a parabola) draw the SAME path strings as before unit 4b",
+              now_ == BEFORE4B, [k for k in BEFORE4B if now_.get(k) != BEFORE4B[k]])
+
+        group[0] = "L. hyperbola: card + landing"
+        SH5 = ROOT / "_build" / "graph" / "unit4b"; SH5.mkdir(parents=True, exist_ok=True)
+        def shot5(name, bx, top=70, bottom=70, w=700):
+            show(pg, [(bx[0] + bx[2]) / 2, (bx[1] + bx[3]) / 2])
+            tl = pg.evaluate("([x, y]) => window.__T.client('s0', x, y)", [bx[0], bx[1]]); br = pg.evaluate("([x, y]) => window.__T.client('s0', x, y)", [bx[2], bx[3]])
+            y0 = max(0, tl[1] - top); y1 = min(800, br[1] + bottom); x0 = max(0, min(1280 - w, (tl[0] + br[0]) / 2 - w / 2))
+            pg.screenshot(path=str(SH5 / name), clip={"x": x0, "y": y0, "width": w, "height": y1 - y0})
+        def asy(i):                                                # the graph's asymptotes: up-and-down ones carry x, sideways ones y
+            return pg.evaluate("""(i) => { const r = window.__T.recs('s0').find((x) => x.id === i); const g = window.__pw.ink.graphGeom(r);
+              return g.asym.map((a) => ({ x: a.x === undefined ? null : a.x, y: a.y === undefined ? null : a.y, a: a.a, b: a.b })); }""", i)
+        def near_hyp(P, d, j=0, sgn=1, lo=-3.2, hi=3.2):              # every point on sgn sy / ((x - dx) / sx) + dy, or on the window's top or bottom
+            c = d["curves"][j]; XX_ = lambda q: (q[0] - d["x0"]) / d["px"]; YY_ = lambda q: (d["y0"] - q[1]) / d["py"]
+            f = lambda x: sgn * c["sy"] / ((x - c["dx"]) / c["sx"]) + c["dy"]
+            return all(abs(YY_(q) - f(XX_(q))) < 0.02 or min(abs(YY_(q) - lo), abs(YY_(q) - hi)) < 0.02 for q in P)
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        open_gcard(pg); pg.wait_for_timeout(60)
+        hb = pg.evaluate("""() => ['hyperbola', '-hyperbola'].map((k) => { const s = document.querySelector('#gblk-' + k.replace('-', 'n') + ' svg'), l = [...s.querySelectorAll('line')];
+          const d = s.querySelector('path').getAttribute('d'); return [l.length, +l[1].getAttribute('x1'), +l[0].getAttribute('y1'), (d.match(/M/g) || []).length, s.querySelectorAll('[stroke-dasharray]').length]; })""")
+        check("each hyperbola block: plain axes crossing in the MIDDLE (x 35, y 25), TWO branches, no dashed lines (the mock's blocks)",
+              all(c[0] == 2 and abs(c[1] - 35) < 0.01 and abs(c[2] - 25) < 0.01 and c[3] == 2 and c[4] == 0 for c in hb), hb)
+        gr_ = rect(pg, "#graphCard"); pg.screenshot(path=str(SH5 / "1-card.png"), clip={"x": gr_["l"] - 10, "y": gr_["t"] - 10, "width": gr_["w"] + 20, "height": gr_["h"] + 20})
+        check("the card is still on screen beside the panel", gr_["l"] >= 8 and gr_["b"] <= 792, gr_)
+        close_panel(pg)
+        show(pg, [W / 2, 420]); vis = pg.evaluate("window.__T.vis(0)"); mid = [(vis[0] + vis[2]) / 2, (vis[1] + vis[3]) / 2]
+        land(pg, "hyperbola")
+        gs = graphs(pg)
+        check("1 and 3: a tap on its block lands ONE 'graph' record and closes the panel and the card",
+              len(recs(pg)) == 1 and len(gs) == 1 and not panel_shown(pg) and not gcard_shown(pg), [r["kind"] for r in recs(pg)])
+        yg = gs[0]; yd_ = yg["data"]; yid = yg["id"]; pxh = round(W / 3 / 6.4, 2)
+        check("... its axes: fam 'hyperbola', window x and y -3.2 to 3.2 (no yl), px a third of the page over 6.4 units, py 0.8 px; the axes' style black",
+              yd_["axes"] == {"on": True, "fam": "hyperbola", "xl": -3.2, "xr": 3.2, "yh": 3.2} and yd_["px"] == pxh and yd_["py"] == round(0.8 * pxh, 2)
+              and yg["style"]["colour"] == "#000000", [yd_, yg["style"]])
+        check("... ONE curve (both branches): hyperbola in the pen's colour and width, offset 0, stretch 1",
+              yd_["curves"] == [{"kind": "hyperbola", "colour": BLUE, "width": pen_w, "dx": 0, "dy": 0, "sx": 1, "sy": 1}], yd_["curves"])
+        g = geo(pg, yid); bx = g["box"]
+        check("... the origin (the window's middle) in the middle of the part of the page she sees; the whole graph 8 px inside the page",
+              abs(yd_["x0"] - mid[0]) < 1 and abs(yd_["y0"] - mid[1]) < 1 and bx[0] >= 8 - 0.01 and bx[1] >= 8 - 0.01 and bx[2] <= W - 8 + 0.01 and bx[3] <= H - 8 + 0.01, [yd_["x0"], yd_["y0"], mid, bx])
+        check("... PLAIN axes crossing in the middle: no ticks, no numbers; only the letters x and y, the same size as a cubic's",
+              g["ticks"] == [] and [l["t"] for l in g["labels"]] == ["x", "y"] and all(l["cls"] == "letter" and abs(l["size"] - 21 / 55 * W / 12) < 0.05 for l in g["labels"])
+              and abs(g["lines"][1][0][1] - (yd_["y0"] + 3.2 * yd_["py"])) < 0.02 and abs(g["lines"][0][0][0] - (yd_["x0"] - 3.2 * yd_["px"])) < 0.02, [g["labels"], g["lines"]])
+        e = el(pg, yid)
+        check("... drawn: axes, heads and the two letters BLACK, then the curve in Blue; NO asymptote (both lie on the axes); no left handle",
+              [p["cls"] for p in e["parts"]] == ["axis", "head", "letter", "letter", "curve"] and e["parts"][4]["stroke"] == BLUE and g["asym"] == [] and g["left"] is None, e["parts"])
+        P = cpts(yid)[0]; XX = lambda q: (q[0] - yd_["x0"]) / yd_["px"]; YY = lambda q: (yd_["y0"] - q[1]) / yd_["py"]
+        r0 = g["runs"][0]; q3 = 1 / 3.2
+        check("... the curve is 1/x itself (or on the cut) inside the window, in TWO runs: quadrant 3 from the left edge down to the bottom, quadrant 1 from the top to the right edge",
+              len(P) > 50 and near_hyp(P, yd_) and all(abs(XX(q)) <= 3.2 + 1e-6 and abs(YY(q)) <= 3.2 + 0.01 for q in P) and len(r0) == 2
+              and abs(XX(r0[0][0]) + 3.2) < 0.01 and abs(YY(r0[0][0]) + q3) < 0.01 and abs(YY(r0[0][1]) + 3.2) < 0.01 and abs(XX(r0[0][1]) + q3) < 0.01
+              and abs(YY(r0[1][0]) - 3.2) < 0.01 and abs(XX(r0[1][0]) - q3) < 0.01 and abs(XX(r0[1][1]) - 3.2) < 0.01 and abs(YY(r0[1][1]) - q3) < 0.01, r0)
+        shot5("2-hyperbola-landed.png", bx)
+        undo(pg)
+        check("ONE undo takes it away", recs(pg) == [])
+        show(pg, [W / 2, 420]); land(pg, "-hyperbola"); mg = graphs(pg)[0]; md_ = mg["data"]; mgeo = geo(pg, mg["id"]); P2 = cpts(mg["id"])[0]
+        XM = lambda q: (q[0] - md_["x0"]) / md_["px"]; YM = lambda q: (md_["y0"] - q[1]) / md_["py"]; rm = mgeo["runs"][0]
+        check("2 and 4: its mirror on the same window: -1/x, quadrant 2 from the left edge UP to the top, quadrant 4 from the bottom to the right edge; no asymptote drawn",
+              md_["axes"] == {"on": True, "fam": "hyperbola", "xl": -3.2, "xr": 3.2, "yh": 3.2} and md_["curves"][0]["kind"] == "-hyperbola" and near_hyp(P2, md_, sgn=-1)
+              and len(rm) == 2 and abs(XM(rm[0][0]) + 3.2) < 0.01 and abs(YM(rm[0][0]) - q3) < 0.01 and abs(YM(rm[0][1]) - 3.2) < 0.01
+              and abs(YM(rm[1][0]) + 3.2) < 0.01 and abs(XM(rm[1][1]) - 3.2) < 0.01 and abs(YM(rm[1][1]) + q3) < 0.01 and mgeo["asym"] == [], [md_, rm])
+        shot5("3-q2q4-landed.png", mgeo["box"])
+        undo(pg)
+        check("... one undo takes it away", recs(pg) == [])
+
+        group[0] = "L. hyperbola: selected"
+        clear_sel(pg); land(pg, "hyperbola"); yid = graphs(pg)[0]["id"]; yd_ = gd()
+        pick(geo(pg, yid)["box"])
+        check("a box picks the whole hyperbola graph; the Axes pill shows; NO round left handle",
+              sel(pg) and sel(pg)["ids"] == [yid] and pg.locator(".selChips .chip.gchip").count() == 1 and pg.locator(".sel .selgl").count() == 0, sel(pg))
+        shot5("4-selected.png", sel(pg)["box"], top=110)
+        pg.click(".selChips .chip.gchip"); pg.wait_for_timeout(60)
+        check("the Axes pill hides the axes and letters; the curve stays (still no asymptote)", gd()["axes"]["on"] is False and [p["cls"] for p in el(pg, yid)["parts"]] == ["curve"])
+        pg.click(".selChips .chip.gchip"); pg.wait_for_timeout(60); undo(pg); undo(pg)
+        check("... shows them again; one undo step each", gd() == yd_)
+        if not (sel(pg) and sel(pg)["ids"] == [yid]): pick(geo(pg, yid)["box"])
+        pg.click(f'#tray .sw[data-colour="{THIRD}"]'); pg.wait_for_timeout(60)
+        check("a colour tap recolours the curve only (the axes stay black)", gd()["curves"][0]["colour"].lower() == THIRD.lower() and graphs(pg)[0]["style"]["colour"] == "#000000")
+        undo(pg)
+        check("... one undo step", gd() == yd_)
+
+        group[0] = "L. hyperbola: asymptotes"
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        show(pg, [W / 2, 420]); land(pg, "hyperbola"); yid = graphs(pg)[0]["id"]; d = gd(); g0h = geo(pg, yid)
+        B1 = PU(d, 1, 1); B3 = PU(d, -1, -1)
+        selt(); tapp(B1); s = sel(pg)
+        check("a select tap on the quadrant 1 branch picks the CURVE alone (two handles)", s and s["ids"] == [yid] and s["curve"] == 0
+              and sorted(pg.evaluate("[...document.querySelectorAll('.sel circle')].map((c) => c.getAttribute('class'))")) == ["selcx", "selcy"], s)
+        clear_sel(pg); selt(); tapp(B3); s = sel(pg)
+        check("... and a tap on the quadrant 3 branch picks the SAME curve (one curve, curve 0)", s and s["ids"] == [yid] and s["curve"] == 0, s)
+        drag(B3, [20, 0]); c = gd()["curves"][0]; A = asy(yid)
+        check("slid right 20 page px (dy stays 0): the up-and-down asymptote APPEARS at x = dx, the full window height; the sideways one stays hidden (still on the x-axis)",
+              abs(c["dx"] - 20 / d["px"]) < 0.01 and c["dy"] == 0 and len(A) == 1 and A[0]["y"] is None and abs(A[0]["x"] - (d["x0"] + c["dx"] * d["px"])) < 0.02
+              and abs(A[0]["a"][1] - (d["y0"] - 3.2 * d["py"])) < 0.02 and abs(A[0]["b"][1] - (d["y0"] + 3.2 * d["py"])) < 0.02, [c, A])
+        undo(pg)
+        check("... one undo: back on the axis, hidden again", asy(yid) == [] and gd() == d)
+        if not (sel(pg) and sel(pg)["curve"] == 0): selt(); tapp(B1)
+        drag(B1, [0.5 * d["px"], -0.5 * d["py"]]); c = gd()["curves"][0]; A = asy(yid); g1h = geo(pg, yid); e = el(pg, yid)
+        cls_ = [p["cls"] for p in e["parts"]]
+        check("slid right and up (dx 0.5, dy 0.5): BOTH asymptotes show and travel with it: x = 0.5 the full height, y = 0.5 the full width of the window",
+              abs(c["dx"] - 0.5) < 0.02 and abs(c["dy"] - 0.5) < 0.003 and len(A) == 2 and A[0]["y"] is None and A[1]["x"] is None
+              and abs(A[0]["x"] - (d["x0"] + c["dx"] * d["px"])) < 0.02 and abs(A[1]["y"] - (d["y0"] - c["dy"] * d["py"])) < 0.02
+              and abs(A[1]["a"][0] - (d["x0"] - 3.2 * d["px"])) < 0.02 and abs(A[1]["b"][0] - (d["x0"] + 3.2 * d["px"])) < 0.02, [c, A])
+        asp = [p for p in e["parts"] if p["cls"] == "asym"]
+        tdash = pg.evaluate("""() => { const GR = window.__GR, t = GR.newGraph('t', 's0', 'tan', { colour: '#000000', width: 2 }, 794, 400, 500);
+          return GR.graphParts(t).find((p) => p.cls === 'asym').dash.map((v) => +v.toFixed(3)); }""")
+        hdash = pg.evaluate("""(i) => window.__GR.graphParts(window.__T.recs('s0').find((x) => x.id === i)).find((p) => p.cls === 'asym').dash.map((v) => +v.toFixed(3))""", yid)
+        check("... drawn as ONE part, black, dashed with tan's dash (a tan graph of the same width), between the letters and the curve",
+              len(asp) == 1 and asp[0]["stroke"] == "#000000" and asp[0]["dash"] and cls_ == ["axis", "head", "letter", "letter", "asym", "curve"] and hdash == tdash, [cls_, hdash, tdash])
+        check("... the curve still runs to the window's edges on both branches, 1/(x - 0.5) + 0.5, the axes and letters unchanged",
+              near_hyp(cpts(yid)[0], gd()) and len(g1h["runs"][0]) == 2 and g1h["lines"] == g0h["lines"] and g1h["labels"] == g0h["labels"], g1h["runs"])
+        shot5("5-slid-asymptotes-showing.png", g0h["box"])
+        pg.click(".selChips .chip.gchip"); pg.wait_for_timeout(60)
+        check("the Axes pill hides the axes: the asymptotes STAY with the curve (as tan's do)", gd()["axes"]["on"] is False and [p["cls"] for p in el(pg, yid)["parts"]] == ["asym", "curve"] and asy(yid) == A)
+        undo(pg)
+        hide = pg.evaluate("""() => { const GR = window.__GR, r = GR.newGraph('t', 's0', 'hyperbola', { colour: '#000000', width: 2 }, 794, 400, 500), d = r.data;
+          const at = (dx, dy) => GR.graphGeom(GR.curveSet(r, 0, { dx, dy, sx: 1, sy: 1 })).asym.map((a) => a.x !== undefined ? ['v', +(a.x - d.x0).toFixed(2)] : ['h', +(d.y0 - a.y).toFixed(2)]);
+          return [at(0.9 / d.px, 0.9 / d.py), at(-0.9 / d.px, -0.9 / d.py), at(1.2 / d.px, 0), at(0, 1.2 / d.py), at(-1.2 / d.px, -1.2 / d.py)]; }""")
+        check("the hide rule: within 1 page px of its axis an asymptote is NOT drawn (0.9 px either side: none); 1.2 px off: drawn, at 1.2 px",
+              hide[0] == [] and hide[1] == [] and hide[2] == [["v", 1.2]] and hide[3] == [["h", 1.2]] and hide[4] == [["v", -1.2], ["h", -1.2]], hide)
+        undo(pg)
+        check("... undo: the curve back on the axes, no asymptote", gd() == d and asy(yid) == [])
+
+        group[0] = "L. hyperbola: shares axes (same units)"
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        show(pg, [W / 2, 420]); land(pg, "cubic"); cid = graphs(pg)[0]["id"]; cd0 = gd()
+        pen_colour(PINK); pick(geo(pg, cid)["box"]); tap("hyperbola")
+        dd = gd(); gc = geo(pg, cid)
+        check("1 and 3 tapped with a CUBIC graph selected: ONE record, the hyperbola JOINS its axes in pink; the cubic's window, size and place unchanged",
+              len(recs(pg)) == 1 and [(k["kind"], k["colour"].lower()) for k in dd["curves"]] == [("cubic", BLUE.lower()), ("hyperbola", PINK.lower())]
+              and but(dd, "curves") == but(cd0, "curves"), dd)
+        check("... drawn on the cubic's units: 1/x itself in two runs, inside x ±2.6, y ±3.2; no asymptote (on the axes)",
+              near_hyp(cpts(cid)[1], dd, j=1) and len(gc["runs"][1]) == 2 and gc["asym"] == [], gc["runs"][1])
+        undo(pg)
+        check("... ONE undo takes it off again", len(recs(pg)) == 1 and gd() == cd0)
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        show(pg, [W / 2, 420]); land(pg, "hyperbola"); yid = graphs(pg)[0]["id"]; yd_ = gd()
+        pen_colour(PINK); pick(geo(pg, yid)["box"]); tap("cubic")
+        check("cubic tapped with a HYPERBOLA graph selected: it joins the hyperbola's axes (window -3.2 to 3.2 and the size unchanged)",
+              len(recs(pg)) == 1 and [k["kind"] for k in gd()["curves"]] == ["hyperbola", "cubic"] and but(gd(), "curves") == but(yd_, "curves"), gd()["curves"])
+        undo(pg)
+        if not (sel(pg) and sel(pg)["ids"] == [yid]): pick(geo(pg, yid)["box"])
+        tap("parabola")
+        check("happy tapped with the hyperbola graph selected: joins it too (the same window)", [k["kind"] for k in gd()["curves"]] == ["hyperbola", "parabola"] and but(gd(), "curves") == but(yd_, "curves"))
+        undo(pg)
+        if not (sel(pg) and sel(pg)["ids"] == [yid]): pick(geo(pg, yid)["box"])
+        tap("-hyperbola")
+        check("2 and 4 tapped with the 1 and 3 graph selected: joins it (one graph, both kinds)", [k["kind"] for k in gd()["curves"]] == ["hyperbola", "-hyperbola"] and len(recs(pg)) == 1)
+        undo(pg)
+        if not (sel(pg) and sel(pg)["ids"] == [yid]): pick(geo(pg, yid)["box"])
+        tap("sin")
+        check("sin tapped with the hyperbola graph selected: trig never shares with plain units, so a NEW graph lands; the hyperbola graph unchanged",
+              len(graphs(pg)) == 2 and [x for x in graphs(pg) if x["id"] == yid][0]["data"] == yd_
+              and [k["kind"] for k in [x for x in graphs(pg) if x["id"] != yid][0]["data"]["curves"]] == ["sin"], len(graphs(pg)))
+        tid = [x for x in graphs(pg) if x["id"] != yid][0]["id"]; td = [x for x in graphs(pg) if x["id"] == tid][0]["data"]
+        clear_sel(pg); pg.click("#tool-select"); pg.wait_for_timeout(30); pg.evaluate("(i) => window.__pw.ink.selectRecs('s0', [i])", tid); pg.wait_for_timeout(40)
+        if sel(pg) and sel(pg)["ids"] == [tid]:
+            tap("hyperbola")
+            check("1 and 3 tapped with a trig graph selected: a NEW hyperbola graph lands; the trig graph unchanged",
+                  len(graphs(pg)) == 3 and [x for x in graphs(pg) if x["id"] == tid][0]["data"] == td
+                  and any(x["data"]["axes"].get("fam") == "hyperbola" and x["id"] != yid for x in graphs(pg)), len(graphs(pg)))
+            undo(pg)
+        else:
+            check("1 and 3 tapped with a trig graph selected: a NEW hyperbola graph lands (could not pick the trig graph alone)", False, sel(pg))
+        undo(pg); clear_sel(pg)
+        check("... undo, undo: the hyperbola graph alone", len(recs(pg)) == 1 and gd() == yd_)
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        show(pg, [W / 2, 420]); land(pg, "parabola"); hid = graphs(pg)[0]["id"]; hd = gd()
+        pen_colour(PINK); pick(geo(pg, hid)["box"]); tap("hyperbola")
+        dh = gd(); gp = geo(pg, hid); rp = gp["runs"][1]
+        XP = lambda q: (q[0] - hd["x0"]) / hd["px"]; YP = lambda q: (hd["y0"] - q[1]) / hd["py"]
+        check("1 and 3 tapped with a PARABOLA graph selected: it joins (window x ±2.2, y -0.9 to 3.4 unchanged) and shows what fits: quadrant 3 from the left edge to the bottom (-0.9), quadrant 1 from the top (3.4) to the right edge",
+              len(recs(pg)) == 1 and [k["kind"] for k in dh["curves"]] == ["parabola", "hyperbola"] and but(dh, "curves") == but(hd, "curves")
+              and near_hyp(cpts(hid)[1], dh, j=1, lo=-0.9, hi=3.4) and len(rp) == 2
+              and abs(XP(rp[0][0]) + 2.2) < 0.01 and abs(YP(rp[0][1]) + 0.9) < 0.01 and abs(XP(rp[0][1]) + 1 / 0.9) < 0.01
+              and abs(YP(rp[1][0]) - 3.4) < 0.01 and abs(XP(rp[1][0]) - 1 / 3.4) < 0.01 and abs(XP(rp[1][1]) - 2.2) < 0.01 and gp["asym"] == [], rp)
+        clear_sel(pg); shot5("6-on-parabola-axes.png", gp["box"])
+
+        group[0] = "L. hyperbola: on her axes stamp"
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour("#000000")
+        sty = place_stamp([-5, 5, 1, -5, 5, 1], False); sidy = sty["id"]; sdy = sty["data"]; close_panel(pg)
+        e_before = el(pg, sidy)
+        pen_colour(BLUE); pick(sgeo(sidy)["box"]); tap("hyperbola")
+        s1 = axrecs()[0]["data"]; sg = sgeo(sidy)
+        check("1 and 3 tapped with her bare stamp selected: NO new graph; the curve stored in the stamp, her stamp draws as before, ONLY the curve added (no asymptote part)",
+              len(recs(pg)) == 1 and {k: v for k, v in s1.items() if k != "curves"} == sdy and [k["kind"] for k in s1["curves"]] == ["hyperbola"]
+              and el(pg, sidy)["parts"][:-1] == e_before["parts"] and el(pg, sidy)["parts"][-1]["cls"] == "curve" and el(pg, sidy)["parts"][-1]["stroke"] == BLUE and sg["asym"] == [],
+              [x["kind"] for x in recs(pg)])
+        kx, ky = 5 / 2.6, 5 / 3.2
+        SXy = lambda x: sdy["x0"] + x * kx / sdy["xd"] * sdy["px"]; SYy = lambda v: sdy["y0"] - v * ky / sdy["yd"] * sdy["py"]
+        near_y = lambda a, v, j=0: min(math.hypot(x - SXy(a), y - SYy(v)) for x, y in zip(sg["xs"][j], sg["ys"][j]))
+        check("... centred on her origin in the cubic's units (x 2.6 at 5, y 3.2 at 5): through (1, 1), (-1, -1), (2, 0.5), (-0.5, -2), in two runs",
+              max(near_y(a, v) for a, v in [(1, 1), (-1, -1), (2, 0.5), (-0.5, -2)]) < 1.5 and len(sg["runs"][0]) == 2, [[near_y(a, v) for a, v in [(1, 1), (-1, -1), (2, 0.5)]], sg["runs"]])
+        clear_sel(pg); shot5("7-on-stamp.png", sgeo(sidy)["box"])
+        nos = pg.evaluate("""() => { const GR = window.__GR, cv = { kind: 'hyperbola', colour: '#0D0DFF', width: 2.5, dx: 1, dy: 1, sx: 1, sy: 1 };
+          const r = { kind: 'axes', style: { width: 1.5 }, data: { x0: 400, y0: 600, px: 30, py: 30, xs: -5, xe: 5, xd: 1, ys: -5, ye: 5, yd: 1, deg: false, curves: [cv] } };
+          return [GR.stampCurveParts(r).map((p) => p.cls), GR.stampGeom(r).asym.length]; }""")
+        check("... a stamp hyperbola stored off the axes (dx 1, dy 1) still draws NO asymptote on her stamp", nos == [["curve"], 0], nos)
+        pick(sgeo(sidy)["box"]); tap("sin")
+        check("sin tapped with that stamp selected: a NEW graph lands; the stamp unchanged", len(graphs(pg)) == 1 and axrecs()[0]["data"] == s1, len(graphs(pg)))
+        undo(pg); undo(pg)
+        check("... two undos: the stamp bare again", len(recs(pg)) == 1 and axrecs()[0]["data"] == sdy)
+
+        group[0] = "L. hyperbola: picked, slid, stretched"
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        show(pg, [W / 2, 420]); land(pg, "hyperbola"); yid = graphs(pg)[0]["id"]; d = gd(); g0h = geo(pg, yid)
+        B1 = PU(d, 1, 1)
+        selt(); tapp(B1)
+        drag(B1, [0.5 * d["px"], -0.5 * d["py"]]); c = gd()["curves"][0]
+        zz = z(pg); s = sel(pg); hx = s["hx"]
+        drag(hx, [max(hx[0] - d["x0"], 40 / zz) * 0.5, 0]); c2 = gd()["curves"][0]
+        check("slid (dx 0.5, dy 0.5), then the right handle: WIDER (sx 1.5 about the y-axis, the centre carried out to 0.75); dy stays",
+              abs(c["dx"] - 0.5) < 0.02 and abs(c["dy"] - 0.5) < 0.003 and abs(c2["sx"] - 1.5) < 0.01 and abs(c2["dx"] - c["dx"] * 1.5) < 0.02 and c2["dy"] == c["dy"], [c, c2])
+        hy = sel(pg)["hy"]; drag(hy, [0, max(hy[1] - (d["y0"] - c2["dy"] * d["py"]), 40 / zz) * 0.5]); c3 = gd()["curves"][0]; A = asy(yid)
+        check("the bottom handle: TALLER (sy 1.5); dx, dy, sx stay; the asymptotes went with the centre (x = 0.75, y = 0.5)",
+              abs(c3["sy"] - 1.5) < 0.01 and c3["dy"] == c2["dy"] and c3["dx"] == c2["dx"] and c3["sx"] == c2["sx"] and len(A) == 2
+              and abs(A[0]["x"] - (d["x0"] + c3["dx"] * d["px"])) < 0.02 and abs(A[1]["y"] - (d["y0"] - c3["dy"] * d["py"])) < 0.02, [c3, A])
+        check("... the curve is sy sx / (x - dx) + dy (1/x stretched), both branches to the edges", near_hyp(cpts(yid)[0], gd()) and len(geo(pg, yid)["runs"][0]) == 2)
+        shot5("8-picked-stretched.png", g0h["box"], top=90)
+        undo(pg); undo(pg); undo(pg)
+        check("three undos put it back as it landed, one step per drag", gd() == d, gd()["curves"])
+        if not (sel(pg) and sel(pg)["curve"] == 0): selt(); tapp(B1)
+        drag(B1, [6 * d["px"], 0]); c = gd()["curves"][0]; undo(pg)
+        if not (sel(pg) and sel(pg)["curve"] == 0): selt(); tapp(B1)
+        drag(B1, [0, 6 * d["py"]]); c_ = gd()["curves"][0]; undo(pg)
+        check("dragged far right it stops with the asymptotes' crossing on the window's edge (dx 3.2); far down, on the bottom edge (dy -3.2)",
+              c["dx"] == 3.2 and c_["dy"] == -3.2, [c, c_])
+        lims = pg.evaluate("""() => { const GR = window.__GR, out = [];
+          for (const k of ['hyperbola', '-hyperbola']) { const r = GR.newGraph('t', 's0', k, { colour: '#000000', width: 2 }, 794, 400, 500);
+            const a = GR.curveSet(r, 0, { dx: 1000, dy: 9, sx: 100, sy: 0.001 }).data.curves[0], b = GR.curveSet(r, 0, { dx: -1000, dy: -9, sx: 0.01, sy: 50 }).data.curves[0];
+            out.push([a.dx, a.dy, a.sx, a.sy, b.dx, b.dy, b.sx, b.sy]); }
+          return out; }""")
+        check("the limits (curveSet): the asymptotes' crossing inside the window (dx and dy -3.2 to 3.2), stretch 1/8 to 8",
+              lims == [[3.2, 3.2, 8, 0.125, -3.2, -3.2, 0.125, 8]] * 2, lims)
+        sq_ = pg.evaluate("""() => { const GR = window.__GR, r = GR.newGraph('t', 's0', 'hyperbola', { colour: '#000000', width: 2 }, 794, 400, 500);
+          const n = GR.curveSet(r, 0, { dx: 0.37, dy: 0, sx: 0.125, sy: 0.125 }), g = GR.graphGeom(n), X = n.data.x0 + 0.37 * n.data.px;
+          return g.curves[0].runs.map((u) => [Math.min(...u.map((q) => q[0])) < X, Math.max(...u.map((q) => q[0])) > X]); }""")
+        check("squashed to 1/8 both ways the two branches never join across the asymptote (every run on one side of it)",
+              len(sq_) == 2 and sq_[0] == [True, False] and sq_[1] == [False, True], sq_)
+        clear_sel(pg); pen_colour(PINK); pick(geo(pg, yid)["box"]); tap("cubic")
+        dm = gd(); clear_sel(pg); selt(); tapp(PU(d, -2, -0.5)); s = sel(pg)
+        pg.click(f'#tray .sw[data-colour="{THIRD}"]'); pg.wait_for_timeout(60); cs = gd()["curves"]
+        check("with a cubic beside it: a tap on the quadrant 3 branch picks the hyperbola (curve 0) and a colour tap recolours the HYPERBOLA only",
+              s and s["curve"] == 0 and cs[0]["colour"].lower() == THIRD.lower() and cs[1]["colour"].lower() == PINK.lower(), [s, cs])
+        undo(pg); clear_sel(pg); selt(); tapp(PU(d, 2, 0.5))
+        pg.click(".selChips .chip[data-act='delete']"); pg.wait_for_timeout(60)
+        check("Delete with the hyperbola picked removes the hyperbola only; the cubic stays on the same axes", len(recs(pg)) == 1 and gd()["curves"] == [dm["curves"][1]] and but(gd(), "curves") == but(dm, "curves"), gd()["curves"])
+        undo(pg)
+        check("... one undo: both back", gd() == dm)
+
+        group[0] = "L. hyperbola: thumb + PDF + share"
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        show(pg, [W / 2, 260]); land(pg, "hyperbola"); yid = graphs(pg)[0]["id"]; d0 = gd()
+        selt(); tapp(PU(d0, 1, 1)); drag(PU(d0, 1, 1), [0.5 * d0["px"], -0.5 * d0["py"]]); clear_sel(pg)
+        ydd = gd(); cdx, cdy = ydd["curves"][0]["dx"], ydd["curves"][0]["dy"]
+        show(pg, [W / 2, 800]); pen_colour("#000000")
+        sty = place_stamp([-5, 5, 1, -5, 5, 1], False); close_panel(pg); sidy = sty["id"]
+        pen_colour(PINK); pg.click("#tool-select"); pg.wait_for_timeout(30)
+        pg.evaluate("(i) => window.__pw.ink.selectRecs('s0', [i])", sidy); pg.wait_for_timeout(40)
+        tap("hyperbola"); clear_sel(pg); pg.click("#tool-pen"); pg.wait_for_timeout(30)
+        sdd = axrecs()[0]["data"]
+        check("the page holds a slid hyperbola graph (both asymptotes showing) and a stamp carrying a hyperbola",
+              len(graphs(pg)) == 1 and len(asy(yid)) == 2 and [k["kind"] for k in sdd.get("curves", [])] == ["hyperbola"], [ydd["curves"], sdd.get("curves")])
+        tg = pg.evaluate("(i) => window.__T.el(i, window.__pw.ink.thumbSvg('s0'))", yid)
+        same_d = pg.evaluate("""(i) => { const a = document.querySelector(`#stack .sheet[data-id='s0'] svg.ink [data-id='${i}'] path.curve`);
+          const t = window.__pw.ink.thumbSvg('s0').querySelector(`[data-id='${i}'] path.curve`); return !!a && !!t && a.getAttribute('d') === t.getAttribute('d'); }""", yid)
+        check("thumbSvg: the hyperbola graph (axes, heads, x, y, the dashed asymptotes, curve), the same curve path as the page",
+              tg and [p["cls"] for p in tg["parts"]] == ["axis", "head", "letter", "letter", "asym", "curve"] and same_d, tg and [p["cls"] for p in tg["parts"]])
+        pg.click("#listBtn"); pg.wait_for_selector("#pageList:not([hidden])"); pg.wait_for_timeout(300)
+        okth = pg.evaluate("([a, b]) => [document.querySelectorAll(`#plThumbs .thumbP[data-index='1'] [data-id='${a}'] path.curve`).length, document.querySelectorAll(`#plThumbs .thumbP[data-index='1'] [data-id='${b}'] path.curve`).length]", [yid, sidy])
+        check("the page list's thumb of page 1 draws the hyperbola and the stamp's hyperbola", okth == [1, 1], okth)
+        tb = rect(pg, "#plThumbs .thumbP[data-index='1']"); thumb_png = SH5 / "_thumb.png"
+        pg.screenshot(path=str(thumb_png), clip={"x": tb["l"] - 6, "y": tb["t"] - 6, "width": tb["w"] + 12, "height": tb["h"] + 12})
+        doc = pdf_of(pg, "Hyperbola"); p0 = doc[0]
+        pix = p0.get_pixmap(dpi=144); img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB"); sk = pix.width / W
+        on_b = PU(ydd, 2, 1 / (2 - cdx) + cdy)                                    # the hyperbola at x = 2: Blue
+        on_s = [sdd["x0"] + 2 * 5 / 2.6 * sdd["px"], sdd["y0"] - 0.5 * 5 / 3.2 * sdd["py"]]   # the stamp's hyperbola at (2, 0.5): pink
+        on_v = PU(ydd, cdx, -2.2); on_h = PU(ydd, -2.2, cdy)                      # the two asymptotes: black (r 4 spans a dash gap)
+        on_x = PU(ydd, -2.6, 0)                                                   # the x-axis: black
+        pdf_hits = [any_px(img, on_b[0] * sk, on_b[1] * sk, 2, bluish), any_px(img, on_s[0] * sk, on_s[1] * sk, 2, pinkish),
+                    any_px(img, on_v[0] * sk, on_v[1] * sk, 4, darkish), any_px(img, on_h[0] * sk, on_h[1] * sk, 4, darkish), any_px(img, on_x[0] * sk, on_x[1] * sk, 2, darkish)]
+        check("the PDF: Blue on the hyperbola, pink on the stamp's hyperbola, black on BOTH dashed asymptotes and on the x-axis", all(pdf_hits), pdf_hits)
+        pdraw = p0.get_drawings(); dashed_ = [dr for dr in pdraw if dr.get("dashes") and dr["dashes"] not in ("[] 0", "[] 0.0") and "[]" not in str(dr["dashes"])]
+        check("... the asymptotes are DASHED in the PDF (a dashed black path)", any(dr.get("color") and max(dr["color"]) < 0.1 for dr in dashed_), [str(dr.get("dashes")) for dr in pdraw][:12])
+        doc.close()
+        th_img = Image.open(str(thumb_png)).convert("RGB")
+        hh = 800; t2 = th_img.resize((round(th_img.width * hh / th_img.height), hh)); p2i = img.resize((round(img.width * hh / img.height), hh))
+        comp = Image.new("RGB", (t2.width + p2i.width + 30, hh + 20), (210, 210, 210)); comp.paste(t2, (10, 10)); comp.paste(p2i, (t2.width + 20, 10))
+        if comp.width > 900: comp = comp.resize((900, round(comp.height * 900 / comp.width)))
+        comp.save(str(SH5 / "9-thumb-pdf.png")); thumb_png.unlink()
+        pg.click("#plSelect"); pg.wait_for_timeout(40)
+        pg.locator("#plThumbs .thumbP[data-index='1']").click(); pg.wait_for_timeout(40)
+        pg.click("#plBar button[data-act='share']"); pg.wait_for_selector("#shareDlg")
+        pg.evaluate("window.__shared = null")
+        pg.click("#shareDlg button[data-share='images']"); pg.wait_for_selector("#shareReady", timeout=30000)
+        pg.click("#shareDlg button[data-share='send']"); pg.wait_for_function("window.__shared", timeout=10000)
+        png = pg.evaluate("""async () => { const f = window.__shared.files[0]; const u = new Uint8Array(await f.arrayBuffer()); let s = '';
+          for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000)); return [f.type, btoa(s)]; }""")
+        si = Image.open(io.BytesIO(base64.b64decode(png[1]))).convert("RGB"); ss = si.width / W
+        check("a shared picture shows Blue on the hyperbola, pink on the stamp's hyperbola and black on the asymptotes",
+              any_px(si, on_b[0] * ss, on_b[1] * ss, 2, bluish) and any_px(si, on_s[0] * ss, on_s[1] * ss, 2, pinkish) and any_px(si, on_v[0] * ss, on_v[1] * ss, 4, darkish))
+        if pg.evaluate("window.__pw.tick()") is not None: pg.click("#plDone"); pg.wait_for_timeout(40)
+        if not pg.locator("#pageList").is_hidden(): pg.click("#plClose"); pg.wait_for_timeout(40)
+        keep_g, keep_s = graphs(pg)[0], axrecs()[0]
+        pg.evaluate("window.__pw.idle()"); pg.wait_for_timeout(200)
+        pg.click("#backBtn"); pg.wait_for_selector("#listView:not([hidden])"); pg.wait_for_timeout(80)
+        pg.reload(); ready(pg); open_note(pg); pg.evaluate(HELP)
+        check("after a reload the slid hyperbola graph and the stamp with its hyperbola are back exactly",
+              graphs(pg) and graphs(pg)[0]["data"] == keep_g["data"] and axrecs() and axrecs()[0]["data"] == keep_s["data"])
+
+        # ------------------------------------------------------------ M: pw-v9q, unit 4c: the exponential (growth 2^x, decay 0.5^x, and their mirrors -2^x, -0.5^x)
+        group[0] = "M. exponential: old records draw as before"
+        # L's eight records plus three hyperbola records from unit 4b (a slid hyperbola with both asymptotes, carrying 2 and 4
+        # and a parabola; a hidden-axes 2 and 4 slid down; a stamp carrying an off-axis hyperbola and a cubic), hashed BEFORE
+        # unit 4c touched graph.js (the pw-v9p tree, 20 Nov)
+        EXTRA4C = """            hyperbola: { kind: 'graph', style: st, data: { x0: 397, y0: 500, px: 41.35, py: 33.08, axes: { on: true, fam: 'hyperbola', xl: -3.2, xr: 3.2, yh: 3.2 },
+              curves: [cv('hyperbola', { dx: 0.5, dy: 0.5, sx: 1.5 }), cv('-hyperbola', { colour: '#FF0C84', sy: 0.6 }), cv('parabola', { dy: -1 })] } },
+            hypHidden: { kind: 'graph', style: st, data: { x0: 300, y0: 300, px: 41.35, py: 33.08, axes: { on: false, fam: 'hyperbola', xl: -3.2, xr: 3.2, yh: 3.2 },
+              curves: [cv('-hyperbola', { dy: -1.3, sx: 0.4 })] } },
+            stampHyperbola: { kind: 'axes', style: st, data: { x0: 400, y0: 600, px: 30, py: 30, xs: -5, xe: 5, xd: 1, ys: -5, ye: 5, yd: 1, deg: false, curves: [cv('hyperbola', { dx: 1, dy: 1 }), cv('cubic')] } },
+"""
+        MARK4C = "          };\n          const out = {};"
+        OLD4C = OLD4B.replace(MARK4C, EXTRA4C + MARK4C)
+        BEFORE4C = dict(BEFORE4B, hyperbola="236ed5ef1f2fbf5b56705ea8df17c972c490e34974b424bb32278450359e0ff9",
+                        hypHidden="309ecd46787cd3eee660d11391cc3f93d2710d5901e1c14c49a49b3239c498ed", stampHyperbola="cca0bc492547f187342b2eb7c6d794b27af41d18450d7f51eb815ca5c3f70913")
+        now_ = {k: hashlib.sha256(v.encode()).hexdigest() for k, v in pg.evaluate(OLD4C).items()}
+        check("L's eight old records and three hyperbola records (slid with both asymptotes and two more curves, a hidden-axes 2 and 4 slid down, a stamp with an off-axis hyperbola) draw the SAME path strings as before unit 4c",
+              OLD4C != OLD4B and now_ == BEFORE4C, [k for k in BEFORE4C if now_.get(k) != BEFORE4C[k]])
+
+        group[0] = "M. exponential: card + landing"
+        SH6 = ROOT / "_build" / "graph" / "unit4c"; SH6.mkdir(parents=True, exist_ok=True)
+        def shot6(name, bx, top=70, bottom=70, w=700):
+            show(pg, [(bx[0] + bx[2]) / 2, (bx[1] + bx[3]) / 2])
+            tl = pg.evaluate("([x, y]) => window.__T.client('s0', x, y)", [bx[0], bx[1]]); br = pg.evaluate("([x, y]) => window.__T.client('s0', x, y)", [bx[2], bx[3]])
+            y0 = max(0, tl[1] - top); y1 = min(800, br[1] + bottom); x0 = max(0, min(1280 - w, (tl[0] + br[0]) / 2 - w / 2))
+            pg.screenshot(path=str(SH6 / name), clip={"x": x0, "y": y0, "width": w, "height": y1 - y0})
+        # kind: (sign a, base b, the window's yl, yh)
+        EXK = {"growth": (1, 2, -1.2, 5), "decay": (1, 0.5, -1.2, 5), "-growth": (-1, 2, -5, 1.2), "-decay": (-1, 0.5, -5, 1.2)}
+        def near_exp(P, d, j=0, lo=None, hi=None):                 # every point on a sy b^((x - dx) / sx) + dy, or on the window's top or bottom
+            c = d["curves"][j]; sg_, bb, wl, wh = EXK[c["kind"]]; lo = wl if lo is None else lo; hi = wh if hi is None else hi
+            XX_ = lambda q: (q[0] - d["x0"]) / d["px"]; YY_ = lambda q: (d["y0"] - q[1]) / d["py"]
+            f = lambda x: sg_ * c["sy"] * bb ** ((x - c["dx"]) / c["sx"]) + c["dy"]
+            return all(abs(YY_(q) - f(XX_(q))) < 0.02 or min(abs(YY_(q) - lo), abs(YY_(q) - hi)) < 0.02 for q in P)
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        open_gcard(pg); pg.wait_for_timeout(60)
+        eb = pg.evaluate("""(ks) => ks.map((k) => { const s = document.querySelector('#gblk-' + k.replace('-', 'n') + ' svg'), l = [...s.querySelectorAll('line')];
+          const d = s.querySelector('path').getAttribute('d'); return [l.length, +l[1].getAttribute('x1'), +l[0].getAttribute('y1'), (d.match(/M/g) || []).length, s.querySelectorAll('[stroke-dasharray]').length]; })""", EXPS)
+        yax = lambda yl_, yh_: 45 - (0 - yl_) / (yh_ - yl_) * 40
+        check("each exponential block: the y-axis in the middle (x 35), the x-axis LOW for growth and decay and HIGH for the two below it (the mock's y -1.2 to 5, -5 to 1.2), ONE curve, no dashed line",
+              all(c[0] == 2 and abs(c[1] - 35) < 0.01 and abs(c[2] - yax(EXK[k][2], EXK[k][3])) < 0.01 and c[3] == 1 and c[4] == 0 for c, k in zip(eb, EXPS)), eb)
+        gr_ = rect(pg, "#graphCard"); pg.screenshot(path=str(SH6 / "1-card.png"), clip={"x": gr_["l"] - 10, "y": gr_["t"] - 10, "width": gr_["w"] + 20, "height": gr_["h"] + 20})
+        check("the card (five lines now) is still wholly on screen beside the panel", gr_["l"] >= 8 and gr_["t"] >= 0 and gr_["b"] <= 792, gr_)
+        close_panel(pg)
+        pxe = round(W / 3 / 6, 2); L5 = math.log2(5)
+        ENDS = {"growth": ((-3, 0.125), (L5, 5)), "decay": ((-L5, 5), (3, 0.125)), "-growth": ((-3, -0.125), (L5, -5)), "-decay": ((-L5, -5), (3, -0.125))}
+        RISE = {"growth": True, "decay": False, "-growth": False, "-decay": True}
+        for n_, k in enumerate(EXPS):
+            pg.evaluate("window.__T.clear('s0')"); clear_sel(pg)
+            show(pg, [W / 2, 420]); vis = pg.evaluate("window.__T.vis(0)"); mid = [(vis[0] + vis[2]) / 2, (vis[1] + vis[3]) / 2]
+            land(pg, k)
+            gs = graphs(pg); sg_, bb, wl, wh = EXK[k]; nm = EXPNAMES[n_]
+            ok1 = len(recs(pg)) == 1 and len(gs) == 1 and not panel_shown(pg) and not gcard_shown(pg)
+            ed = gs[0]["data"]; eid = gs[0]["id"]
+            check(f"{nm}: a tap on its block lands ONE 'graph' record (panel and card close); fam 'exponential', window x -3 to 3, y {wl} to {wh}; px a third of the page over 6 units, py 0.8 px; axes black",
+                  ok1 and ed["axes"] == {"on": True, "fam": "exponential", "xl": -3, "xr": 3, "yl": wl, "yh": wh} and ed["px"] == pxe and ed["py"] == round(0.8 * pxe, 2)
+                  and gs[0]["style"]["colour"] == "#000000", [ok1, ed["axes"], ed["px"], ed["py"]])
+            check(f"... ONE curve, {k}, in the pen's colour and width, offset 0, stretch 1",
+                  ed["curves"] == [{"kind": k, "colour": BLUE, "width": pen_w, "dx": 0, "dy": 0, "sx": 1, "sy": 1}], ed["curves"])
+            g = geo(pg, eid); bx = g["box"]; my = (wl + wh) / 2
+            check("... the window's middle where she looks (the origin off-centre, " + ("low" if sg_ > 0 else "high") + "); the whole graph 8 px inside the page",
+                  abs(ed["x0"] - mid[0]) < 1 and abs(ed["y0"] - (mid[1] + my * ed["py"])) < 1 and bx[0] >= 8 - 0.01 and bx[1] >= 8 - 0.01 and bx[2] <= W - 8 + 0.01 and bx[3] <= H - 8 + 0.01,
+                  [ed["x0"], ed["y0"], mid, bx])
+            e = el(pg, eid)
+            check("... NO marks or numbers, only x and y (a cubic's size); the y-axis foot at yl; drawn axes, heads, letters BLACK, then the curve Blue; NO asymptote (on the x-axis); no left handle",
+                  g["ticks"] == [] and [l["t"] for l in g["labels"]] == ["x", "y"] and all(l["cls"] == "letter" and abs(l["size"] - 21 / 55 * W / 12) < 0.05 for l in g["labels"])
+                  and abs(g["lines"][1][0][1] - (ed["y0"] - wl * ed["py"])) < 0.02 and abs(g["lines"][0][0][0] - (ed["x0"] - 3 * ed["px"])) < 0.02
+                  and [p["cls"] for p in e["parts"]] == ["axis", "head", "letter", "letter", "curve"] and e["parts"][4]["stroke"] == BLUE and asy(eid) == [] and g["left"] is None,
+                  [g["labels"], e["parts"], g["left"]])
+            P = cpts(eid)[0]; XX = lambda q: (q[0] - ed["x0"]) / ed["px"]; YY = lambda q: (ed["y0"] - q[1]) / ed["py"]; r0 = g["runs"][0]
+            (sx_, sy_), (ex_, ey_) = ENDS[k]; ys_ = [YY(q) for q in P]
+            mono = all((b_ >= a_ - 1e-6) if RISE[k] else (b_ <= a_ + 1e-6) for a_, b_ in zip(ys_, ys_[1:]))
+            check("... the curve is " + ("" if sg_ > 0 else "-") + f"{bb}^x itself in ONE run, wholly " + ("ABOVE" if sg_ > 0 else "BELOW") + " the x-axis, " + ("rising" if RISE[k] else "falling")
+                  + " to the right: hugging the x-axis on one side, off the " + ("top" if sg_ > 0 else "bottom") + " edge on the steep side",
+                  len(P) > 50 and near_exp(P, ed) and len(r0) == 1 and all(sg_ * y > 0 for y in ys_) and mono
+                  and abs(XX(r0[0][0]) - sx_) < 0.01 and abs(YY(r0[0][0]) - sy_) < 0.01 and abs(XX(r0[0][1]) - ex_) < 0.01 and abs(YY(r0[0][1]) - ey_) < 0.01, r0)
+            shot6(f"{n_ + 2}-{k.replace('-', 'neg-')}-landed.png", bx)
+            undo(pg)
+            check(f"... ONE undo takes {nm} away", recs(pg) == [])
+
+        group[0] = "M. exponential: the asymptote"
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        show(pg, [W / 2, 420]); land(pg, "growth"); eid = graphs(pg)[0]["id"]; d = gd(); g0e = geo(pg, eid)
+        E1 = PU(d, 1, 2)
+        selt(); tapp(E1); s = sel(pg)
+        check("a select tap on the curve picks the CURVE alone (two handles)", s and s["ids"] == [eid] and s["curve"] == 0
+              and sorted(pg.evaluate("[...document.querySelectorAll('.sel circle')].map((c) => c.getAttribute('class'))")) == ["selcx", "selcy"], s)
+        drag(E1, [0, -1 * d["py"]]); c = gd()["curves"][0]; A = asy(eid); e = el(pg, eid); cls_ = [p["cls"] for p in e["parts"]]
+        check("slid UP one unit (dy 1): the sideways asymptote APPEARS at y = dy, across the full window width (x -3 to 3); none up and down",
+              abs(c["dy"] - 1) < 0.003 and c["dx"] == 0 and len(A) == 1 and A[0]["x"] is None and abs(A[0]["y"] - (d["y0"] - c["dy"] * d["py"])) < 0.02
+              and abs(A[0]["a"][0] - (d["x0"] - 3 * d["px"])) < 0.02 and abs(A[0]["b"][0] - (d["x0"] + 3 * d["px"])) < 0.02
+              and abs(A[0]["a"][1] - A[0]["y"]) < 1e-9 and abs(A[0]["b"][1] - A[0]["y"]) < 1e-9, [c, A])
+        tdash = pg.evaluate("""() => { const GR = window.__GR, t = GR.newGraph('t', 's0', 'tan', { colour: '#000000', width: 2 }, 794, 400, 500);
+          return GR.graphParts(t).find((p) => p.cls === 'asym').dash.map((v) => +v.toFixed(3)); }""")
+        edash = pg.evaluate("""(i) => window.__GR.graphParts(window.__T.recs('s0').find((x) => x.id === i)).find((p) => p.cls === 'asym').dash.map((v) => +v.toFixed(3))""", eid)
+        asp = [p for p in e["parts"] if p["cls"] == "asym"]
+        check("... ONE part, black, dashed with tan's dash (a tan graph of the same width), between the letters and the curve",
+              len(asp) == 1 and asp[0]["stroke"] == "#000000" and asp[0]["dash"] and cls_ == ["axis", "head", "letter", "letter", "asym", "curve"] and edash == tdash, [cls_, edash, tdash])
+        g1e = geo(pg, eid)
+        check("... the curve is 2^x + 1 (above its asymptote, off the top), the axes and letters unchanged",
+              near_exp(cpts(eid)[0], gd()) and len(g1e["runs"][0]) == 1 and all((d["y0"] - q[1]) / d["py"] > 1 for q in cpts(eid)[0])
+              and g1e["lines"] == g0e["lines"] and g1e["labels"] == g0e["labels"], g1e["runs"])
+        shot6("6-slid-asymptote-showing.png", g0e["box"])
+        pg.click(".selChips .chip.gchip"); pg.wait_for_timeout(60)
+        check("the Axes pill hides the axes: the asymptote STAYS with the curve (the hyperbola's way)", gd()["axes"]["on"] is False and [p["cls"] for p in el(pg, eid)["parts"]] == ["asym", "curve"] and asy(eid) == A)
+        undo(pg); undo(pg)
+        check("... undo, undo: back on the x-axis, the asymptote hidden again", gd() == d and asy(eid) == [])
+        hide = pg.evaluate("""() => { const GR = window.__GR, out = [];
+          for (const k of ['growth', 'decay', '-growth', '-decay']) { const r = GR.newGraph('t', 's0', k, { colour: '#000000', width: 2 }, 794, 400, 500), d = r.data;
+            const at = (dy) => GR.graphGeom(GR.curveSet(r, 0, { dx: 0, dy, sx: 1, sy: 1 })).asym.map((a) => a.x !== undefined ? ['v', +(a.x - d.x0).toFixed(2)] : ['h', +(d.y0 - a.y).toFixed(2)]);
+            out.push([at(0.9 / d.py), at(-0.9 / d.py), at(1.2 / d.py), at(-1.2 / d.py)]); }
+          return out; }""")
+        check("the hide rule, all four kinds: within 1 page px of the x-axis NOT drawn (0.9 px up or down: none); 1.2 px off: drawn, at 1.2 px",
+              hide == [[[], [], [["h", 1.2]], [["h", -1.2]]]] * 4, hide)
+        if not (sel(pg) and sel(pg)["curve"] == 0): selt(); tapp(E1)
+        drag(E1, [0, 8 * d["py"]]); c = gd()["curves"][0]; A = asy(eid)
+        check("dragged far down it stops with the asymptote ON the window's bottom edge (dy -1.2), drawn there; the curve above it",
+              c["dy"] == -1.2 and len(A) == 1 and abs(A[0]["y"] - (d["y0"] + 1.2 * d["py"])) < 0.02 and near_exp(cpts(eid)[0], gd()), [c, A])
+        undo(pg)
+        check("... one undo: back as it landed", gd() == d)
+
+        group[0] = "M. exponential: shares axes (same units)"
+        for host, guest, win in [("hyperbola", "growth", (-3.2, 3.2)), ("parabola", "decay", (-0.9, 3.4)), ("cubic", "-growth", (-3.2, 3.2))]:
+            pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+            show(pg, [W / 2, 420]); land(pg, host); hid = graphs(pg)[0]["id"]; hd = gd()
+            pen_colour(PINK); pick(geo(pg, hid)["box"]); tap(guest)
+            dd = gd(); gh = geo(pg, hid)
+            check(f"{guest} tapped with a {host.upper()} graph selected: ONE record, it JOINS in pink; the {host}'s window, size and place unchanged; drawn on its units, clipped to its window; no asymptote",
+                  len(recs(pg)) == 1 and [(k["kind"], k["colour"].lower()) for k in dd["curves"]] == [(host, BLUE.lower()), (guest, PINK.lower())]
+                  and but(dd, "curves") == but(hd, "curves") and near_exp(cpts(hid)[1], dd, j=1, lo=win[0], hi=win[1]) and len(gh["runs"][1]) == 1 and gh["asym"] == [], [dd["curves"], gh["runs"][1]])
+            if host == "hyperbola": clear_sel(pg); shot6("7-on-hyperbola-axes.png", gh["box"])
+            undo(pg)
+            check("... ONE undo takes it off again", len(recs(pg)) == 1 and gd() == hd)
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        show(pg, [W / 2, 420]); land(pg, "growth"); eid = graphs(pg)[0]["id"]; ed0 = gd()
+        for guest in ["hyperbola", "parabola", "cubic", "-decay"]:
+            clear_sel(pg); pen_colour(PINK); pick(geo(pg, eid)["box"]); tap(guest)
+            check(f"{guest} tapped with a GROWTH graph selected: it joins (window x -3 to 3, y -1.2 to 5 and the size unchanged)",
+                  len(recs(pg)) == 1 and [k["kind"] for k in gd()["curves"]] == ["growth", guest] and but(gd(), "curves") == but(ed0, "curves"), gd()["curves"])
+            undo(pg)
+        check("... each one undo: the growth graph alone again", len(recs(pg)) == 1 and gd() == ed0)
+        pick(geo(pg, eid)["box"]); tap("sin")
+        check("sin tapped with the growth graph selected: trig never shares with plain units, a NEW graph lands; the growth graph unchanged",
+              len(graphs(pg)) == 2 and [x for x in graphs(pg) if x["id"] == eid][0]["data"] == ed0
+              and [k["kind"] for k in [x for x in graphs(pg) if x["id"] != eid][0]["data"]["curves"]] == ["sin"], len(graphs(pg)))
+        tid = [x for x in graphs(pg) if x["id"] != eid][0]["id"]; td = [x for x in graphs(pg) if x["id"] == tid][0]["data"]
+        clear_sel(pg); pg.click("#tool-select"); pg.wait_for_timeout(30); pg.evaluate("(i) => window.__pw.ink.selectRecs('s0', [i])", tid); pg.wait_for_timeout(40)
+        if sel(pg) and sel(pg)["ids"] == [tid]:
+            tap("decay")
+            check("decay tapped with a trig graph selected: a NEW exponential graph lands; the trig graph unchanged",
+                  len(graphs(pg)) == 3 and [x for x in graphs(pg) if x["id"] == tid][0]["data"] == td
+                  and any(x["data"]["axes"].get("fam") == "exponential" and x["id"] != eid for x in graphs(pg)), len(graphs(pg)))
+            undo(pg)
+        else:
+            check("decay tapped with a trig graph selected: a NEW exponential graph lands (could not pick the trig graph alone)", False, sel(pg))
+        undo(pg); clear_sel(pg)
+        check("... undo, undo: the growth graph alone", len(recs(pg)) == 1 and gd() == ed0)
+
+        group[0] = "M. exponential: on her axes stamp"
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour("#000000")
+        ste = place_stamp([-5, 5, 1, -5, 5, 1], False); side = ste["id"]; sde = ste["data"]; close_panel(pg)
+        e_before = el(pg, side)
+        pen_colour(BLUE); pick(sgeo(side)["box"]); tap("growth")
+        s1 = axrecs()[0]["data"]; sg = sgeo(side)
+        check("growth tapped with her bare stamp selected: NO new graph; the curve stored in the stamp, her stamp draws as before, ONLY the curve added (no asymptote part)",
+              len(recs(pg)) == 1 and {k: v for k, v in s1.items() if k != "curves"} == sde and [k["kind"] for k in s1["curves"]] == ["growth"]
+              and el(pg, side)["parts"][:-1] == e_before["parts"] and el(pg, side)["parts"][-1]["cls"] == "curve" and el(pg, side)["parts"][-1]["stroke"] == BLUE and sg["asym"] == [],
+              [x["kind"] for x in recs(pg)])
+        kx, ky = 5 / 2.6, 5 / 3.2
+        SXe = lambda x: sde["x0"] + x * kx / sde["xd"] * sde["px"]; SYe = lambda v: sde["y0"] - v * ky / sde["yd"] * sde["py"]
+        near_e = lambda a, v, j=0: min(math.hypot(x - SXe(a), y - SYe(v)) for x, y in zip(sg["xs"][j], sg["ys"][j]))
+        check("... in the units every plain family uses there (x 2.6 at 5, y 3.2 at 5): (0, 1) one unit above her origin, through (1, 2), (-2, 0.25), (1.5, 2.83); one run",
+              max(near_e(a, v) for a, v in [(0, 1), (1, 2), (-2, 0.25), (1.5, 2 ** 1.5)]) < 1.5 and len(sg["runs"][0]) == 1, [[near_e(a, v) for a, v in [(0, 1), (1, 2), (-2, 0.25)]], sg["runs"]])
+        clear_sel(pg); shot6("8-on-stamp.png", sgeo(side)["box"])
+        nos = pg.evaluate("""() => { const GR = window.__GR, cv = { kind: '-decay', colour: '#0D0DFF', width: 2.5, dx: 0, dy: 1, sx: 1, sy: 1 };
+          const r = { kind: 'axes', style: { width: 1.5 }, data: { x0: 400, y0: 600, px: 30, py: 30, xs: -5, xe: 5, xd: 1, ys: -5, ye: 5, yd: 1, deg: false, curves: [cv] } };
+          return [GR.stampCurveParts(r).map((p) => p.cls), GR.stampGeom(r).asym.length]; }""")
+        check("... a stamp exponential stored off the axis (dy 1) still draws NO asymptote on her stamp", nos == [["curve"], 0], nos)
+        pick(sgeo(side)["box"]); tap("sin")
+        check("sin tapped with that stamp selected: a NEW graph lands; the stamp unchanged", len(graphs(pg)) == 1 and axrecs()[0]["data"] == s1, len(graphs(pg)))
+        undo(pg); undo(pg)
+        check("... two undos: the stamp bare again", len(recs(pg)) == 1 and axrecs()[0]["data"] == sde)
+
+        group[0] = "M. exponential: picked, slid, stretched"
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        show(pg, [W / 2, 420]); land(pg, "growth"); eid = graphs(pg)[0]["id"]; d = gd(); g0e = geo(pg, eid)
+        E1 = PU(d, 1, 2)
+        selt(); tapp(E1)
+        drag(E1, [0.5 * d["px"], -1 * d["py"]]); c = gd()["curves"][0]
+        zz = z(pg); s = sel(pg); hx = s["hx"]
+        drag(hx, [max(hx[0] - d["x0"], 40 / zz) * 0.5, 0]); c2 = gd()["curves"][0]
+        check("slid (dx 0.5, dy 1), then the right handle: WIDER (sx 1.5 about the y-axis, dx carried out to 0.75); dy stays",
+              abs(c["dx"] - 0.5) < 0.02 and abs(c["dy"] - 1) < 0.003 and abs(c2["sx"] - 1.5) < 0.01 and abs(c2["dx"] - c["dx"] * 1.5) < 0.02 and c2["dy"] == c["dy"], [c, c2])
+        hy = sel(pg)["hy"]; drag(hy, [0, max(hy[1] - (d["y0"] - c2["dy"] * d["py"]), 40 / zz) * 0.5]); c3 = gd()["curves"][0]; A = asy(eid)
+        check("the bottom handle: TALLER (sy 1.5) about the asymptote's line; dx, dy, sx stay; the asymptote still at y = dy",
+              abs(c3["sy"] - 1.5) < 0.01 and c3["dy"] == c2["dy"] and c3["dx"] == c2["dx"] and c3["sx"] == c2["sx"] and len(A) == 1
+              and abs(A[0]["y"] - (d["y0"] - c3["dy"] * d["py"])) < 0.02, [c3, A])
+        check("... the curve is sy 2^((x - dx) / sx) + dy, one run off the top", near_exp(cpts(eid)[0], gd()) and len(geo(pg, eid)["runs"][0]) == 1)
+        shot6("9-picked-stretched.png", g0e["box"], top=90)
+        undo(pg); undo(pg); undo(pg)
+        check("three undos put it back as it landed, one step per drag", gd() == d, gd()["curves"])
+        if not (sel(pg) and sel(pg)["curve"] == 0): selt(); tapp(E1)
+        drag(E1, [8 * d["px"], 0]); c = gd()["curves"][0]; undo(pg)
+        if not (sel(pg) and sel(pg)["curve"] == 0): selt(); tapp(E1)
+        drag(E1, [0, -8 * d["py"]]); c_ = gd()["curves"][0]; undo(pg)
+        check("dragged far right it stops at dx 3 (the window's right end); far up, with the asymptote on the top edge (dy 5)",
+              c["dx"] == 3 and c_["dy"] == 5, [c, c_])
+        lims = pg.evaluate("""() => { const GR = window.__GR, out = [];
+          for (const k of ['growth', 'decay', '-growth', '-decay']) { const r = GR.newGraph('t', 's0', k, { colour: '#000000', width: 2 }, 794, 400, 500);
+            const a = GR.curveSet(r, 0, { dx: 1000, dy: 9, sx: 100, sy: 0.001 }).data.curves[0], b = GR.curveSet(r, 0, { dx: -1000, dy: -9, sx: 0.01, sy: 50 }).data.curves[0];
+            out.push([a.dx, a.dy, a.sx, a.sy, b.dx, b.dy, b.sx, b.sy]); }
+          return out; }""")
+        check("the limits (curveSet): dx from xl to xr (-3 to 3), dy from the bottom edge to yh (-1.2 to 5; -5 to 1.2 below), stretch 1/8 to 8",
+              lims == [[3, 5, 8, 0.125, -3, -1.2, 0.125, 8]] * 2 + [[3, 1.2, 8, 0.125, -3, -5, 0.125, 8]] * 2, lims)
+        clear_sel(pg); pen_colour(PINK); pick(geo(pg, eid)["box"]); tap("cubic")
+        dm = gd(); clear_sel(pg); selt(); tapp(PU(d, 2, 4)); s = sel(pg)
+        pg.click(f'#tray .sw[data-colour="{THIRD}"]'); pg.wait_for_timeout(60); cs = gd()["curves"]
+        check("with a cubic beside it: a tap on the growth curve picks it (curve 0) and a colour tap recolours the GROWTH curve only",
+              s and s["curve"] == 0 and cs[0]["colour"].lower() == THIRD.lower() and cs[1]["colour"].lower() == PINK.lower(), [s, cs])
+        undo(pg); clear_sel(pg); selt(); tapp(PU(d, 2, 4))
+        pg.click(".selChips .chip[data-act='delete']"); pg.wait_for_timeout(60)
+        check("Delete with the growth curve picked removes it only; the cubic stays on the same axes", len(recs(pg)) == 1 and gd()["curves"] == [dm["curves"][1]] and but(gd(), "curves") == but(dm, "curves"), gd()["curves"])
+        undo(pg)
+        check("... one undo: both back", gd() == dm)
+
+        group[0] = "M. exponential: thumb + PDF + share"
+        pg.evaluate("window.__T.clear('s0')"); clear_sel(pg); pen_colour(BLUE)
+        show(pg, [W / 2, 260]); land(pg, "growth"); eid = graphs(pg)[0]["id"]; d0 = gd()
+        selt(); tapp(PU(d0, 1, 2)); drag(PU(d0, 1, 2), [0.5 * d0["px"], -1 * d0["py"]]); clear_sel(pg)
+        edd = gd(); cdx, cdy = edd["curves"][0]["dx"], edd["curves"][0]["dy"]
+        show(pg, [W / 2, 800]); pen_colour("#000000")
+        ste = place_stamp([-5, 5, 1, -5, 5, 1], False); close_panel(pg); side = ste["id"]
+        pen_colour(PINK); pg.click("#tool-select"); pg.wait_for_timeout(30)
+        pg.evaluate("(i) => window.__pw.ink.selectRecs('s0', [i])", side); pg.wait_for_timeout(40)
+        tap("growth"); clear_sel(pg); pg.click("#tool-pen"); pg.wait_for_timeout(30)
+        sdd = axrecs()[0]["data"]
+        check("the page holds a slid growth graph (its asymptote showing) and a stamp carrying a growth curve",
+              len(graphs(pg)) == 1 and len(asy(eid)) == 1 and [k["kind"] for k in sdd.get("curves", [])] == ["growth"], [edd["curves"], sdd.get("curves")])
+        tg = pg.evaluate("(i) => window.__T.el(i, window.__pw.ink.thumbSvg('s0'))", eid)
+        same_d = pg.evaluate("""(i) => { const a = document.querySelector(`#stack .sheet[data-id='s0'] svg.ink [data-id='${i}'] path.curve`);
+          const t = window.__pw.ink.thumbSvg('s0').querySelector(`[data-id='${i}'] path.curve`); return !!a && !!t && a.getAttribute('d') === t.getAttribute('d'); }""", eid)
+        check("thumbSvg: the growth graph (axes, heads, x, y, the dashed asymptote, curve), the same curve path as the page",
+              tg and [p["cls"] for p in tg["parts"]] == ["axis", "head", "letter", "letter", "asym", "curve"] and same_d, tg and [p["cls"] for p in tg["parts"]])
+        pg.click("#listBtn"); pg.wait_for_selector("#pageList:not([hidden])"); pg.wait_for_timeout(300)
+        okth = pg.evaluate("([a, b]) => [document.querySelectorAll(`#plThumbs .thumbP[data-index='1'] [data-id='${a}'] path.curve`).length, document.querySelectorAll(`#plThumbs .thumbP[data-index='1'] [data-id='${b}'] path.curve`).length]", [eid, side])
+        check("the page list's thumb of page 1 draws the growth curve and the stamp's", okth == [1, 1], okth)
+        tb = rect(pg, "#plThumbs .thumbP[data-index='1']"); thumb_png = SH6 / "_thumb.png"
+        pg.screenshot(path=str(thumb_png), clip={"x": tb["l"] - 6, "y": tb["t"] - 6, "width": tb["w"] + 12, "height": tb["h"] + 12})
+        doc = pdf_of(pg, "Exponential"); p0 = doc[0]
+        pix = p0.get_pixmap(dpi=144); img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB"); sk = pix.width / W
+        on_b = PU(edd, 2, 2 ** (2 - cdx) + cdy)                                   # the growth curve at x = 2: Blue
+        on_s = [sdd["x0"] + 1 * 5 / 2.6 * sdd["px"], sdd["y0"] - 2 * 5 / 3.2 * sdd["py"]]     # the stamp's growth at (1, 2): pink
+        on_h = PU(edd, -2.2, cdy)                                                 # the asymptote: black (r 6 spans a dash gap)
+        on_x = PU(edd, -2.6, 0)                                                   # the x-axis: black
+        pdf_hits = [any_px(img, on_b[0] * sk, on_b[1] * sk, 2, bluish), any_px(img, on_s[0] * sk, on_s[1] * sk, 2, pinkish),
+                    any_px(img, on_h[0] * sk, on_h[1] * sk, 6, darkish), any_px(img, on_x[0] * sk, on_x[1] * sk, 2, darkish)]
+        check("the PDF: Blue on the growth curve, pink on the stamp's, black on the dashed asymptote and on the x-axis", all(pdf_hits), pdf_hits)
+        pdraw = p0.get_drawings(); dashed_ = [dr for dr in pdraw if dr.get("dashes") and dr["dashes"] not in ("[] 0", "[] 0.0") and "[]" not in str(dr["dashes"])]
+        check("... the asymptote is DASHED in the PDF (a dashed black path)", any(dr.get("color") and max(dr["color"]) < 0.1 for dr in dashed_), [str(dr.get("dashes")) for dr in pdraw][:12])
+        doc.close()
+        th_img = Image.open(str(thumb_png)).convert("RGB")
+        hh = 800; t2 = th_img.resize((round(th_img.width * hh / th_img.height), hh)); p2i = img.resize((round(img.width * hh / img.height), hh))
+        comp = Image.new("RGB", (t2.width + p2i.width + 30, hh + 20), (210, 210, 210)); comp.paste(t2, (10, 10)); comp.paste(p2i, (t2.width + 20, 10))
+        if comp.width > 900: comp = comp.resize((900, round(comp.height * 900 / comp.width)))
+        comp.save(str(SH6 / "10-thumb-pdf.png")); thumb_png.unlink()
+        pg.click("#plSelect"); pg.wait_for_timeout(40)
+        pg.locator("#plThumbs .thumbP[data-index='1']").click(); pg.wait_for_timeout(40)
+        pg.click("#plBar button[data-act='share']"); pg.wait_for_selector("#shareDlg")
+        pg.evaluate("window.__shared = null")
+        pg.click("#shareDlg button[data-share='images']"); pg.wait_for_selector("#shareReady", timeout=30000)
+        pg.click("#shareDlg button[data-share='send']"); pg.wait_for_function("window.__shared", timeout=10000)
+        png = pg.evaluate("""async () => { const f = window.__shared.files[0]; const u = new Uint8Array(await f.arrayBuffer()); let s = '';
+          for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000)); return [f.type, btoa(s)]; }""")
+        si = Image.open(io.BytesIO(base64.b64decode(png[1]))).convert("RGB"); ss = si.width / W
+        check("a shared picture shows Blue on the growth curve, pink on the stamp's and black on the asymptote",
+              any_px(si, on_b[0] * ss, on_b[1] * ss, 2, bluish) and any_px(si, on_s[0] * ss, on_s[1] * ss, 2, pinkish) and any_px(si, on_h[0] * ss, on_h[1] * ss, 6, darkish))
+        if pg.evaluate("window.__pw.tick()") is not None: pg.click("#plDone"); pg.wait_for_timeout(40)
+        if not pg.locator("#pageList").is_hidden(): pg.click("#plClose"); pg.wait_for_timeout(40)
+        keep_g, keep_s = graphs(pg)[0], axrecs()[0]
+        pg.evaluate("window.__pw.idle()"); pg.wait_for_timeout(200)
+        pg.click("#backBtn"); pg.wait_for_selector("#listView:not([hidden])"); pg.wait_for_timeout(80)
+        pg.reload(); ready(pg); open_note(pg); pg.evaluate(HELP)
+        check("after a reload the slid growth graph and the stamp with its growth curve are back exactly",
+              graphs(pg) and graphs(pg)[0]["data"] == keep_g["data"] and axrecs() and axrecs()[0]["data"] == keep_s["data"])
+
         # ------------------------------------------------------------ G: Caveat from the app's own files
         group[0] = "G. Caveat offline"
         open_gcard(pg); pg.wait_for_timeout(300); close_panel(pg)
@@ -1292,8 +2226,8 @@ try:
         g_req = [u for u in reqs if "caveat" in u.lower() and ("googleapis" in u or "gstatic" in u)]
         own = [u for u in reqs if u.endswith("/fonts/caveat-500.woff2")]
         check("no request ever asked Google for Caveat; the app's own file was fetched", g_req == [] and own, [g_req, own[:2]])
-        check("sw.js: CACHE pw-v9m, its version line, and graph.js, caveat-glyphs.js and the font in the shell",
-              'const CACHE = "pw-v9m";' in swt and "   pw-v9m (19 Nov): " in swt and all(f in swt for f in ['"./js/graph.js"', '"./js/caveat-glyphs.js"', '"./fonts/caveat-500.woff2"']))
+        check("sw.js: CACHE pw-v9q, its version line, and graph.js, caveat-glyphs.js and the font in the shell",
+              'const CACHE = "pw-v9q";' in swt and "   pw-v9q (20 Nov): " in swt and all(f in swt for f in ['"./js/graph.js"', '"./js/caveat-glyphs.js"', '"./fonts/caveat-500.woff2"']))
         check("no page errors", not errs, errs)
         ctx.close()
         b.close()

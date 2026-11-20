@@ -842,6 +842,7 @@ body.trayLeft #counter { right: auto; left: 14px; }
 .graphCard .gTitle { display: block; font-size: 14.5px; font-weight: 700; line-height: 24px; margin-bottom: 4px; padding-right: 36px; }
 .graphCard .gFam { font-size: 12.5px; font-weight: 700; color: var(--muted); margin: 8px 0 4px; }
 .graphCard .gBlocks { display: flex; flex-wrap: wrap; gap: 8px; }
+.graphCard .gLine { display: flex; gap: 24px; }   /* pw-v9o: one line per family; Hyperbola will sit beside Parabola (the mock) */
 .graphCard .gBlk {
   width: 80px; padding: 5px 0 4px; border: 1px solid var(--field-line); border-radius: 8px; background: var(--field); color: var(--graphite);
   display: flex; flex-direction: column; align-items: center; gap: 1px; font: inherit; cursor: pointer; touch-action: manipulation;

@@ -176,7 +176,7 @@ import * as store from './store.js';
 import { pageAt, pagePoint, view, pageSize, CM, surfaceAt, surfacePoint, SK_COLOURS, SK_STRIP } from './page.js';
 import { bytesOf } from './pdfin.js';
 import { alignDir, segsOf, markOf, markPaths, roundAlong, lineCross, distToSeg as segGap, segCross, MEET, FADE_MS } from './align.js';
-import { graphGeom, graphParts, XL_MIN, withCurve, curveFits, stampCurveParts, stampCurveSegs, curveSet, curveBox, curveAt, SMIN, SMAX } from './graph.js';
+import { graphGeom, graphParts, XL_MIN, withCurve, curveFits, stampCurveParts, stampCurveSegs, curveSet, curveBox, curveAt, SMIN, SMAX, plainGraph } from './graph.js';
 export { graphGeom };
 
 // snap: the pen held still this long (ms) at the end of a stroke; ?hold=400 in the address overrides it.
@@ -2120,7 +2120,7 @@ export function addCurveSel(kind, pen) {
   if (!SEL || SEL.locked || SEL.ids.size !== 1) return false;
   const r = selRecs()[0];
   if (!r || !(r.kind === 'graph' || (r.kind === 'axes' && !(r.data && r.data.line) && axesGeom(r)))) return false;
-  if (!curveFits(r, kind)) return false;                           // pw-v9l: a cubic and a trig curve never share axes: a new graph lands
+  if (!curveFits(r, kind)) return false;                           // pw-v9l: a cubic and a trig curve never share axes: a new graph lands (pw-v9o: plain units share, trig never with plain)
   const n = withCurve(r, kind, pen);
   if (n) changeSel((x) => (x.id === r.id ? n : null));
   return true;
@@ -2405,7 +2405,7 @@ function tapPick(page, x, y, z, keep) {
 //   ctall (the bottom handle): sy x k, about the curve's own middle line (dy stays)
 //   k = 1 + how far the handle went / the lever (from the anchor to the handle where it began, 40 screen px at least)
 function curveDragged(g, x, y) {
-  const r = g.rec, d = r.data, c = d.curves[g.i], cub = !!(d.axes && d.axes.fam === 'cubic');
+  const r = g.rec, d = r.data, c = d.curves[g.i], cub = plainGraph(d);   // pw-v9o: any plain-unit graph (cubic, parabola)
   const dx0 = +c.dx || 0, dy0 = +c.dy || 0, sx0 = +c.sx || 1, sy0 = c.sy === undefined ? 1 : +c.sy;
   if (g.kind === 'cslide') {
     return curveSet(r, g.i, { dx: dx0 + (x - g.p0[0]) / d.px * (cub ? 1 : 90), dy: dy0 - (y - g.p0[1]) / d.py, sx: sx0, sy: sy0 });

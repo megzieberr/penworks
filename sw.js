@@ -35,9 +35,12 @@
    pw-v9l (19 Nov): the quick graph's cubic row: cubic and −cubic land on plain axes crossing in the middle, join a cubic graph or land on her axes stamp.
    pw-v9m (19 Nov): the quick graph, unit 3: a tap on a graph's curve picks that curve alone; it slides and stretches inside its axes (right handle wider, bottom handle taller).
    pw-v9n (19 Nov): the 3-second rule: on a wifi that is connected but dead the app opens from what this device kept after 3 s (its files, then its notes), instead of waiting for ever; the sign-in check too (after 3 s the sign-in kept on the tablet, refreshed in the background).
+   pw-v9o (20 Nov): the quick graph's parabola row: happy and sad land on plain axes (the x-axis low for happy, high for sad), share axes with a cubic, land on her axes stamp, and can be picked, slid and stretched.
+   pw-v9p (20 Nov): the quick graph's hyperbola row (1 and 3, 2 and 4) beside the parabola: both branches one curve on plain axes crossing in the middle; its two dashed asymptotes show once the curve is slid off the axes and travel with it.
+   pw-v9q (20 Nov): the quick graph's exponential row (growth, decay, −growth, −decay) on its own line: lands on plain axes (the x-axis low, or high for the two below it); its dashed sideways asymptote shows once the curve is slid up or down and travels with it.
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v9n";
+const CACHE = "pw-v9q";
 const SHARE_DB = "penworks.share";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",

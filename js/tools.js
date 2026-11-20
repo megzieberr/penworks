@@ -982,7 +982,10 @@ function placeAxes() {
 // ---------------------------------------------------------------- pw-v9j: the quick graph's card (_docs/PENWORKS-GRAPH-PLAN.md, Tool 1)
 // The Graph row ("Graph…", under Axes) opens a card beside the panel on the desk side, its top level with the panel's (the
 // mock's panel 1); the row looks pressed while it is open. One row per family (graph.js FAMILIES): "sin, cos, tan" with six
-// blocks (sin, −sin, cos, −cos, tan, −tan), then (pw-v9l) "Cubic" with two (cubic, −cubic), each a small computed picture
+// blocks (sin, −sin, cos, −cos, tan, −tan), then (pw-v9o) "Parabola" with two (happy, sad) and beside it on the same line
+// (pw-v9p) "Hyperbola" with two (1 and 3, 2 and 4), then on its own line (pw-v9q) "Exponential" with four (growth, decay,
+// −growth, −decay), then (pw-v9l) "Cubic" with two
+// (cubic, −cubic), each a small computed picture
 // with its name. A tap on a block closes the panel and the card and
 // lands that graph on the CURRENT page (js/graph.js newGraph: about a third of the page wide, 0 to 360 degrees, the y-axis at
 // the left, its middle at the middle of the part of the page she sees, kept on the page; the curve in the pen's colour and
@@ -1000,7 +1003,13 @@ function buildGraphCard() {
   const title = document.createElement('span');
   title.className = 'gTitle'; title.textContent = 'Graph';
   gcard.append(x, title);
+  const lines = {};                                                // pw-v9o: a line of the card per family; a family with beside: '<id>' joins that one's line (the mock's Parabola and Hyperbola)
   for (const F of graph.FAMILIES) {                                // pw-v9l: one heading and one row of blocks per family (the mock's rows)
+    let line = F.beside && lines[F.beside];
+    if (!line) { line = document.createElement('div'); line.className = 'gLine'; gcard.append(line); }
+    lines[F.id] = line;
+    const box = document.createElement('div');
+    box.className = 'gFamBox';
     const fam = document.createElement('div');
     fam.className = 'gFam'; fam.textContent = F.name;
     const row = document.createElement('div');
@@ -1013,7 +1022,7 @@ function buildGraphCard() {
       b.addEventListener('click', () => placeGraph(k));
       row.append(b);
     }
-    gcard.append(fam, row);
+    box.append(fam, row); line.append(box);
   }
   gcard.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); });   // the S Pen's button
   document.body.append(gcard);
