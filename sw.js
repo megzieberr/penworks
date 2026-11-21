@@ -38,9 +38,10 @@
    pw-v9o (20 Nov): the quick graph's parabola row: happy and sad land on plain axes (the x-axis low for happy, high for sad), share axes with a cubic, land on her axes stamp, and can be picked, slid and stretched.
    pw-v9p (20 Nov): the quick graph's hyperbola row (1 and 3, 2 and 4) beside the parabola: both branches one curve on plain axes crossing in the middle; its two dashed asymptotes show once the curve is slid off the axes and travel with it.
    pw-v9q (20 Nov): the quick graph's exponential row (growth, decay, −growth, −decay) on its own line: lands on plain axes (the x-axis low, or high for the two below it); its dashed sideways asymptote shows once the curve is slid up or down and travels with it.
+   pw-v9r (21 Nov): the app opens from the notes this tablet kept at once, and the fresh copy from the database is merged in when it lands; the bin is emptied after the first draw.
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v9q";
+const CACHE = "pw-v9r";
 const SHARE_DB = "penworks.share";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",

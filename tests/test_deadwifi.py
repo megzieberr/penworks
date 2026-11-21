@@ -217,7 +217,7 @@ try:
         pg.evaluate(RENAME_TWIN_JS, "Twin name")           # the database changes meanwhile (another device)
         hang(pg, ["purgeBin", "loadAll", "profile"])
         dt = open_timed(pg, LOCAL)
-        check("14. purgeBin, loadAll and profile all hung: ready after about 3 s", 2.7 <= dt <= 5.0, dt)
+        check("14. purgeBin, loadAll and profile all hung: ready at once from the snapshot (pw-v9r, was about 3 s)", dt < 1.5, dt)
         check("15. the screen is the device's snapshot ('Snapshot name'), lastLoad 0 (read again at the next chance)",
               note_name(pg) == "Snapshot name" and grid_has(pg, "Snapshot name") and last_load(pg) == 0, [note_name(pg), last_load(pg)])
         check("16. no 'Could not load' toast", "Could not load" not in toast_text(pg), toast_text(pg))
@@ -253,9 +253,9 @@ try:
         pg.evaluate("(t) => window.__pw.api.setSettings({ tray: t, tray_at: '2030-01-01T00:00:00.000Z' })", theirs)
         hang(pg, ["profile"])
         dt = open_timed(pg, LOCAL)
-        check("24. only the profile hung: ready after about 3 s, not held back", 2.7 <= dt <= 5.0, dt)
+        check("24. only the profile hung: ready at once from the snapshot, not held back (pw-v9r, was about 3 s)", dt < 1.5, dt)
         check("25. the tree read was on time (lastLoad set), the tray still this device's",
-              last_load(pg) > 0 and pg.evaluate("window.__pw.tray().order") == tray0["order"], last_load(pg))
+              until(pg, lambda: last_load(pg) > 0, 2000) and pg.evaluate("window.__pw.tray().order") == tray0["order"], last_load(pg))
         hang(pg, [])
         ok = until(pg, lambda: pg.evaluate("window.__pw.tray().order") == theirs["order"], 3000)
         check("26. the profile lands late: its newer tray is applied then", ok, pg.evaluate("window.__pw.tray().order")[:3])
