@@ -314,6 +314,11 @@ export const localApi = {
     if (!b) { const e = new Error('Object not found'); e.statusCode = '404'; throw e; }
     return b;
   },
+  // pw-v9s: id and updated_at of these pages, as api.js reads them (a page not there is left out)
+  async pageStamps(pageIds) {
+    const set = new Set(pageIds);
+    return read().pages.filter((p) => set.has(p.id)).map((p) => ({ id: p.id, updated_at: p.updated_at }));
+  },
   async pageStamp(pageId) {
     const p = read().pages.find((r) => r.id === pageId);
     return p ? p.updated_at : null;

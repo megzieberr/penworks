@@ -31,6 +31,11 @@ const version = new Map();    // page id -> how many changes so far (a reconcile
 const recheck = new Set();    // pages a reconcile skipped while the queue held their ops: checked again once it drains
 const unchecked = new Set();  // pages whose reconcile could not reach the database: checked on the next trigger
 const touched = new Map();    // U3d: stroke id -> when this device last added or removed it (store.change)
+// pw-v9s: per page, the database's updated_at (its exact text) when this device last read its ink whole and took it in.
+// Kept in store `strokes` under STAMP + page id, written in the same transaction as the page's records; any other change
+// to the page here drops it. Only pages in the mirror have one in memory; none = read the page.
+const STAMP = 'at:';
+const stamps = new Map();
 let Q = [];                   // the queue, oldest first: { key, page_id, removed, added, t, busy, fk, told }
 let nextKey = 1;
 const cfg = { mode: 'local', api: null, idle: () => Promise.resolve(), onRemote: () => {}, onState: () => {}, onPushed: () => {} };
@@ -85,9 +90,18 @@ function keepOp(op) {
 function dropOp(op) {
   return write((s) => { if (op.key != null) s.queue.delete(op.key); });
 }
-function keepPage(id, recs) {
-  return write((s) => { if (recs.length) s.strokes.put(recs, id); else s.strokes.delete(id); });
+// pages' records and stamps (list of [id, recs, stamp or null]) in one transaction; no stamp = the kept one goes
+function keepPages(list) {
+  for (const [id, , at] of list) { if (at) stamps.set(id, at); else stamps.delete(id); }
+  return write((s) => {
+    for (const [id, recs, at] of list) {
+      if (recs.length) s.strokes.put(recs, id); else s.strokes.delete(id);
+      if (at) s.strokes.put(at, STAMP + id); else s.strokes.delete(STAMP + id);
+    }
+  });
 }
+function keepPage(id, recs) { return keepPages([[id, recs, null]]); }
+function unstamp(id) { if (stamps.delete(id)) write((s) => { s.strokes.delete(STAMP + id); }); }
 
 // ---------------------------------------------------------------- start
 export function init(o) {
@@ -142,9 +156,9 @@ export function save(pageId, strokes) {
 }
 
 export function clear(pageId) {
-  mirror.delete(pageId); blind.delete(pageId); recheck.delete(pageId); unchecked.delete(pageId);
+  mirror.delete(pageId); blind.delete(pageId); recheck.delete(pageId); unchecked.delete(pageId); stamps.delete(pageId);
   try { localStorage.removeItem(LEGACY + pageId); } catch (_) { /* ignore */ }
-  write((s) => { s.strokes.delete(pageId); });
+  write((s) => { s.strokes.delete(pageId); s.strokes.delete(STAMP + pageId); });
 }
 
 // every page that has strokes kept here
@@ -184,6 +198,7 @@ export function unqueue(pageId) {
 export function change(pageId, removed, added) {
   if (!removed.length && !added.length) return;
   version.set(pageId, (version.get(pageId) || 0) + 1);
+  unstamp(pageId);                                  // pw-v9s
   touch(removed, added);
   const cur = mirror.get(pageId) || [], rm = new Set(removed), have = new Set();
   const next = cur.filter((r) => !rm.has(r.id));
@@ -224,15 +239,24 @@ export async function ensure(pageIds) {
   try { await opened; } catch (_) { /* no cache: the database still answers */ }
   const need = ids.filter((id) => !mirror.has(id));
   if (need.length) {
-    let got = {};
+    let got = {}, at = {};
     try {
       await writes;
-      got = await run(['strokes'], 'readonly', (s, out) => need.forEach((id) => { s.strokes.get(id).onsuccess = (e) => { out[id] = e.target.result; }; }));
-    } catch (_) { /* no cache: empty until the database answers */ }
+      ({ got, at } = await run(['strokes'], 'readonly', (s, out) => {
+        out.got = {}; out.at = {};
+        need.forEach((id) => {
+          s.strokes.get(id).onsuccess = (e) => { out.got[id] = e.target.result; };
+          s.strokes.get(STAMP + id).onsuccess = (e) => { out.at[id] = e.target.result; };   // pw-v9s: its stamp, same transaction
+        });
+      }));
+    } catch (_) { got = {}; at = {}; /* no cache: empty until the database answers */ }
     for (const id of need) {
       if (mirror.has(id)) continue;                      // changed while the cache was read: the newer copy wins
       const wasBlind = blind.has(id);
-      const recs = adopt(id) || (Array.isArray(got[id]) ? got[id].slice().sort(bySeq) : []);
+      const old = adopt(id);
+      const recs = old || (Array.isArray(got[id]) ? got[id].slice().sort(bySeq) : []);
+      const sound = got[id] === undefined || Array.isArray(got[id]);   // no records kept = an empty page
+      if (!old && sound && typeof at[id] === 'string' && at[id]) stamps.set(id, at[id]); else stamps.delete(id);
       mirror.set(id, recs); blind.delete(id);
       if (wasBlind && recs.length) cfg.onRemote(id, recs.slice());
     }
@@ -264,27 +288,49 @@ function adopt(pageId) {
 
 // the database's records for these pages against the mirror, by id. A page with ops still queued keeps its local copy
 // (it is checked again once its last op is acknowledged). A page whose set differs takes the database's set.
+// pw-v9s: first one light read of the pages' updated_at, fresh; a page is skipped only when it is in the mirror with no
+// ops queued, unchanged here since, and its kept stamp is exactly the text the database gave now. Anything else is read.
+// No light read (it failed): every page is read, as before. A read that fails leaves everything as it was.
 export async function reconcile(ids) {
   if (!ids.length || !cfg.api || !cfg.api.strokesOf) return;
   const at = new Map(ids.map((id) => [id, version.get(id) || 0]));
+  let fresh = null;
+  if (cfg.api.pageStamps) {
+    try { fresh = new Map((await cfg.api.pageStamps(ids)).map((r) => [r.id, r.updated_at])); }
+    catch (_) { fresh = null; }
+  }
+  const stampOf = (id) => { const f = fresh && fresh.get(id); return typeof f === 'string' && f ? f : null; };
+  const same = (id) => !!stampOf(id) && stamps.get(id) === stampOf(id) && mirror.has(id)
+    && !Q.some((op) => op.page_id === id) && (version.get(id) || 0) === at.get(id);
+  const read = ids.filter((id) => !same(id)), reading = new Set(read);
+  ids.forEach((id) => { if (!reading.has(id)) unchecked.delete(id); });
+  if (!read.length) return;
   let rows;
-  try { rows = await cfg.api.strokesOf(ids); }
-  catch (_) { ids.forEach((id) => unchecked.add(id)); return; }
-  const up = new Map(ids.map((id) => [id, []]));
+  try { rows = await cfg.api.strokesOf(read); }
+  catch (e) {
+    read.forEach((id) => unchecked.add(id));
+    console.warn(`PenWorks: the ink of ${read.length} pages could not be read from the database; tried again later.`, e);
+    return;
+  }
+  const up = new Map(read.map((id) => [id, []]));
   for (const r of rows || []) if (up.has(r.page_id)) up.get(r.page_id).push(r);
-  const again = [];
+  const again = [], keep = [];
   for (const [id, theirs] of up) {
     unchecked.delete(id);
     if (!mirror.has(id)) continue;                                   // forgotten while the query ran
     if (Q.some((op) => op.page_id === id)) { recheck.add(id); continue; }
     if ((version.get(id) || 0) !== at.get(id)) { again.push(id); continue; }   // changed (and pushed) since the query
-    const mine = mirror.get(id), have = new Map(mine.map((r) => [r.id, r]));
-    if (mine.length === theirs.length && theirs.every((r) => have.has(r.id))) continue;
+    const mine = mirror.get(id), have = new Map(mine.map((r) => [r.id, r])), st = stampOf(id);
+    if (mine.length === theirs.length && theirs.every((r) => have.has(r.id))) {
+      if (st && stamps.get(id) !== st) keep.push([id, mine, st]);
+      continue;
+    }
     const next = theirs.map((r) => have.get(r.id) || r).sort(bySeq);
     mirror.set(id, next);
-    keepPage(id, next);
+    keep.push([id, next, st]);
     cfg.onRemote(id, next.slice());
   }
+  if (keep.length) keepPages(keep);
   if (again.length) reconcile(again);
 }
 
@@ -366,6 +412,7 @@ function pump() {
       Q = Q.filter((o) => o !== op);
       dropOp(op);
       const pid = op.page_id;
+      version.set(pid, (version.get(pid) || 0) + 1);       // pw-v9s: the database moved; a reconcile read before this is asked again
       if (recheck.has(pid) && !Q.some((o) => o.page_id === pid)) { recheck.delete(pid); reconcile([pid]); }
       try { cfg.onPushed(pid); } catch (_) { /* the page picture (U3b) is only a picture */ }
     }
@@ -429,6 +476,13 @@ export function saveState() { return { state, count: Q.length }; }
 export async function cached(pageId) {
   await writes;
   try { return (await run(['strokes'], 'readonly', (s, out) => { s.strokes.get(pageId).onsuccess = (e) => { out.v = e.target.result; }; })).v ?? null; }
+  catch (_) { return null; }
+}
+// pw-v9s: a page's stamp, in memory and as kept on this device (null: none)
+export function stampOf(pageId) { return stamps.get(pageId) ?? null; }
+export async function cachedStamp(pageId) {
+  await writes;
+  try { return (await run(['strokes'], 'readonly', (s, out) => { s.strokes.get(STAMP + pageId).onsuccess = (e) => { out.v = e.target.result; }; })).v ?? null; }
   catch (_) { return null; }
 }
 // every write on this device done and the push stopped (saved, or waiting / refused until the next trigger)

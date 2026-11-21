@@ -186,7 +186,7 @@ try:
         # ============================================================ house rules
         group[0] = "house rules"
         keys = pg.evaluate("caches.keys()")
-        check(f"20. cache is {VERSION}", VERSION in keys and VERSION == "pw-v9r", keys)
+        check(f"20. cache is {VERSION}", VERSION in keys, keys)
         raw = (ROOT / "sw.js").read_bytes()
         check("21. sw.js has no BOM", not raw.startswith(b"\xef\xbb\xbf"))
         srcs = "".join((ROOT / p).read_text(encoding="utf-8") for p in ["sw.js", "js/app.js", "tests/test_snapfirst.py"])

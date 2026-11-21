@@ -30,6 +30,7 @@ const STROKE_COLS = 'id,page_id,seq,kind,style,data';
 const STROKE_KEYS = STROKE_COLS.split(',');
 const ROWS = 1000;     // the API hands back at most this many rows per request (Supabase's max rows): ask page by page
 const CHUNK = 100;     // ids per delete and rows per insert, so no request grows too big
+const IDS = 100;       // pw-v9s: ids per request address (600 still works, 700 is refused)
 
 let sb = null;
 let leaving = Promise.resolve();   // U3d: a strokes channel being closed, so the next one never joins on top of it
@@ -191,7 +192,8 @@ const liveApi = {
     if (error) throw error;
   },
 
-  // every stroke of these pages, in seq order (one query, read in pages of ROWS rows)
+  // every stroke of these pages, in seq order (one query, read in pages of ROWS rows). pw-v9s: at most IDS ids a call
+  // (the api below splits a longer list and joins the answers)
   async strokesOf(pageIds) {
     if (!pageIds.length) return [];
     const c = await client(), out = [];
@@ -240,6 +242,15 @@ const liveApi = {
     const { data, error } = await c.storage.from(SNAP_BUCKET).download(path);
     if (error) throw error;
     return data;
+  },
+
+  // pw-v9s: id and updated_at of these pages (at most IDS ids), fresh from the database; a page not there is left out
+  async pageStamps(pageIds) {
+    if (!pageIds.length) return [];
+    const c = await client();
+    const { data, error } = await c.from('pages').select('id,updated_at').in('id', pageIds);
+    if (error) throw error;
+    return data || [];
   },
 
   // the page's updated_at as the database has it (null when the row is not there): taken before a render
@@ -386,6 +397,14 @@ const STICKY_KEYS = ['kind', 'anchor_id', 'sk_x', 'sk_y', 'sk_w', 'sk_colour'];
 const pick = (r, keys) => Object.fromEntries(keys.filter((k) => k in r).map((k) => [k, r[k]]));
 const eachPos = async (table, pairs) => { for (const [id, position] of pairs) await base.update(table, [id], { position }); };
 
+// pw-v9s: a list of ids goes IDS at a time, one request after another; the first failed part fails the whole call
+async function byIds(ids, fn) {
+  const all = [...new Set(ids)], out = [];
+  for (let i = 0; i < all.length; i += IDS) out.push(...((await fn(all.slice(i, i + IDS))) || []));
+  return out;
+}
+const seqOrder = (a, b) => (a.seq - b.seq) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);   // the database's order by seq, id
+
 // bin and restore: one timestamp for everything binned together, so restore brings back exactly that
 async function setBin(ids, value) {
   for (const t of ['folders', 'notes', 'pages']) if (ids[t] && ids[t].length) await base.update(t, ids[t], { deleted_at: value });
@@ -393,6 +412,12 @@ async function setBin(ids, value) {
 
 export const api = {
   ...base,
+  // pw-v9s: the ink of any number of pages, IDS page ids a request, joined in seq order. strokesPart and stampsPart are
+  // one request each, looked up at call time so the checks can count them and fail one.
+  strokesOf: async (pageIds) => (await byIds(pageIds, (part) => api.strokesPart(part))).sort(seqOrder),
+  strokesPart: (part) => base.strokesOf(part),
+  pageStamps: (pageIds) => byIds(pageIds, (part) => api.stampsPart(part)),
+  stampsPart: (part) => base.pageStamps(part),
 
   // folders: a top folder (parent_id null) or a sub-folder of a top folder, never deeper
   createFolder: (r) => base.insert('folders', pick(r, ['id', 'parent_id', 'name', 'colour', 'position'])),
