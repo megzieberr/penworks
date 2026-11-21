@@ -13,6 +13,7 @@ import sys, os, subprocess, time, pathlib, re, json
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tests")); from swcache import SW_CACHE  # the cache name, read from sw.js
 PORT = 8783
 BASE = f"http://127.0.0.1:{PORT}/"
 LOCAL = BASE + "?local=1"
@@ -292,9 +293,9 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v8q" not in keys:
+        if SW_CACHE not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v8q", "pw-v8q" in keys, keys)
+        check(f"cache is {SW_CACHE}", SW_CACHE in keys, keys)
         files = ["./js/store.js", "./js/api.js", "./js/local-backend.js", "./js/tray.js", "./js/app.js", "./sw.js"]
         srcs = {u: pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in files}
         check("no em-dashes in the changed files", all(chr(0x2014) not in v for v in srcs.values()))

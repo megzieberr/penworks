@@ -696,7 +696,7 @@ try:
         open_note(pg)
         pg.click("#drawToolsBtn"); pg.wait_for_timeout(60)
         rows = pg.evaluate("[...document.querySelectorAll('#toolsPanel .trow')].map((b) => b.getAttribute('aria-pressed'))")
-        check("reopened: no tool out, every tool row unpressed (Axes… is no toggle)", R(pg) is None and C(pg) is None and pg.locator("svg.toolLayer").count() == 0 and rows == ["false"] * 3 + [None], rows)
+        check("reopened: no tool out, every tool row unpressed (Axes… is no toggle)", R(pg) is None and C(pg) is None and pg.locator("svg.toolLayer").count() == 0 and rows == ["false"] * 3 + [None, "false"], rows)
         close_panel(pg)
         check("no page errors", not errs, errs)
         ctx.close()

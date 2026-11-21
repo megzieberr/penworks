@@ -15,9 +15,10 @@ import threading
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tests")); from swcache import SW_CACHE  # the cache name, read from sw.js
 PORT = 8795
 BASE = f"http://127.0.0.1:{PORT}/"
-VERSION = "pw-v9n"
+VERSION = SW_CACHE
 KEY = "sb-duibtdcxmnvsuczuceld-auth-token"
 SB = "**://duibtdcxmnvsuczuceld.supabase.co/**"
 SB_KEY = "sb_publishable_bj2rpL9bwuYSrWCnZxkAuA_uIHYRVJR"     # the publishable key (public, in api.js)

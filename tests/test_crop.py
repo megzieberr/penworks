@@ -17,6 +17,7 @@ from PIL import Image, ImageDraw
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tests")); from swcache import SW_CACHE  # the cache name, read from sw.js
 PORT = 8830
 LOCAL = f"http://127.0.0.1:{PORT}/?local=1"
 SHOTS = ROOT / "_build" / "v9g"
@@ -432,9 +433,9 @@ try:
         check("closing the note ends crop mode, nothing left behind", not is_on(pg) and not pg.evaluate("document.querySelector('.cropLayer, .cropBar')"))
         check("no page errors", not errs, errs)
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        check("cache is pw-v9j", "pw-v9j" in keys, keys)
+        check(f"cache is {SW_CACHE}", SW_CACHE in keys, keys)
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
-        check("sw.js: CACHE pw-v9j, the pw-v9g version line, js/crop.js in the shell", 'const CACHE = "pw-v9j";' in swt and "   pw-v9g (13 Nov): " in swt and '"./js/crop.js"' in swt)
+        check(f"sw.js: CACHE {SW_CACHE}, the pw-v9g version line, js/crop.js in the shell", f'const CACHE = "{SW_CACHE}";' in swt and "   pw-v9g (13 Nov): " in swt and '"./js/crop.js"' in swt)
         src = pg.evaluate("fetch('./js/crop.js').then(r => r.text())")
         code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("//")).replace("'http://www.w3.org/2000/svg'", "SVG")   # the SVG namespace is a name, not a call
         check("js/crop.js asks nothing of the network (the SVG namespace aside)", not re.search(r"fetch\(|https?:|XMLHttpRequest|WebSocket|import\(", code))

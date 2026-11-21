@@ -7,6 +7,7 @@ import fitz
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tests")); from swcache import SW_CACHE  # the cache name, read from sw.js
 PORT = 8793
 BASE = f"http://127.0.0.1:{PORT}/"
 LOCAL = BASE + "?local=1"
@@ -292,9 +293,9 @@ try:
         check("no Rotate in the bar of a note with no PDF page", pg.locator("#plBar .plAct[data-act='rotate']").count() == 0)
         pg.click("#plDone"); close_list(pg)
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v9c" not in keys:
+        if SW_CACHE not in keys:
             pg.wait_for_timeout(800); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v9c", "pw-v9c" in keys, keys)
+        check(f"cache is {SW_CACHE}", SW_CACHE in keys, keys)
         check("no page errors", not errs, errs)
         b.close()
 finally:

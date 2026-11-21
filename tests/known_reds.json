@@ -1,0 +1,22 @@
+[
+  {"suite": "test_u2a", "match": "[flat highlighter]", "why": "13 flat-highlighter checks predate the g.img group; they need a g.img-aware rewrite (not a one-line fix)."},
+  {"suite": "test_u2b", "match": "select tool, synthetic pen PointerEvents on the start end", "why": "select-tool line-end drag, red since pw-v8n."},
+  {"suite": "test_u2b", "match": "select tool, button let go mid-drag", "why": "select-tool line-end drag, red since pw-v8n."},
+  {"suite": "test_u2b", "match": "then a plain touch on the end: the touch grabs and drags it", "why": "select-tool line-end drag, red since pw-v8n."},
+  {"suite": "test_u2b", "match": "undo takes back the stroke, then the grab", "why": "select-tool line-end drag, red since pw-v8n."},
+  {"suite": "test_u2b", "match": "so a plain touch on the end grabs it with the readout on", "why": "select-tool line-end drag, red since pw-v8n."},
+  {"suite": "test_tools", "match": "thumbSvg holds only its two empty groups", "why": "U4c's picture group: thumbSvg now holds 3 empty groups (img, hl, pen), the check expects 2 (since 3 Nov)."},
+  {"suite": "test_compass", "match": "[B. compass out] ... and not in the page's thumb", "why": "same cause as test_tools: thumbSvg now holds 3 empty groups (img, hl, pen), the check expects 2."},
+  {"suite": "test_u1b", "match": "[live] test login available", "why": "u1b runs its live group by default (--no-live skips it); this laptop has no PW_TEST login."},
+  {"suite": "test_smooth", "match": "[a jittery straight line]", "why": "suite last updated at pw-v7i (29 Oct); the stored line now ends about 10 px after the start, needs a look at the current smoothing and hold-snap before rewriting."},
+  {"suite": "test_u3b", "match": "a long press on the picture still opens the note menu", "why": "found 21 Nov: no menu after a 700 ms press on the note card's picture; suite last updated pw-v8q, needs a look."},
+  {"suite": "test_u3c", "match": "the Bookmarks filter lists page 2 only", "why": "found 21 Nov: the filter lists page 2 but its thumb reads not-bookmarked; bookmarks were redone in pw-v9a after this suite (pw-v8q)."},
+  {"suite": "test_u3c", "match": "nothing new in the tray", "why": "found 21 Nov: the tray's children changed since pw-v8q; the expected list needs rewriting against today's tray."},
+  {"suite": "test_axes", "crash": "waiting for locator(\".nrow\").first", "why": "found 21 Nov: dies opening a note (.nrow click, element outside the viewport); suite last updated pw-v8m."},
+  {"suite": "test_calc", "crash": "waiting for locator(\".nrow\").first", "why": "found 21 Nov: dies opening a note (.nrow click, element outside the viewport); suite last updated pw-v9g."},
+  {"suite": "test_cut", "crash": "has_text=re.compile(r\"^Cut$\")", "why": "found 21 Nov: dies tapping the Cut folder row (.frow); suite last updated pw-v7l."},
+  {"suite": "test_rotate", "crash": "waiting for locator(\"#listBtn\")", "why": "found 21 Nov: dies clicking #listBtn (not visible); suite last updated pw-v9c."},
+  {"suite": "test_u3a", "crash": "waiting for locator(\"#stack .sheet[data-index='1']\")", "why": "found 21 Nov: the offline group never finds page 2's sheet; suite last updated pw-v8q."},
+  {"suite": "test_pdfscroll", "crash": "waiting for locator(\"body[data-ready='1']\")", "why": "before/after speed measure: it swaps in pw-v7m copies of pdfview.js and page.js; the page never gets ready (probably the old copies no longer fit today's app)."},
+  {"suite": "test_strokeq", "crash": "waiting for locator(\"body[data-ready='1']\")", "why": "before/after measure: it swaps in an old ink.js from git; the page never gets ready (probably the old copy no longer fits today's app)."}
+]

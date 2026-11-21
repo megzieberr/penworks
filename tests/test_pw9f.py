@@ -8,6 +8,7 @@ import sys, subprocess, time, pathlib, re, math
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tests")); from swcache import SW_CACHE  # the cache name, read from sw.js
 PORT = 8829
 BASE = f"http://127.0.0.1:{PORT}/"
 LOCAL = BASE + "?local=1"
@@ -185,7 +186,7 @@ try:
         # ------------------------------------------------------------ the cache
         group[0] = "cache"
         swt = (ROOT / "sw.js").read_text(encoding="utf-8")
-        check("sw.js: CACHE pw-v9j and the pw-v9f version line", 'const CACHE = "pw-v9j";' in swt and "   pw-v9f (11 Nov): " in swt)
+        check(f"sw.js: CACHE {SW_CACHE} and the pw-v9f version line", f'const CACHE = "{SW_CACHE}";' in swt and "   pw-v9f (11 Nov): " in swt)
         b.close()
 finally:
     srv.terminate()

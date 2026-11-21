@@ -25,6 +25,7 @@ from PIL import Image, ImageDraw
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tests")); from swcache import SW_CACHE  # the cache name, read from sw.js
 PORT = 8821
 LOCAL = f"http://127.0.0.1:{PORT}/?local=1"
 SHOTS = ROOT / "_build" / "shots-u4c"
@@ -621,7 +622,7 @@ try:
         ctx2.close()
         check("no page errors (the whole run)", not errs, errs)
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        check("cache is pw-v9j", "pw-v9j" in keys, keys)
+        check(f"cache is {SW_CACHE}", SW_CACHE in keys, keys)
 
         ctx.close()
         b.close()

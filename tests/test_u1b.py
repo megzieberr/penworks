@@ -9,6 +9,7 @@ import sys, os, subprocess, time, pathlib, re
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tests")); from swcache import SW_CACHE  # the cache name, read from sw.js
 PORT = 8773
 BASE = f"http://127.0.0.1:{PORT}/"
 LOCAL = BASE + "?local=1"
@@ -402,7 +403,7 @@ try:
             st = pg.evaluate("(u)=>fetch(u).then(r=>r.status+' '+r.headers.get('content-type'))", ic["src"])
             check("icon " + ic["src"], st.startswith("200 image/png"), st)
         check("service worker registers and is active", pg.evaluate("navigator.serviceWorker.ready.then(r=>!!r.active)"))
-        check("cache is pw-v9f (share pages)", pg.evaluate("caches.keys()") == ["pw-v9f"] or "pw-v9f" in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
+        check(f"cache is {SW_CACHE} (share pages)", pg.evaluate("caches.keys()") == [SW_CACHE] or SW_CACHE in pg.evaluate("caches.keys()"), pg.evaluate("caches.keys()"))
         inst = ctx.new_cdp_session(pg).send("Page.getInstallabilityErrors")
         check("Chrome sees it as installable", not inst.get("installabilityErrors"), inst)
         pg.reload(); ready(pg); pg.wait_for_timeout(500)

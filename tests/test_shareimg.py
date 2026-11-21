@@ -19,6 +19,7 @@ from PIL import Image, ImageDraw
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tests")); from swcache import SW_CACHE  # the cache name, read from sw.js
 PORT = 8827
 BASE = f"http://127.0.0.1:{PORT}/"
 LOCAL = BASE + "?local=1"
@@ -188,7 +189,7 @@ try:
         rest = json.loads(raw); rest["share_target"]["params"].pop("files", None)
         check("nothing else in the manifest changed", rest == OLD_MANIFEST, rest)
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
-        check("sw.js CACHE is pw-v9e, with the pw-v9d version line in the head", 'const CACHE = "pw-v9e";' in swt and "   pw-v9d (7 Nov): " in swt)
+        check(f"sw.js CACHE is {SW_CACHE}, with the pw-v9d version line in the head", f'const CACHE = "{SW_CACHE}";' in swt and "   pw-v9d (7 Nov): " in swt)
         check("the page is controlled by the service worker", pg.evaluate("!!navigator.serviceWorker.controller"))
 
         # ------------------------------------------------------------ (a) one picture: the list of one, the sheet
@@ -440,9 +441,9 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v9e" not in keys:
+        if SW_CACHE not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v9e", "pw-v9e" in keys, keys)
+        check(f"cache is {SW_CACHE}", SW_CACHE in keys, keys)
         check("the only POSTs were the shares, all to the share-target action", posts and all("/share-target/" in u for u in posts), posts)
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in
                        ["./js/app.js", "./js/pdfin.js", "./js/ink.js", "./sw.js", "./manifest.json", "./tests/test_shareimg.py", "./tests/test_u4b.py"])

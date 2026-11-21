@@ -8,6 +8,7 @@ import sys, subprocess, time, pathlib, re, json, base64
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tests")); from swcache import SW_CACHE  # the cache name, read from sw.js
 PORT = 8792
 BASE = f"http://127.0.0.1:{PORT}/"
 LOCAL = BASE + "?local=1"
@@ -248,9 +249,9 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v9n" not in keys:
+        if SW_CACHE not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v9n", "pw-v9n" in keys, keys)
+        check(f"cache is {SW_CACHE}", SW_CACHE in keys, keys)
         check("the only POSTs were the shares, all to the share-target action", posts and all("/share-target/" in u for u in posts), posts)
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in
                        ["./js/app.js", "./js/pdfin.js", "./js/local-backend.js", "./css/app.css", "./sw.js", "./manifest.json", "./tests/test_u4b.py"])

@@ -161,7 +161,7 @@ try:
         open_panel(pg)
         rows = pg.evaluate("[...document.querySelectorAll('#toolsPanel .trow')].map((b) => [b.textContent.trim(), b.disabled, b.title, b.getAttribute('aria-pressed')])")
         check("still four rows in order (Ruler, Compass, Protractor, Axes…); the Protractor row is live, unpressed; Axes… is live (U5e)",
-              [r[0] for r in rows] == ["Ruler", "Compass", "Protractor", "Axes…"] and rows[2][1] is False and rows[2][2] == "" and rows[2][3] == "false"
+              [r[0] for r in rows] == ["Ruler", "Compass", "Protractor", "Axes…", "Graph…"] and rows[2][1] is False and rows[2][2] == "" and rows[2][3] == "false"
               and rows[3][1] is False, rows)
         sb = pg.evaluate("""() => { const row = document.getElementById('trow-protractor'), line = row.parentElement;
           return { line: line.className, kids: [...line.children].map((e) => e.id), aria: [...line.querySelectorAll('.tsz')].map((e) => [e.textContent, e.getAttribute('aria-label')]),

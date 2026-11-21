@@ -9,6 +9,7 @@ import sys, subprocess, time, pathlib
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tests")); from swcache import SW_CACHE  # the cache name, read from sw.js
 PORT = 8793
 BASE = f"http://127.0.0.1:{PORT}/"
 LOCAL = BASE + "?local=1"
@@ -251,9 +252,9 @@ try:
         group[0] = "cache"
         pg.evaluate("navigator.serviceWorker.ready"); pg.wait_for_timeout(300)
         keys = pg.evaluate("caches.keys()")
-        if "pw-v8r" not in keys:
+        if SW_CACHE not in keys:
             pg.reload(); ready(pg); pg.wait_for_timeout(600); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v8r", "pw-v8r" in keys, keys)
+        check(f"cache is {SW_CACHE}", SW_CACHE in keys, keys)
         ctx.close()
         b.close()
 finally:

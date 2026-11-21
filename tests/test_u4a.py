@@ -12,6 +12,7 @@ import fitz
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tests")); from swcache import SW_CACHE  # the cache name, read from sw.js
 PORT = 8791
 BASE = f"http://127.0.0.1:{PORT}/"
 LOCAL = BASE + "?local=1"
@@ -208,7 +209,7 @@ try:
               and pg.evaluate(SIZE_JS) == [a4()], [rb, pg.evaluate(SIZE_JS)])
         pg.click("#addPageBtn"); pg.wait_for_timeout(60)
         items = pg.evaluate("[...document.querySelectorAll('#menu button')].map(b => b.textContent)")
-        check("in a note the bar's + opens Page, PDF and Image", items == ["Page", "PDF", "Image"], items)   # U4c: Image is the third item
+        check("in a note the bar's + opens Page, PDF and Image", items == ["Page", "PDF", "Image", "Sticky"], items)   # U4c: Image is the third item
         menu(pg, "Page"); pg.wait_for_timeout(80)
         check("Page adds a page below, as before", len(rows(pg, blank)) == 2)
         back(pg)
@@ -553,12 +554,12 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v9c" not in keys:
+        if SW_CACHE not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v9c", "pw-v9c" in keys, keys)
+        check(f"cache is {SW_CACHE}", SW_CACHE in keys, keys)
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the shell lists pdfin.js, pdfview.js and both pdf.js files", all(x in swt for x in ["./js/pdfin.js", "./js/pdfview.js", "./vendor/pdf.min.mjs", "./vendor/pdf.worker.min.mjs"]))
-        shell = pg.evaluate("""async () => { const c = await caches.open('pw-v9c'); const out = [];
+        shell = pg.evaluate("""async () => { const c = await caches.open('""" + SW_CACHE + """'); const out = [];
           for (const u of ['./vendor/pdf.min.mjs', './vendor/pdf.worker.min.mjs', './js/pdfin.js', './js/pdfview.js']) out.push(!!(await c.match(u))); return out; }""")
         check("... and they are in the cache (PDF pages draw offline)", shell == [True] * 4, shell)
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in

@@ -10,6 +10,7 @@ import sys, os, subprocess, time, pathlib, re, json
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tests")); from swcache import SW_CACHE  # the cache name, read from sw.js
 PORT = 8782
 BASE = f"http://127.0.0.1:{PORT}/"
 LOCAL = BASE + "?local=1"
@@ -306,9 +307,9 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "pwa and house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v8q" not in keys:
+        if SW_CACHE not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v8q", "pw-v8q" in keys, keys)
+        check(f"cache is {SW_CACHE}", SW_CACHE in keys, keys)
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("the shell lists ./js/snap.js", "./js/snap.js" in swt)
         check("Supabase (its /storage/ too) is never cached: other origins go straight to the network", "url.origin !== location.origin" in swt)

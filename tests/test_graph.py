@@ -35,6 +35,7 @@ from PIL import Image
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tests")); from swcache import SW_CACHE  # the cache name, read from sw.js
 PORT = 8832
 LOCAL = f"http://127.0.0.1:{PORT}/?local=1"
 SHOTS = ROOT / "_build" / "graph" / "unit2"
@@ -2226,8 +2227,8 @@ try:
         g_req = [u for u in reqs if "caveat" in u.lower() and ("googleapis" in u or "gstatic" in u)]
         own = [u for u in reqs if u.endswith("/fonts/caveat-500.woff2")]
         check("no request ever asked Google for Caveat; the app's own file was fetched", g_req == [] and own, [g_req, own[:2]])
-        check("sw.js: CACHE pw-v9q, its version line, and graph.js, caveat-glyphs.js and the font in the shell",
-              'const CACHE = "pw-v9q";' in swt and "   pw-v9q (20 Nov): " in swt and all(f in swt for f in ['"./js/graph.js"', '"./js/caveat-glyphs.js"', '"./fonts/caveat-500.woff2"']))
+        check(f"sw.js: CACHE {SW_CACHE}, its version line, and graph.js, caveat-glyphs.js and the font in the shell",
+              f'const CACHE = "{SW_CACHE}";' in swt and "   pw-v9q (20 Nov): " in swt and all(f in swt for f in ['"./js/graph.js"', '"./js/caveat-glyphs.js"', '"./fonts/caveat-500.woff2"']))
         check("no page errors", not errs, errs)
         ctx.close()
         b.close()

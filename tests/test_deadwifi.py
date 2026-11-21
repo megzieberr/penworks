@@ -15,11 +15,12 @@ from functools import partial
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tests")); from swcache import SW_CACHE  # the cache name, read from sw.js
 PORT, PROXY = 8793, 8794
 BASE = f"http://127.0.0.1:{PORT}/"
 LOCAL = BASE + "?local=1"
 SB_JS = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm"
-VERSION = "pw-v9n"
+VERSION = SW_CACHE
 
 res = []
 group = ["?"]

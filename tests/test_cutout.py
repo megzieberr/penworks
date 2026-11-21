@@ -22,6 +22,7 @@ from PIL import Image, ImageDraw, ImageFilter
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tests")); from swcache import SW_CACHE  # the cache name, read from sw.js
 PORT = 8828
 LOCAL = f"http://127.0.0.1:{PORT}/?local=1"
 SHOTS = ROOT / "_build" / "cutout" / "shots"
@@ -532,9 +533,9 @@ try:
         group[0] = "N. files"
         check("no page errors", not errs, errs)
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        check("cache is pw-v9j", "pw-v9j" in keys, keys)
+        check(f"cache is {SW_CACHE}", SW_CACHE in keys, keys)
         swt = pg.evaluate("fetch('./sw.js').then(r => r.text())")
-        check("sw.js: CACHE pw-v9j, its version line, and js/cutout.js in the shell", 'const CACHE = "pw-v9j";' in swt and "   pw-v9e (7 Nov): " in swt and '"./js/cutout.js"' in swt)
+        check(f"sw.js: CACHE {SW_CACHE}, its version line, and js/cutout.js in the shell", f'const CACHE = "{SW_CACHE}";' in swt and "   pw-v9e (7 Nov): " in swt and '"./js/cutout.js"' in swt)
         src = pg.evaluate("fetch('./js/cutout.js').then(r => r.text())")
         code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("//"))
         check("js/cutout.js asks nothing of the network (no fetch, no http, no XMLHttpRequest, no WebSocket, no import())",

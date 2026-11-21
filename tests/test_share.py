@@ -12,6 +12,7 @@ import fitz
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tests")); from swcache import SW_CACHE  # the cache name, read from sw.js
 PORT = 8792
 LOCAL = f"http://127.0.0.1:{PORT}/?local=1"
 TMP = pathlib.Path(tempfile.mkdtemp(prefix="pw-share-"))
@@ -281,9 +282,9 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v9n" not in keys:
+        if SW_CACHE not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v9n", "pw-v9n" in keys, keys)
+        check(f"cache is {SW_CACHE}", SW_CACHE in keys, keys)
         srcs = "".join(pg.evaluate("(u) => fetch(u).then(r => r.text())", u) for u in ["./js/app.js", "./css/app.css", "./sw.js", "./tests/test_share.py"])
         check("no em-dashes in the changed files", chr(0x2014) not in srcs)
         labels = ["Send", "Save", "Share note", "Share page", "Shared", "Could not open the share sheet, Save instead", "Ready: "]

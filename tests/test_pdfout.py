@@ -23,6 +23,7 @@ from scipy.ndimage import distance_transform_edt
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tests")); from swcache import SW_CACHE  # the cache name, read from sw.js
 PORT = 8794
 LOCAL = f"http://127.0.0.1:{PORT}/?local=1"
 OUT = ROOT / "_build" / "out"; OUT.mkdir(parents=True, exist_ok=True)
@@ -382,9 +383,9 @@ try:
         # ------------------------------------------------------------ house rules
         group[0] = "house rules"
         keys = pg.evaluate("navigator.serviceWorker.ready.then(() => caches.keys())")
-        if "pw-v9m" not in keys:
+        if SW_CACHE not in keys:
             pg.wait_for_timeout(1500); keys = pg.evaluate("caches.keys()")
-        check("cache is pw-v9m", "pw-v9m" in keys, keys)
+        check(f"cache is {SW_CACHE}", SW_CACHE in keys, keys)
         sw = pg.evaluate("fetch('./sw.js').then(r => r.text())")
         check("sw.js keeps vendor/pdf-lib.min.js and js/pdfout.js for offline, and no jsPDF", "./vendor/pdf-lib.min.js" in sw and "./js/pdfout.js" in sw and "jspdf" not in sw)
         st = pg.evaluate("Promise.all(['./vendor/pdf-lib.min.js', './vendor/jspdf.umd.min.js'].map(u => fetch(u, { cache: 'no-store' }).then(r => r.status)))")

@@ -14,6 +14,7 @@ sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tests")); from swcache import SW_CACHE  # the cache name, read from sw.js
 PORT = 8831
 APP = f"http://127.0.0.1:{PORT}/"
 BARE = f"http://127.0.0.1:{PORT}/__gate_test.html"      # an empty page on the app's origin (answered by a route below)
@@ -311,7 +312,7 @@ tmpd.rmdir()
 # ------------------------------------------------------------ sw.js and the files
 group[0] = "F. files"
 swt = (ROOT / "sw.js").read_text(encoding="utf-8")
-check("13. sw.js: CACHE pw-v9j and the pw-v9h version line", 'const CACHE = "pw-v9j";' in swt and "   pw-v9h (13 Nov): " in swt)
+check(f"13. sw.js: CACHE {SW_CACHE} and the pw-v9h version line", f'const CACHE = "{SW_CACHE}";' in swt and "   pw-v9h (13 Nov): " in swt)
 check("sw.js has no BOM", not (ROOT / "sw.js").read_bytes().startswith(b"\xef\xbb\xbf"))
 touched = ["js/api.js", "sw.js", "supabase/migrations/0008_login_gate.sql", "tools/arm_gate.py", "tools/README-gate.md", "tests/test_gate.py"]
 check("no em-dashes in the files this round touched", all(chr(0x2014) not in (ROOT / f_).read_text(encoding="utf-8") for f_ in touched))
