@@ -209,7 +209,7 @@ try:
         want = [HERS[1], HERS[2], HERS[0]] + HERS[3:]
         check("set-up: pen width 3.5, Green two places down", tray(pg)["pen"]["width"] == 3.5 and pg.evaluate(SW_JS) == want, [tray(pg)["pen"], pg.evaluate(SW_JS)])
         early = pg.evaluate(PROFILE_JS)["settings"]
-        pg.wait_for_timeout(2000)
+        pg.wait_for_timeout(11000)                         # pw-v9t: the save goes 10 s after the last change
         s = pg.evaluate(PROFILE_JS)["settings"]; loc = pg.evaluate(LOCALTRAY_JS)
         check("not sent at once (the second after the last change)", "tray" not in early or early["tray"]["order"] != want, early)
         check("2 s later the profile's settings.tray holds the width and the order", s.get("tray", {}).get("pen", {}).get("width") == 3.5
@@ -274,7 +274,7 @@ try:
         pg.evaluate("window.__pw.api.failNext(1)")
         open_note(pg, "Marks")
         width_bigger(pg, 1)
-        pg.wait_for_timeout(1500)
+        pg.wait_for_timeout(10500)                         # pw-v9t: 10 s
         s = pg.evaluate(PROFILE_JS)["settings"]; pend = pg.evaluate("window.__pw.trayPending()")
         check("the first try failed: the database still has the old copy, the change waits", s["tray_at"] == before and pend["next"] and pend["timer"], [s, pend])
         check("no toast, the save dot untouched (saved)", not pg.evaluate("document.getElementById('toast').classList.contains('show')")
@@ -284,7 +284,7 @@ try:
         check("nothing left pending", pg.evaluate("window.__pw.trayPending()") == {"next": False, "busy": False, "timer": False}, pg.evaluate("window.__pw.trayPending()"))
         # offline: the retry also goes on `online`
         pg.evaluate("window.__pw.api.failNext(1)")
-        width_bigger(pg, 1); pg.wait_for_timeout(1300)
+        width_bigger(pg, 1); pg.wait_for_timeout(10300)   # pw-v9t: 10 s
         pg.evaluate("window.dispatchEvent(new Event('online'))")
         ok = until(pg, lambda: pg.evaluate(PROFILE_JS)["settings"]["tray"]["pen"]["width"] == 5, 600)
         check("a failed save goes again on `online` (before the 2 s retry)", ok, pg.evaluate(PROFILE_JS)["settings"]["tray"]["pen"])

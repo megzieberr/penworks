@@ -2051,9 +2051,9 @@ function takeOverBookmarks() {
 // profiles.settings = { tray: <what tray.js keeps>, tray_at: <ISO stamp> }; this device keeps the same with its own
 // tray_at. At start the database's copy wins only when it is newer: both stamps there and the database's later, or no
 // copy on this device at all. A copy here without a stamp (saved before U3c, or a test's seed) wins over the database.
-// Every tray change goes up a second after the last one, one update in flight, retried (2, 5, 10, 30 s, and on
-// `online`) until it lands. No dot, no toast: the tray state is a convenience, not her ink.
-const TRAY_MS = 1000, TRAY_BACKOFF = [2000, 5000, 10000, 30000];
+// Every tray change goes up 10 s after the last one or at once when the app is hidden (pw-v9t; it was 1 s), one update
+// in flight, retried (2, 5, 10, 30 s, and on `online`) until it lands. No dot, no toast: the tray state is a convenience.
+const TRAY_MS = 10000, TRAY_BACKOFF = [2000, 5000, 10000, 30000];
 const later = (a, b) => Date.parse(a) > Date.parse(b);
 let trayNext = null, trayT = null, trayBusy = false, trayTries = 0;
 function trayFrom(profile) {
@@ -2082,6 +2082,10 @@ async function trayFlush() {
   trayT = setTimeout(trayFlush, ok ? 0 : TRAY_BACKOFF[Math.min(trayTries++, TRAY_BACKOFF.length - 1)]);
 }
 addEventListener('online', () => { if (trayNext && !trayBusy) { clearTimeout(trayT); trayFlush(); } });
+// pw-v9t: hidden or closing: a waiting tray change goes now (one already in flight: the next goes when it lands)
+function trayNow() { if (trayNext) { clearTimeout(trayT); trayT = null; trayFlush(); } }
+document.addEventListener('visibilitychange', () => { if (document.hidden) trayNow(); });
+addEventListener('pagehide', trayNow);
 
 async function enter(user) {
   S.user = user;

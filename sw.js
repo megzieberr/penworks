@@ -40,9 +40,10 @@
    pw-v9q (20 Nov): the quick graph's exponential row (growth, decay, −growth, −decay) on its own line: lands on plain axes (the x-axis low, or high for the two below it); its dashed sideways asymptote shows once the curve is slid up or down and travels with it.
    pw-v9r (21 Nov): the app opens from the notes this tablet kept at once, and the fresh copy from the database is merged in when it lands; the bin is emptied after the first draw.
    pw-v9s (21 Nov): opening a note reads the ink only of pages that changed since this tablet last read them, and a long note's ink is read 100 pages at a time.
+   pw-v9t (21 Nov): a tray change goes to the database 10 seconds after the last one, or at once when the app is hidden; the tablet keeps it at once, as before.
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v9s";
+const CACHE = "pw-v9t";
 const SHARE_DB = "penworks.share";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",

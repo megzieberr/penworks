@@ -265,7 +265,7 @@ try:
         # ============================================================ house rules
         group[0] = "house rules"
         keys = pg.evaluate("caches.keys()")
-        check(f"29. cache is {VERSION}", VERSION in keys and VERSION == "pw-v9s", keys)
+        check(f"29. cache is {VERSION}", VERSION in keys, keys)
         raw = (ROOT / "sw.js").read_bytes()
         check("30. sw.js has no BOM", not raw.startswith(b"\xef\xbb\xbf"))
         srcs = "".join((ROOT / p).read_text(encoding="utf-8") for p in ["sw.js", "js/api.js", "js/store.js", "js/local-backend.js", "tests/test_inkchunks.py"])

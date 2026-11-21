@@ -343,6 +343,7 @@ try:
         check("... and the pen then draws Amber", r and r["kind"] == "pen" and r["style"]["colour"] == "#FFC107", r and r["style"])
         # the same row from the database (profiles.settings.tray), newer than the device's copy
         pg.evaluate("(v) => localStorage.setItem('pw.tools', JSON.stringify(v))", dict(OLD, tool="pen", pen=dict(OLD["pen"], colour="#0D0DFF"), tray_at="2026-10-20T00:00:00.000Z"))
+        pg.evaluate("window.dispatchEvent(new Event('pagehide'))")   # pw-v9t: the pen tap above goes up now, before the row below
         pg.evaluate("([t, at]) => window.__pw.api.setSettings({ tray: t, tray_at: at })", [OLD, "2026-10-28T00:00:00.000Z"])
         pg.reload(); ready(pg)
         try: pg.wait_for_function("() => window.__pw.tray().pen.colour !== '#0D0DFF'", timeout=4000)
