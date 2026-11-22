@@ -436,6 +436,8 @@ try:
               const c = document.createElement('canvas'); c.width = bm.width; c.height = bm.height; const g = c.getContext('2d'); g.drawImage(bm, 0, 0);
               return [bm.width, ...pts.map((p) => [...g.getImageData(Math.round(p[0]), Math.round(p[1]), 1, 1).data.slice(0, 3)])]; }""", [out_pt, blk_pt])
             return got if got[0] == W and is_paper(got[1]) and max(got[2]) < 140 else None
+        pg.evaluate("""() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+          document.dispatchEvent(new Event('visibilitychange')); delete document.hidden; }""")   # pw-v9u: hidden, the picture goes at once (not 30 s)
         sp = until(pg, snap_px, 25000, 300)
         check("the U3b page picture (snap.js, the one Claude reads) after Done: the paper through the hole, the block there", sp, sp)
         open_list(pg)

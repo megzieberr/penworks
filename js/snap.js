@@ -4,8 +4,8 @@
 // The first live page's picture is the note's cover (notes.cover_path), which the note grid shows.
 //
 // When a page is DUE:
-//   (a) its ink changed on THIS device (ink.js onChange: a stroke drawn, erased, undone), and 4 s have passed since the
-//       last change on that page; a push of its strokes landing (store.js onPushed) makes it due too, still 4 s after its
+//   (a) its ink changed on THIS device (ink.js onChange: a stroke drawn, erased, undone), and 30 s have passed since the
+//       last change on that page; a push of its strokes landing (store.js onPushed) makes it due too, still 30 s after its
 //       last change. U3d: a change that came from the database (a live row from another device, or a reconcile's swap)
 //       is { remote: true } and makes nothing due: the device that wrote it makes the picture;
 //   (b) at startup and on every `online`: any live page whose updated_at is newer than its snapshot_at, or that has no
@@ -21,10 +21,12 @@
 // (api.setSnapshot), writing snapshot_at = the database's 'now', the same instant the trigger gives updated_at. A stroke
 // that lands during the render changes updated_at first: the update finds no row and the page is due again.
 
-const QUIET_MS = 4000;
+// pw-v9u: 30 s after the last ink, or at once when she leaves the page or the app is hidden (flush); 4 s after a lift
+const QUIET_MS = 30000;
+const LIFT_MS = 4000;
 // U4a: a page made from a PDF page shows the PDF even with no ink, so it has something to picture (Claude and the phone
 // see the paper behind the ink); renderPage draws the PDF under the ink, and fails (tried again later) while this device
-// does not have the PDF yet
+// does not have the PDF yet. pw-v9u: only the note's first page (the cover) is pictured with no ink on it
 const live0 = (p) => !!(p && p.pdf_path);
 const BACKOFF = [2000, 5000, 10000, 30000];
 const LIFT_POLL = 250;
@@ -40,12 +42,15 @@ const cfg = {
 const due = new Map();         // page id -> the earliest time (ms) it may be drawn
 const lastInk = new Map();     // page id -> the time of its last ink change
 const coverDirty = new Set();  // note ids whose cover_path has not reached the database yet
+const hurry = new Set();       // pw-v9u: page ids flushed (or asked for soon): no quiet wait for them
 let timer = 0, running = false, waitLift = false, holdUntil = 0, tries = 0, told = false;
 const stats = { renders: 0, uploads: 0, bytes: 0, renderMs: 0, failures: 0, skipped: 0 };
 
 export function initSnap(o) {
   Object.assign(cfg, o);
   addEventListener('online', () => { holdUntil = 0; scan(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });   // pw-v9u
+  addEventListener('pagehide', () => flush());
 }
 
 // ---------------------------------------------------------------- what makes a page due
@@ -53,12 +58,24 @@ export function changed(pageId, how) {
   if (how && how.remote) return;                       // U3d: another device's ink, its own device pictures it
   const t = Date.now();
   lastInk.set(pageId, t);
+  hurry.delete(pageId);
   due.set(pageId, t + QUIET_MS);
   arm();
 }
+const quietAt = (pageId) => hurry.has(pageId) ? Date.now() : Math.max(Date.now(), (lastInk.get(pageId) || 0) + QUIET_MS);
 export function pushed(pageId) {
-  due.set(pageId, Math.max(Date.now(), (lastInk.get(pageId) || 0) + QUIET_MS));
+  due.set(pageId, quietAt(pageId));
   arm();
+}
+// pw-v9u: a page's picture now, not after the quiet time (a new PDF note's cover)
+export function soon(pageId) {
+  hurry.add(pageId);
+  due.set(pageId, Date.now());
+  arm();
+}
+// pw-v9u: she left the page (or the note), or the app is hidden: every waiting page except `keep` (the page she is on) goes now
+export function flush(keep) {
+  for (const id of [...due.keys()]) if (id !== keep) soon(id);
 }
 // rule (b), and every note's cover checked against its first page
 export function scan() {
@@ -144,7 +161,7 @@ async function work() {
       if (cfg.ink.busy()) { waitLift = true; break; }
       if (waitLift) {                                          // the pen just lifted: 4 s from now
         waitLift = false;
-        const t = Date.now() + QUIET_MS;
+        const t = Date.now() + LIFT_MS;
         for (const [id, v] of due) due.set(id, Math.max(v, t));
         continue;
       }
@@ -154,7 +171,7 @@ async function work() {
     running = false;
     if (waitLift && !cfg.ink.busy()) {                         // lifted while the worker was busy
       waitLift = false;
-      const t = Date.now() + QUIET_MS;
+      const t = Date.now() + LIFT_MS;
       for (const [id, v] of due) due.set(id, Math.max(v, t));
     }
     arm();
@@ -177,7 +194,8 @@ async function one(pid) {
   try {
     const recs = cfg.store.known(pid) ? null : await cfg.api.strokesOf([pid]);   // a page this device has not read
     const count = recs ? recs.length : cfg.ink.strokesOf(pid).length;
-    if (!count && !p.snapshot_at && !live0(p)) { stats.skipped++; return 'skip'; }   // nothing on it and no picture to replace
+    const top = cfg.pagesOf(p.note_id)[0], cover = !!top && top.id === pid;
+    if (!count && !p.snapshot_at && !(live0(p) && cover)) { stats.skipped++; hurry.delete(pid); return 'skip'; }   // nothing on it and no picture to replace
     const at = await cfg.api.pageStamp(pid);
     if (!at) return 'skip';                                    // its row is not there (deleted, or not made yet)
     await idleSlot();
@@ -198,9 +216,10 @@ async function one(pid) {
     tries = 0; told = false; holdUntil = 0;
     stats.uploads++; stats.bytes = blob.size;
     if (!stamp) {                                              // a stroke (or a move) landed during the render
-      if (!due.has(pid)) due.set(pid, Math.max(Date.now(), (lastInk.get(pid) || 0) + QUIET_MS));
+      if (!due.has(pid)) due.set(pid, quietAt(pid));
       return 'again';
     }
+    hurry.delete(pid);
     const now = cfg.page(pid);
     if (!now) return 'done';
     now.snapshot_path = path; now.snapshot_at = stamp; now.updated_at = stamp;

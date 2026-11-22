@@ -33,6 +33,9 @@ SEED_JS = """() => {
     pages: [P('c1', 'n1', 0), P('c2', 'n1', 1), P('c3', 'n1', 2), P('t1', 'n2', 0), P('o1', 'n3', 0), P('r1', 'n4', 0), P('g1', 'n5', 0), P('s1', 'n6', 0), P('e1', 'n7', 0)] }));
 }"""
 ROW_JS = "async ([t, id]) => (await window.__pw.api.loadAll())[t].find(r => r.id === id) || null"
+# pw-v9u: the app hidden for a moment, so a waiting picture goes at once (no 30 s wait)
+HIDE_JS = """() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+  document.dispatchEvent(new Event('visibilitychange')); delete document.hidden; }"""
 
 def ready(pg): pg.wait_for_selector("body[data-ready='1']", timeout=20000)
 def idle(pg): pg.evaluate("window.__pw.idle()"); pg.wait_for_timeout(40)
@@ -109,11 +112,12 @@ try:
         check("the bucket starts empty", bucket(pg) == [], bucket(pg))
         open_note(pg, "Cover")
         for y in (150, 250, 350): draw(pg, 1, y, wave=12)
-        idle(pg); t0 = time.time()
+        idle(pg); pg.wait_for_timeout(3000)
+        check("not before the quiet time (3 s after: nothing)", not has(pg, "c1"), bucket(pg))   # pw-v9u: 30 s, or a page change
+        go_page(pg, 2); t0 = time.time()
         ok = until(pg, lambda: has(pg, "c1"), 6000)
         dt = time.time() - t0
-        check("draw on page 1, idle(): within 6 s the bucket has local/c1.webp", ok, [bucket(pg), round(dt, 2)])
-        check("not before the 4 s quiet time", dt > 3.0, round(dt, 2))
+        check("draw on page 1, turn to page 2: within 6 s the bucket has local/c1.webp", ok, [bucket(pg), round(dt, 2)])
         r = row(pg, "pages", "c1")
         check("the page row: snapshot_path local/c1.webp, snapshot_at set", r["snapshot_path"] == "local/c1.webp" and r["snapshot_at"], r)
         check("snapshot_at = updated_at (the database's clock pair says fresh)", r["snapshot_at"] == r["updated_at"], [r["snapshot_at"], r["updated_at"]])
@@ -132,6 +136,7 @@ try:
         group[0] = "second page"
         go_page(pg, 2)
         draw(pg, 2, 200, wave=10); idle(pg)
+        go_page(pg, 1)                                   # pw-v9u: leaving the page makes its picture at once
         ok = until(pg, lambda: has(pg, "c2"), 6500)
         check("draw on page 2: a second object, local/c2.webp", ok and len(bucket(pg)) == 2, bucket(pg))
         check("the cover is still page 1's", cover(pg, "n1") == "local/c1.webp", cover(pg, "n1"))
@@ -155,10 +160,10 @@ try:
         check("delete the first page: the new first (no picture yet) makes the cover null",
               until(pg, lambda: cover(pg, "n1") is None, 3000), cover(pg, "n1"))
         pg.click("#undoBtn"); idle(pg)
+        back(pg)                                         # pw-v9u: leaving the note makes the picture at once
         check("undo: page 2 is back on top; its picture is made again and the cover follows",
               until(pg, lambda: cover(pg, "n1") == "local/c2.webp", 7000), [cover(pg, "n1"), row(pg, "pages", "c2")])
         check("the restored row has its picture again", (row(pg, "pages", "c2") or {}).get("snapshot_path") == "local/c2.webp")
-        back(pg)
 
         # ------------------------------------------------------------ the 4 s timer resets on a change
         group[0] = "quiet timer"
@@ -166,10 +171,10 @@ try:
         draw(pg, 1, 150); t0 = time.time()
         pg.wait_for_timeout(2000)
         draw(pg, 1, 250)
-        while time.time() - t0 < 5.0: pg.wait_for_timeout(50)
-        check("draw, 2 s, draw: at 5 s there is still no object", not has(pg, "t1"), bucket(pg))
-        ok = until(pg, lambda: has(pg, "t1"), max(100, int((t0 + 7.0 - time.time()) * 1000)))
-        check("at 7 s there is one", ok, round(time.time() - t0, 2))
+        while time.time() - t0 < 31.0: pg.wait_for_timeout(100)   # pw-v9u: 30 s quiet
+        check("draw, 2 s, draw: at 31 s there is still no object", not has(pg, "t1"), bucket(pg))
+        ok = until(pg, lambda: has(pg, "t1"), max(100, int((t0 + 34.0 - time.time()) * 1000)))
+        check("at 34 s there is one", ok, round(time.time() - t0, 2))
         back(pg)
 
         # ------------------------------------------------------------ offline
@@ -180,10 +185,10 @@ try:
         pg.wait_for_timeout(6000)
         check("offline: draw, 6 s later no object", not has(pg, "o1"), bucket(pg))
         check("the page is still due", "o1" in stats(pg)["due"], stats(pg))
+        back(pg)                                         # pw-v9u: she left the note while offline: it waits for the connection
         online(pg); t0 = time.time()
         ok = until(pg, lambda: has(pg, "o1"), 4000)
         check("online + the online event: within 4 s it is there", ok, round(time.time() - t0, 2))
-        back(pg)
 
         # ------------------------------------------------------------ a failed upload lands on the retry
         group[0] = "retry"
@@ -195,6 +200,7 @@ try:
         n_warn = len([w for w in warns if "could not be saved" in w])
         f0 = stats(pg)["failures"]
         pg.evaluate("window.__pw.api.failNext(1)")
+        pg.evaluate(HIDE_JS)                             # pw-v9u: hidden, the picture goes at once
         ok = until(pg, lambda: stats(pg)["failures"] > f0, 6000)
         check("failNext(1): the upload fails once", ok and not has(pg, "r1"), stats(pg))
         ok = until(pg, lambda: has(pg, "r1"), 5000)
@@ -214,20 +220,21 @@ try:
         k = 0
         while time.time() - t0 < 5.5:
             k += 1; xx, yy = screen(pg, 1, 100 + k * 3, 400 + (k % 7)); pg.mouse.move(xx, yy); pg.wait_for_timeout(100)
+            if k == 10: pg.evaluate(HIDE_JS)                # pw-v9u: the waiting picture is asked for now, mid-gesture
         busy = pg.evaluate("window.__pw.ink.busy()")
         check("a 5.5 s gesture (pen down, moving slowly, no lift): ink.busy()", busy)
         check("no render started meanwhile, the page waits", stats(pg)["renders"] == r0 and not has(pg, "g1") and "g1" in stats(pg)["due"], stats(pg))
         pg.mouse.up(); t1 = time.time()
-        ok = until(pg, lambda: has(pg, "g1"), 7000)
+        ok = until(pg, lambda: has(pg, "g1"), 36000)
         dt = time.time() - t1
-        check("after the lift: 4 s, then the picture", ok and dt > 3.0, round(dt, 2))
+        check("after the lift: the gesture is new ink, so 30 s, then the picture", ok and dt > 25.0, round(dt, 2))   # pw-v9u
         back(pg)
 
         # ------------------------------------------------------------ one real page, about 30 strokes
         group[0] = "size"
         open_note(pg, "Thirty")
         for k in range(30): draw(pg, 1, 80 + k * 33, 60 + (k % 3) * 20, 600 + (k % 5) * 30, wave=9)
-        idle(pg)
+        idle(pg); pg.evaluate(HIDE_JS)                   # pw-v9u: at once, not 30 s
         ok = until(pg, lambda: has(pg, "s1"), 7000)
         s = stats(pg)
         size_info = f"one page, 30 handwriting-like strokes (13 points each): {s['bytes']:,} bytes WebP, render {s['renderMs']} ms"
@@ -239,14 +246,14 @@ try:
         # pw-v6c: a written page keeps its shape, so the writing comes off first (its own new picture lands), the page
         # turns (the picture this group checks), then the writing goes back
         keep1 = pg.evaluate("window.__pw.ink.copyStrokes('s1')"); at_w = row(pg, "pages", "s1")["snapshot_at"]
-        pg.evaluate("() => window.__pw.ink.erasePageOp('s1').redo()"); idle(pg)
+        pg.evaluate("() => window.__pw.ink.erasePageOp('s1').redo()"); idle(pg); pg.evaluate(HIDE_JS)   # pw-v9u: hidden: at once
         until(pg, lambda: (row(pg, "pages", "s1") or {}).get("snapshot_at") != at_w, 7000)
         at0 = row(pg, "pages", "s1")["snapshot_at"]
-        pg.click("#noteMore"); menu(pg, "Landscape"); menu(pg, "Just this page"); idle(pg)
+        pg.click("#noteMore"); menu(pg, "Landscape"); menu(pg, "Just this page"); idle(pg); pg.evaluate(HIDE_JS)
         ok = until(pg, lambda: (row(pg, "pages", "s1") or {}).get("snapshot_at") != at0, 7000)
         check("Landscape for this page: a new picture within 7 s", ok, [at0, row(pg, "pages", "s1")["snapshot_at"]])
         at_l = row(pg, "pages", "s1")["snapshot_at"]
-        pg.evaluate("(r) => window.__pw.ink.put('s1', r)", keep1); idle(pg)
+        pg.evaluate("(r) => window.__pw.ink.put('s1', r)", keep1); idle(pg); pg.evaluate(HIDE_JS)
         until(pg, lambda: (row(pg, "pages", "s1") or {}).get("snapshot_at") != at_l, 7000)   # the written page's picture lands too
         dims = pg.evaluate("""async () => { const b = await window.__pw.api.getSnapshot('local/s1.webp'), bm = await createImageBitmap(b); return [bm.width, bm.height]; }""")
         check("landscape at 1x: 1123 x 794", dims == [1123, 794], dims)

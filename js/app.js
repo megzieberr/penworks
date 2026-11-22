@@ -294,7 +294,7 @@ function addPdfPages(nid, specs, isNew) {
   for (const r of rows) { S.pages.push(r); save('createPage', r); }
   touchNote(nid);
   pics.syncCover(nid);
-  if (rows.length && isNew) pics.changed(rows[0].id);      // U3b: the first page's picture (the PDF) becomes the note's cover
+  if (rows.length && isNew) pics.soon(rows[0].id);         // U3b (pw-v9u: now, no 30 s wait): the first page's picture (the PDF) becomes the note's cover
   if (isNew) openNote(nid, 0);
   else if (S.openNote === nid) { const i = pagesOf(nid).indexOf(rows[0]); render(); if (i >= 0) scrollToPage(i); }
   else render();
@@ -563,6 +563,7 @@ function closeNote(skipHistory) {
   crop.cancelCrop(false);                                           // pw-v9g
   closePanel(); ink.clearSelection();
   if (S.openNote) { delete S.hist[S.openNote]; tidyInk(); }    // closing a note ends its undo history
+  pics.flush();                                                // pw-v9u: leaving the note: its waiting pictures now
   S.openNote = null; S.listOpen = false; S.tick = null; S.renaming = null; remember();
   document.body.classList.remove('noteMode');
   if (!skipHistory && history.state && history.state.note) history.replaceState(null, '');
@@ -2021,6 +2022,7 @@ async function lateTree(d, gen) {
   lastLoad = Date.now();
   treeq.keepTree(d);
   await mergeTree(d);
+  pics.scan();                                              // pw-v9u: a picture the app was closed on (its stamps came with this read)
 }
 
 // U3c, once per device: bookmarks from pw-v4r were kept in localStorage (pw.bookmark.<page_id> = '1'). A page that is
@@ -2221,7 +2223,7 @@ function coverFresh(fresh) {
     const n = note(nid), first = pagesOf(nid)[0];
     if (n && liveNote(n) && !n.cover_path && first && came.has(first.id) && first.pdf_path && !first.snapshot_path) {
       treeStats.covers++;
-      pics.changed(first.id);
+      pics.soon(first.id);                                  // pw-v9u: now, no 30 s wait
     }
   }
 }
@@ -2363,7 +2365,8 @@ function wire() {
     up: (e, cancelled) => { const o = penOwner || ink.hook; penOwner = null; o.up(e, cancelled); },
     hover: (e) => { if (!stickyAt(e.clientX, e.clientY)) tools.hook.hover(e); ink.hook.hover(e); } };
   initPage({ desk: $('desk'), stack: $('stack'), addBelow: $('addBelow'),
-             onCurrent: (i) => { S.cur = Math.max(0, i); updateCount(); ink.clearSelection(); rememberPage(); },   // a new page: the selection clears
+             onCurrent: (i) => { S.cur = Math.max(0, i); updateCount(); ink.clearSelection(); rememberPage();   // a new page: the selection clears
+                                 pics.flush((pagesOf(S.openNote)[S.cur] || {}).id); },   // pw-v9u: the page she left gets its picture now
              onSheets: (sheets) => { ink.attach(sheets); pdfview.attach(sheets); tools.attach(sheets); crop.sheetsChanged(); }, onView: pdfview.view,
              // pw-v9c: the stickies' layers, a live resize, a strip tap (the menu), a finished move or resize (one undo step)
              onStickies: (els, sized) => { if (els.length) ink.attach(els); sized.forEach(([id, w]) => ink.fitLayer(id, w)); },
