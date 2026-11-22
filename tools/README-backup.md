@@ -32,4 +32,4 @@ and for each page: stroke count, the page picture and the PDF page. Or look the 
 ## Scheduled task
 `tools\backup_task.ps1` registers the "PenWorks Backup" task (run it once, by hand).
 
-There is no restore tool yet. The files hold everything a restore would need.
+To bring a note back from these files, use `tools\restore.py` (see `README-restore.md`): it makes a new copy, never overwrites.
