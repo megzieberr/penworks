@@ -173,8 +173,14 @@ function toast(msg, ms = 2600, opt = null) {
     } }, act.label));
   }
   t.classList.add('show');
-  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show', 'act'), ms);
+  clearTimeout(toastT); toastT = Number.isFinite(ms) ? setTimeout(() => t.classList.remove('show', 'act'), ms) : null;   // pw-v9v: Infinity = until tapped
 }
+// pw-v9v: the ink queue's two notices (js/store.js onNotice), each up until she taps OK
+const INK_NOTICE = {
+  slow: 'Some ink has not saved for 5 minutes. It is safe on this tablet. Keep PenWorks open on wifi.',
+  parked: 'Some changes could not be saved yet. They are kept on this tablet and tried again.',
+};
+function inkNotice(kind) { if (INK_NOTICE[kind]) toast(INK_NOTICE[kind], Infinity, { action: { label: 'OK', fn: () => {} } }); }
 
 // ---------------------------------------------------------------- autosave: one named api call per change, queued
 // U3e: save('createPage', p) queues api.createPage(p) in the tree queue (js/treeq.js): kept on the device, sent in order,
@@ -2096,7 +2102,7 @@ async function enter(user) {
   // U3e: the tree queue first; the stroke queue waits for it (a new page's row reaches the database before its strokes)
   treeq.init({ mode: api.mode, userId: user.id, api, onState: dotFrom('tree'), onDrop: treeDropped });
   store.init({ mode: api.mode, userId: user.id, api, idle: () => treeq.gate(), onRemote: ink.replace, onState: dotFrom('ink'),
-               onPushed: (id) => pics.pushed(anchorOf(id)) });   // pw-v9c: a sticky's ink is its page's picture
+               onPushed: (id) => pics.pushed(anchorOf(id)), onNotice: inkNotice });   // pw-v9c: a sticky's ink is its page's picture
   pdfin.initPdf({ mode: api.mode, userId: user.id, api, toast, makeNote: makePdfNote, addPages: addPdfPages,
                  onBytes: (path) => { pdfview.bytesArrived(); ink.bytesArrived(path); }, placeImage: ink.placeImage });   // U4c: pictures too
   pics.initSnap({ api, store, ink, owner: () => user.id, pages: () => S.pages.filter((p) => !isSticky(p)),   // pw-v9c: pictures are of pages only
@@ -2268,7 +2274,7 @@ async function mergeTree(d) {
 }
 
 // the save dot (U3a) beside the dark-mode toggle: grey saved, blue saving, amber waiting, red refused. No text, no toast.
-const DOT_TITLE = { saved: () => 'All saved', saving: () => 'Saving', refused: () => 'A change was refused, see the console',
+const DOT_TITLE = { saved: () => 'All saved', saving: () => 'Saving', refused: () => 'Not saved yet. Your ink is kept on this tablet.',
                     waiting: (n) => `Waiting for a connection, ${n} ${n === 1 ? 'change' : 'changes'} to send` };
 // Two dots, the same state: one in the folder view's footer, one in the note bar (the footer is hidden while she writes).
 // U3e: one dot for both queues (ink and tree): refused if either says so, else saving if either is pushing, else

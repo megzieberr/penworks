@@ -42,9 +42,10 @@
    pw-v9s (21 Nov): opening a note reads the ink only of pages that changed since this tablet last read them, and a long note's ink is read 100 pages at a time.
    pw-v9t (21 Nov): a tray change goes to the database 10 seconds after the last one, or at once when the app is hidden; the tablet keeps it at once, as before.
    pw-v9u (22 Nov): a page's picture is made 30 seconds after the last ink, or at once when she leaves the page or the app is hidden; a PDF page with no ink gets none, except a note's first page.
+   pw-v9v (22 Nov): a change the database refuses is kept aside on the tablet and tried again, so the rest of the ink still saves; a plain note when ink waits 5 minutes or a change is kept aside.
 
    BUMP THIS VERSION ON EVERY SHIPPABLE CHANGE. */
-const CACHE = "pw-v9u";
+const CACHE = "pw-v9v";
 const SHARE_DB = "penworks.share";
 
 const SHELL = ["./", "./index.html", "./manifest.json", "./css/app.css", "./js/app.js", "./js/api.js",

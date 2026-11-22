@@ -15,13 +15,19 @@
 // push coming back) from someone else's; reconcile is exported for the gap check after a dropped channel.
 // U3e: idle() is the tree queue's gate (js/treeq.js): it throws, like a network error, while tree changes still wait, so
 // a page's strokes never go up before its row; nudge() starts the push again once the tree queue is empty.
+// pw-v9v: a change the server refuses (400 403 404 409 422) is parked, so the rest flows; onNotice(kind) asks app.js
+// for one toast ('slow': ink unsent 5 minutes while online; 'parked'); persistent storage is asked for once.
 
 const LEGACY = 'pw.strokes.';
 const LOCAL_MARK = 'pw.cache.local';      // local mode only: the twin lives in localStorage, its cache lives with it
 const MERGE_MS = 300;                      // two ops on one page this close together become one
 const BACKOFF = [2000, 5000, 10000, 30000];
-const REFUSE = new Set(['42501', '23514', '23502', '22P02']);
+// pw-v9v: a definite no from the server parks the change (kept on this device, out of the queue's way); no answer, 401,
+// 408, 429 and 5xx are tried again as before
+const NO = new Set([400, 403, 404, 409, 422]);
 const FK = '23503', FK_RETRIES = 3;        // a missing page: the first try plus three retries, then refused
+const SLOW_MS = 300000;                    // pw-v9v: ink unsent this long while online = one plain toast
+const PERSIST = 'pw.persist.asked';        // pw-v9v: navigator.storage.persist() asked once per device
 const bySeq = (a, b) => a.seq - b.seq;
 const ECHO_MS = 10000;                     // U3d: an event for an id this device changed this recently is its own push coming back
 
@@ -38,7 +44,13 @@ const STAMP = 'at:';
 const stamps = new Map();
 let Q = [];                   // the queue, oldest first: { key, page_id, removed, added, t, busy, fk, told }
 let nextKey = 1;
-const cfg = { mode: 'local', api: null, idle: () => Promise.resolve(), onRemote: () => {}, onState: () => {}, onPushed: () => {} };
+// pw-v9v: refused ops (and ops that touch their strokes), oldest first. Kept in store `queue` with parked: true, never
+// deleted here; at every start and on `online` they go back to the head of the queue and are tried again.
+let parked = [];
+const flags = { slow: false, parked: false };   // pw-v9v: which notice is up (onNotice fires when one comes on)
+let slowT = null, slowHead = null, slowFor = 0, slowLast = 0;
+const cfg = { mode: 'local', api: null, idle: () => Promise.resolve(), onRemote: () => {}, onState: () => {}, onPushed: () => {},
+              onNotice: () => {}, slowMs: SLOW_MS };
 let dbp = Promise.reject(new Error('store.init has not run'));
 dbp.catch(() => {});
 let opened = Promise.resolve();
@@ -83,7 +95,7 @@ function write(fn) {
   writes = p;
   return p;
 }
-const serial = (op) => ({ page_id: op.page_id, removed: op.removed, added: op.added });
+const serial = (op) => ({ page_id: op.page_id, removed: op.removed, added: op.added, ...(op.parked ? { parked: true } : {}) });
 function keepOp(op) {
   return write((s) => { if (op.key == null) op.key = nextKey++; s.queue.put(serial(op), op.key); });
 }
@@ -131,7 +143,12 @@ export function init(o) {
     for (const op of old) version.set(op.page_id, (version.get(op.page_id) || 0) + 1);
   }, () => {});
   opened.then(() => { if (Q.length) kick(); else show('saved'); });
-  addEventListener('online', trigger);
+  if (o.mode === 'local') {          // test hook: a shorter wait before the unsent-ink notice
+    try { const v = Number(localStorage.getItem('penworks.local.slowms')); if (v > 0) cfg.slowMs = v; } catch (_) { /* ignore */ }
+  }
+  if (!slowT) { slowLast = Date.now(); slowT = setInterval(slowTick, Math.max(50, Math.min(10000, cfg.slowMs / 5))); }
+  askPersist();
+  addEventListener('online', () => { unpark(); trigger(); });
   addEventListener('offline', () => { if (Q.length && !pumping) show('waiting'); });
   addEventListener('focus', trigger);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) trigger(); });
@@ -185,12 +202,12 @@ export function forget(pageId) {
 // a page deleted on the server (its strokes cascaded) that undo may still bring back: its queued ops can never land,
 // so they go; the mirror and the cache keep its strokes, and app.js queues them all again if the page comes back
 export function unqueue(pageId) {
-  const gone = Q.filter((op) => op.page_id === pageId);
+  const gone = Q.filter((op) => op.page_id === pageId && !op.parked);   // pw-v9v: a parked change is never dropped
   if (!gone.length) return;
-  Q = Q.filter((op) => op.page_id !== pageId);
+  Q = Q.filter((op) => !gone.includes(op));
   recheck.delete(pageId);
   gone.forEach(dropOp);
-  show(Q.length ? state : 'saved');
+  show(Q.length ? state : rest());
 }
 
 // ink.js apply(): the exact change, ids actually removed and records actually added. The mirror follows at once; the
@@ -212,7 +229,7 @@ export function change(pageId, removed, added) {
   if (last && !last.busy && now - last.t <= MERGE_MS) {
     merge(last, removed, added);
     last.t = now;
-    if (!last.removed.length && !last.added.length) { Q = Q.filter((o) => o !== last); dropOp(last); show(Q.length ? state : 'saved'); return; }
+    if (!last.removed.length && !last.added.length) { Q = Q.filter((o) => o !== last); dropOp(last); show(Q.length ? state : rest()); return; }
     keepOp(last);
   } else {
     const op = { key: null, page_id: pageId, removed: removed.slice(), added: added.slice(), t: now, busy: false, fk: 0, told: false };
@@ -301,7 +318,7 @@ export async function reconcile(ids) {
   }
   const stampOf = (id) => { const f = fresh && fresh.get(id); return typeof f === 'string' && f ? f : null; };
   const same = (id) => !!stampOf(id) && stamps.get(id) === stampOf(id) && mirror.has(id)
-    && !Q.some((op) => op.page_id === id) && (version.get(id) || 0) === at.get(id);
+    && !held(id) && (version.get(id) || 0) === at.get(id);
   const read = ids.filter((id) => !same(id)), reading = new Set(read);
   ids.forEach((id) => { if (!reading.has(id)) unchecked.delete(id); });
   if (!read.length) return;
@@ -318,7 +335,7 @@ export async function reconcile(ids) {
   for (const [id, theirs] of up) {
     unchecked.delete(id);
     if (!mirror.has(id)) continue;                                   // forgotten while the query ran
-    if (Q.some((op) => op.page_id === id)) { recheck.add(id); continue; }
+    if (held(id)) { recheck.add(id); continue; }                     // pw-v9v: a parked change keeps the local copy too
     if ((version.get(id) || 0) !== at.get(id)) { again.push(id); continue; }   // changed (and pushed) since the query
     const mine = mirror.get(id), have = new Map(mine.map((r) => [r.id, r])), st = stampOf(id);
     if (mine.length === theirs.length && theirs.every((r) => have.has(r.id))) {
@@ -345,8 +362,9 @@ function touch(removed, added) {
 export function echo(id) {
   const t = touched.get(id);
   if (t && Date.now() - t < ECHO_MS) return true;
-  return Q.some((op) => op.removed.includes(id) || op.added.some((r) => r.id === id));
+  return Q.some(names(id)) || parked.some(names(id));
 }
+const names = (id) => (op) => op.removed.includes(id) || op.added.some((r) => r.id === id);
 // the page whose records (in the mirror) hold this id, or null
 export function pageOf(id) {
   for (const [pid, recs] of mirror) if (recs.some((r) => r.id === id)) return pid;
@@ -369,8 +387,11 @@ export function applyRemote(pageId, removed, added) {
 // ---------------------------------------------------------------- the push
 function show(s) {
   state = s;
-  try { cfg.onState(s, Q.length); } catch (_) { /* the dot is only a dot */ }
+  try { cfg.onState(s, Q.length + parked.length); } catch (_) { /* the dot is only a dot */ }
 }
+// pw-v9v: an empty queue is saved, unless something is parked (then the dot stays red)
+const rest = () => (parked.length ? 'refused' : 'saved');
+const held = (pid) => Q.some((op) => op.page_id === pid) || parked.some((op) => op.page_id === pid);
 function trigger() {
   if (unchecked.size) reconcile([...unchecked]);
   if (Q.length) pump();
@@ -394,6 +415,7 @@ function pump() {
     while (Q.length) {
       if (navigator.onLine === false) { show('waiting'); return; }
       const op = Q[0];
+      if (behind(op)) { park(op, null, null); continue; }  // pw-v9v: it touches a parked change's strokes, so it waits with it
       op.busy = true;
       show('saving');
       try {
@@ -403,7 +425,7 @@ function pump() {
       } catch (e) {
         op.busy = false;
         if (!Q.includes(op)) continue;
-        failed(op, e);
+        if (failed(op, e)) continue;                        // pw-v9v: refused and parked: the rest of the queue goes on
         return;
       }
       op.busy = false;
@@ -413,22 +435,83 @@ function pump() {
       dropOp(op);
       const pid = op.page_id;
       version.set(pid, (version.get(pid) || 0) + 1);       // pw-v9s: the database moved; a reconcile read before this is asked again
-      if (recheck.has(pid) && !Q.some((o) => o.page_id === pid)) { recheck.delete(pid); reconcile([pid]); }
+      if (recheck.has(pid) && !held(pid)) { recheck.delete(pid); reconcile([pid]); }
+      if (op.parked) noticeParked();                        // pw-v9v: a parked change landed and leaves the list
       try { cfg.onPushed(pid); } catch (_) { /* the page picture (U3b) is only a picture */ }
     }
-    show('saved');
+    show(rest());
   })().finally(() => { pumping = null; });
   return pumping;
 }
+// true when the op was parked (the queue goes on), false when it waits for a retry (the queue waits too)
 function failed(op, e) {
-  const code = e && e.code ? String(e.code) : '';
-  let refused = REFUSE.has(code);
-  if (code === FK) { op.fk++; refused = op.fk > FK_RETRIES; }
-  if (refused) {
-    if (!op.told) { op.told = true; console.warn(`PenWorks: the database refused a change to page ${op.page_id} (${code}): ${(e && e.message) || e}. It stays queued and is tried again.`); }
-    show('refused');
-  } else show('waiting');
+  const code = e && e.code ? String(e.code) : '', status = Number(e && e.status) || 0;
+  let no = NO.has(status);
+  if (no && code === FK && !op.parked) { op.fk++; no = op.fk > FK_RETRIES; }   // a page row may still be on its way
+  if (no) { park(op, code || `HTTP ${status}`, e); return true; }
+  show('waiting');
   retryLater();
+  return false;
+}
+
+// ---------------------------------------------------------------- pw-v9v: parked changes
+// out of the queue into the parked list, kept in store `queue` with parked: true (never deleted until it lands)
+function park(op, why, e) {
+  Q = Q.filter((o) => o !== op);
+  Object.assign(op, { busy: false, t: 0, fk: 0, parked: true });
+  parked.push(op);
+  keepOp(op);
+  if (!op.told) {
+    op.told = true;
+    console.warn(why
+      ? `PenWorks: the database refused a change to page ${op.page_id} (${why}): ${(e && e.message) || e}. It is kept on this device and tried again at the next start or connection.`
+      : `PenWorks: a change to page ${op.page_id} touches a refused change's strokes, so it is kept with it on this device.`);
+  }
+  noticeParked();
+}
+// an op that names a stroke a parked op names: sending it first would put her strokes in the wrong order
+function behind(op) {
+  if (!parked.length) return false;
+  const ids = new Set();
+  for (const p of parked) { p.removed.forEach((id) => ids.add(id)); p.added.forEach((r) => ids.add(r.id)); }
+  return op.removed.some((id) => ids.has(id)) || op.added.some((r) => ids.has(r.id));
+}
+// on `online`: the parked ops back to the head of the queue (after one already on its way), oldest first
+function unpark() {
+  if (!parked.length) return;
+  const back = parked, head = Q.length && Q[0].busy ? 1 : 0;
+  parked = [];
+  Q = [...Q.slice(0, head), ...back, ...Q.slice(head)];
+}
+function noticeParked() {
+  if (parked.length) flag('parked', true);
+  else if (!Q.some((o) => o.parked)) flag('parked', false);   // cleared only once none is left, parked or on retry
+}
+function flag(kind, on) {
+  if (flags[kind] === on) return;
+  flags[kind] = on;
+  if (on) try { cfg.onNotice(kind); } catch (_) { /* a notice is only a notice */ }
+}
+// every few seconds: the queue's head unsent for SLOW_MS of online time = the notice; an empty queue clears it
+function slowTick() {
+  const now = Date.now(), dt = now - slowLast, head = Q[0];
+  slowLast = now;
+  if (!head) { slowHead = null; slowFor = 0; flag('slow', false); return; }
+  if (head !== slowHead) { slowHead = head; slowFor = 0; return; }
+  if (navigator.onLine !== false) slowFor += dt;
+  if (slowFor >= cfg.slowMs) flag('slow', true);
+}
+// once per device: ask the browser to keep this site's storage (her ink on the tablet) through a storage clean-up
+function askPersist() {
+  try {
+    const s = navigator.storage;
+    if (!s || !s.persist || !s.persisted || localStorage.getItem(PERSIST)) return;
+    s.persisted().then((yes) => {
+      if (yes || localStorage.getItem(PERSIST)) return null;
+      localStorage.setItem(PERSIST, '1');
+      return s.persist();
+    }).catch(() => {});
+  } catch (_) { /* no storage manager: nothing to ask */ }
 }
 
 // ---------------------------------------------------------------- U3b: what the page pictures ask
@@ -473,6 +556,20 @@ export async function queueLength() {
 }
 export function queued() { return Q.map(serial); }
 export function saveState() { return { state, count: Q.length }; }
+// pw-v9v: the parked list in memory, the notices that are up, and every op kept on this device (parked or not)
+export function parkedOps() { return parked.map(serial); }
+export function notices() { return { ...flags }; }
+export async function keptOps() {
+  await opened.catch(() => {});
+  await writes;
+  try {
+    const out = await run(['queue'], 'readonly', (s, o) => {
+      s.queue.getAll().onsuccess = (e) => { o.vals = e.target.result; };
+      s.queue.getAllKeys().onsuccess = (e) => { o.keys = e.target.result; };
+    });
+    return out.keys.map((key, i) => ({ key, ...out.vals[i] }));
+  } catch (_) { return null; }
+}
 export async function cached(pageId) {
   await writes;
   try { return (await run(['strokes'], 'readonly', (s, out) => { s.strokes.get(pageId).onsuccess = (e) => { out.v = e.target.result; }; })).v ?? null; }

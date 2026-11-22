@@ -61,7 +61,9 @@ function read() {
 function write(d) { localStorage.setItem(KEY, JSON.stringify(d)); }
 function check(table) { if (!TABLES.includes(table)) throw new Error('Unknown table ' + table); }
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
-function refuse(msg, code = '23514') { const e = new Error(msg); e.code = code; throw e; }
+// pw-v9v: with the HTTP status PostgREST answers for that code (signed in: RLS 403, a foreign key or a duplicate 409, else 400)
+const STATUS = { '42501': 403, '23503': 409, '23505': 409 };
+function refuse(msg, code = '23514') { const e = new Error(msg); e.code = code; e.status = STATUS[code] || 400; throw e; }
 // the database's "on delete cascade" from pages to strokes
 function dropStrokes(d) { const live = new Set(d.pages.map((p) => p.id)); d.strokes = d.strokes.filter((s) => live.has(s.page_id)); }
 // the strokes_touch_page trigger: a stroke added or removed bumps its page's updated_at
@@ -114,6 +116,23 @@ function echoTouch(d, pageIds, now) {
 let refuseNext = 0; // test hook: the next n writes (stroke pushes and tree writes) are refused the way RLS refuses them (code 42501)
 function maybeRefuse(table = 'strokes') {
   if (refuseNext > 0) { refuseNext--; refuse(`new row violates row-level security policy for table "${table}"`, '42501'); }
+}
+// pw-v9v test hooks (tests/test_parked.py): failStatus(list) = the next stroke pushes fail with these HTTP statuses, one
+// each (0 = no answer); localStorage penworks.local.refuseids = '{"ids":[...],"status":400}' refuses every stroke push
+// that names one of those stroke ids (it lasts across a reload, like a row the database will never take)
+let statusNext = [];
+function maybeStatus(removedIds, added) {
+  if (statusNext.length) {
+    const s = statusNext.shift(), e = new Error(s ? `HTTP ${s} (test)` : 'TypeError: Failed to fetch (test)');
+    e.code = ''; e.status = s; throw e;
+  }
+  let r = null;
+  try { r = JSON.parse(localStorage.getItem('penworks.local.refuseids') || 'null'); } catch (_) { /* none */ }
+  if (!r || !Array.isArray(r.ids) || !r.ids.length) return;
+  const ids = new Set(r.ids);
+  if (removedIds.some((id) => ids.has(id)) || added.some((x) => ids.has(x.id))) {
+    const e = new Error(`HTTP ${r.status || 400}: refused (test)`); e.code = ''; e.status = r.status || 400; throw e;
+  }
 }
 // U4a: 0005's pages_pdf_size_check; pw-v7p: 0006's pages_pdf_rot_check
 function pdfSize(r) {
@@ -279,7 +298,7 @@ export const localApi = {
   // delete these ids, then insert these rows (two writes, like the two calls api.js makes); a row whose id is there
   // already counts as done, a row for a page that is not there is refused (the foreign key, 23503)
   async putStrokes(removedIds, added) {
-    maybeFail(); maybeRefuse();
+    maybeFail(); maybeRefuse(); maybeStatus(removedIds, added);
     const now = new Date().toISOString();
     if (removedIds.length) {
       const d = read(), rm = new Set(removedIds), hit = d.strokes.filter((s) => rm.has(s.id));
@@ -406,5 +425,6 @@ export const localApi = {
 
   failNext(n) { failNext = n; },
   refuseNext(n) { refuseNext = n; },
+  failStatus(list) { statusNext = Array.isArray(list) ? list.slice() : []; },
   callLog() { return clone(calls); },
 };

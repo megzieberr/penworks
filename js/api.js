@@ -208,21 +208,23 @@ const liveApi = {
 
   // one queued change: delete these ids first, then insert these rows, so running it twice is harmless.
   // An insert that meets an id already there (23505) counts as done: a batch that does is sent again row by row.
+  // pw-v9v: a failure carries the answer's HTTP status (0 = no answer), so store.js can tell a refusal from a lost connection
   async putStrokes(removedIds, added) {
     const c = await client();
+    const st = (e, status) => { try { e.status = status || 0; } catch (_) { /* keep the error as it is */ } return e; };
     for (let i = 0; i < removedIds.length; i += CHUNK) {
-      const { error } = await c.from('strokes').delete().in('id', removedIds.slice(i, i + CHUNK));
-      if (error) throw error;
+      const { error, status } = await c.from('strokes').delete().in('id', removedIds.slice(i, i + CHUNK));
+      if (error) throw st(error, status);
     }
     const rows = added.map((r) => Object.fromEntries(STROKE_KEYS.map((k) => [k, r[k]])));
     for (let i = 0; i < rows.length; i += CHUNK) {
       const part = rows.slice(i, i + CHUNK);
-      const { error } = await c.from('strokes').insert(part);
+      const { error, status } = await c.from('strokes').insert(part);
       if (!error) continue;
-      if (error.code !== '23505') throw error;
+      if (error.code !== '23505') throw st(error, status);
       for (const r of part) {
-        const { error: e } = await c.from('strokes').insert(r);
-        if (e && e.code !== '23505') throw e;
+        const { error: e, status: s } = await c.from('strokes').insert(r);
+        if (e && e.code !== '23505') throw st(e, s);
       }
     }
   },
@@ -387,6 +389,7 @@ const liveApi = {
 
   failNext() { /* local twin only */ },
   refuseNext() { /* local twin only */ },
+  failStatus() { /* local twin only */ },
   emitStroke() { /* local twin only */ },
   callLog() { return []; },   // local twin only (U3e)
 };
